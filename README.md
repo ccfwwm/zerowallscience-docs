@@ -8,7 +8,7 @@
 - 公开文档：<https://zerowallscience.org/docs/>
 - 管理后台：<https://zerowallscience.org/admin/>，仅管理员登录，公众注册关闭。
 - 正式目录保存即发布；草稿放在“草稿（不公开）”独立目录。
-- 首批 13 篇中文指南基于上线时 Stable 6.1.0。下载按钮通过经过校验的 Stable 元数据持续更新。
+- 首批 13 篇中文指南基于上线时 Stable 6.2.0。下载按钮通过经过校验的 Stable 元数据持续更新。
 
 ## 项目结构
 
