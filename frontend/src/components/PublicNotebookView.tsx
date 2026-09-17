@@ -34,6 +34,8 @@ import {
 
 interface PublicNotebookViewProps {
   token?: string;
+  official?: boolean;
+  noteId?: string;
 }
 
 interface OutlineItem {
@@ -128,11 +130,11 @@ function PublicNotebookIndex() {
   );
 }
 
-export default function PublicNotebookView({ token }: PublicNotebookViewProps) {
-  return token ? <PublicNotebookReader token={token} /> : <PublicNotebookIndex />;
+export default function PublicNotebookView({ token, official = false, noteId }: PublicNotebookViewProps) {
+  return official ? <PublicNotebookReader token="official" official initialNoteId={noteId} /> : token ? <PublicNotebookReader token={token} /> : <PublicNotebookIndex />;
 }
 
-function PublicNotebookReader({ token }: { token: string }) {
+function PublicNotebookReader({ token, official = false, initialNoteId }: { token: string; official?: boolean; initialNoteId?: string }) {
   const [info, setInfo] = useState<PublicNotebookInfo | null>(null);
   const [notebooks, setNotebooks] = useState<PublicNotebookNode[]>([]);
   const [notes, setNotes] = useState<PublicNoteSummary[]>([]);
@@ -160,11 +162,11 @@ function PublicNotebookReader({ token }: { token: string }) {
 
   const loadTree = useCallback(async (nextInfo: PublicNotebookInfo, nextAccessToken: string) => {
     try {
-      const tree = await notebookPublicationApi.getPublicTree(token, nextAccessToken || undefined);
+      const tree = official ? await notebookPublicationApi.getOfficialTree() : await notebookPublicationApi.getPublicTree(token, nextAccessToken || undefined);
       setNotebooks(tree.notebooks);
       setNotes(tree.notes);
       setNeedsSecret(false);
-      setActiveNoteId((current) => current && tree.notes.some((note) => note.id === current) ? current : tree.notes[0]?.id || "");
+      setActiveNoteId((current) => current && tree.notes.some((note) => note.id === current) ? current : initialNoteId && tree.notes.some((note) => note.id === initialNoteId) ? initialNoteId : tree.notes[0]?.id || "");
     } catch (err: any) {
       if (err?.status === 401 && nextInfo.needSecret) {
         setNeedsSecret(true);
@@ -172,12 +174,12 @@ function PublicNotebookReader({ token }: { token: string }) {
       }
       throw err;
     }
-  }, [token]);
+  }, [token, official, initialNoteId]);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    notebookPublicationApi.getPublicInfo(token)
+    (official ? notebookPublicationApi.getOfficialInfo() : notebookPublicationApi.getPublicInfo(token))
       .then(async (nextInfo) => {
         if (cancelled) return;
         setInfo(nextInfo);
@@ -200,11 +202,11 @@ function PublicNotebookReader({ token }: { token: string }) {
     }
     let cancelled = false;
     setNoteLoading(true);
-    const commentsRequest = info && (info.allowComment || info.permission !== "read")
+    const commentsRequest = !official && info && (info.allowComment || info.permission !== "read")
       ? notebookPublicationApi.getComments(token, activeNoteId, accessToken || undefined).catch(() => [])
       : Promise.resolve([] as PublicComment[]);
     Promise.all([
-      notebookPublicationApi.getPublicNote(token, activeNoteId, accessToken || undefined),
+      official ? notebookPublicationApi.getOfficialNote(activeNoteId) : notebookPublicationApi.getPublicNote(token, activeNoteId, accessToken || undefined),
       commentsRequest,
     ])
       .then(([note, nextComments]) => {
@@ -219,7 +221,23 @@ function PublicNotebookReader({ token }: { token: string }) {
         if (!cancelled) setNoteLoading(false);
       });
     return () => { cancelled = true; };
-  }, [token, activeNoteId, accessToken, needsSecret, info]);
+  }, [token, activeNoteId, accessToken, needsSecret, info, official]);
+
+  useEffect(() => {
+    if (official && activeNoteId && window.location.pathname !== `/docs/${encodeURIComponent(activeNoteId)}`) {
+      history.pushState({ noteId: activeNoteId }, "", `/docs/${encodeURIComponent(activeNoteId)}`);
+    }
+  }, [official, activeNoteId]);
+
+  useEffect(() => {
+    if (!official) return;
+    const onPopState = () => {
+      const match = window.location.pathname.match(/^\/docs\/([^/]+)\/?$/);
+      if (match) setActiveNoteId(decodeURIComponent(match[1]));
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [official]);
 
   useEffect(() => {
     const host = contentRef.current;
@@ -376,9 +394,9 @@ function PublicNotebookReader({ token }: { token: string }) {
     <div className="flex h-screen min-h-0 bg-app-bg text-tx-primary">
       <aside className="hidden w-[280px] shrink-0 flex-col border-r border-app-border bg-app-surface md:flex">
         <div className="border-b border-app-border p-4">
-          <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => navigateToAppPath("/public")}>
+          <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => official ? window.location.assign("/") : navigateToAppPath("/public")}>
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-xl">{info.icon || "📚"}</div>
-            <div className="min-w-0"><div className="truncate text-sm font-semibold">{info.name}</div><div className="truncate text-[11px] text-tx-tertiary">{info.ownerDisplayName || info.ownerUsername} 的公共知识库</div></div>
+            <div className="min-w-0"><div className="truncate text-sm font-semibold">{info.name}</div><div className="truncate text-[11px] text-tx-tertiary">{official ? "官方使用文档" : `${info.ownerDisplayName || info.ownerUsername} 的公共知识库`}</div></div>
           </button>
           <div className="relative mt-4">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-tx-tertiary" />
@@ -405,19 +423,19 @@ function PublicNotebookReader({ token }: { token: string }) {
             );
           })}
         </div>
-        <div className="border-t border-app-border p-3">
+        {!official && <div className="border-t border-app-border p-3">
           <Button variant="outline" className="w-full" onClick={join} disabled={joining}>
             {joining ? <Loader2 size={14} className="mr-1 animate-spin" /> : <UserPlus size={14} className="mr-1" />}
             {info.permission === "write" && info.allowEdit ? "登录并加入编辑" : "加入共享笔记本"}
           </Button>
-        </div>
+        </div>}
       </aside>
 
       <main className="min-w-0 flex-1 overflow-y-auto">
         <header className="sticky top-0 z-10 border-b border-app-border bg-app-surface/90 px-4 py-3 backdrop-blur-xl md:hidden">
           <div className="flex items-center justify-between gap-3">
-            <button className="flex min-w-0 items-center gap-2" onClick={() => navigateToAppPath("/public")}><BookOpen size={17} className="text-accent-primary" /><span className="truncate text-sm font-semibold">{info.name}</span></button>
-            <Button size="sm" variant="outline" onClick={join}><UserPlus size={13} className="mr-1" />加入</Button>
+            <button className="flex min-w-0 items-center gap-2" onClick={() => official ? window.location.assign("/") : navigateToAppPath("/public")}><BookOpen size={17} className="text-accent-primary" /><span className="truncate text-sm font-semibold">{info.name}</span></button>
+            {official ? <a className="text-xs text-accent-primary" href="/">返回官网</a> : <Button size="sm" variant="outline" onClick={join}><UserPlus size={13} className="mr-1" />加入</Button>}
           </div>
           <select className="mt-3 h-9 w-full rounded-lg border border-app-border bg-app-bg px-3 text-xs" value={activeNoteId} onChange={(event) => setActiveNoteId(event.target.value)}>
             {filteredNotes.map((note) => <option key={note.id} value={note.id}>{note.title || "无标题笔记"}</option>)}

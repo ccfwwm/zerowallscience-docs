@@ -1,3 +1,5 @@
+> 本仓库现用于构建 ZeroWall Science 官网与官方文档系统。官网位于 `/`，公开文档位于 `/docs/`，文档管理后台位于 `/admin/`。编辑与知识管理能力基于 Nowen Note，保留原项目 GPL-3.0 许可及历史。
+
 <div align="center">
   <img src="./electron/icon.png" alt="Nowen Note" width="104" />
   <h1>Nowen Note（弄文笔记）</h1>

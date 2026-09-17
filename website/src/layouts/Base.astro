@@ -1,0 +1,73 @@
+---
+// Base layout — shared across EN and ZH pages
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description: string;
+  lang: 'en' | 'zh';
+}
+const { title, description, lang } = Astro.props;
+---
+<!DOCTYPE html>
+<html lang={lang === 'zh' ? 'zh-CN' : 'en'} data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <link rel="icon" type="image/png" href="/assets/app-icon.png" />
+  <link rel="canonical" href={lang === 'zh' ? 'https://zerowallscience.org/' : 'https://zerowallscience.org/en/'} />
+  <link rel="alternate" hreflang="en" href="https://zerowallscience.org/en/" />
+  <link rel="alternate" hreflang="zh-CN" href="https://zerowallscience.org/" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:wght@400;600&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <slot />
+  <script is:inline>
+    // Theme init (runs before paint)
+    (function() {
+      const saved = localStorage.getItem('zw-theme');
+      const theme = saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.setAttribute('data-theme', theme);
+    })();
+  </script>
+  <script>
+    const links = document.querySelectorAll<HTMLAnchorElement>('[data-latest-windows-download]');
+
+    async function updateLatestWindowsDownload(link: HTMLAnchorElement): Promise<string> {
+      const metadataUrl = link.dataset.releaseMetadataUrl;
+      if (!metadataUrl) return link.href;
+      try {
+        const response = await fetch(metadataUrl, { cache: 'no-store', credentials: 'omit' });
+        if (!response.ok) throw new Error(`Release metadata returned HTTP ${response.status}.`);
+        const metadata = await response.json() as { assetUrl?: unknown; url?: unknown; version?: unknown };
+        const candidate = typeof metadata.assetUrl === 'string' ? metadata.assetUrl : metadata.url;
+        if (typeof candidate !== 'string') throw new Error('Release metadata does not contain an asset URL.');
+        const asset = new URL(candidate);
+        const authority = new URL(metadataUrl);
+        if (asset.protocol !== 'https:' || asset.origin !== authority.origin || !asset.pathname.toLowerCase().endsWith('.exe')) {
+          throw new Error('Release metadata contains an untrusted asset URL.');
+        }
+        link.href = asset.href;
+        link.dataset.latestResolved = 'true';
+        if (typeof metadata.version === 'string') link.dataset.releaseVersion = metadata.version;
+      } catch (error) {
+        console.warn('Using the build-time ZeroWall Science download URL.', error);
+      }
+      return link.href;
+    }
+
+    for (const link of links) {
+      void updateLatestWindowsDownload(link);
+      link.addEventListener('click', async (event) => {
+        if (link.dataset.latestResolved === 'true') return;
+        event.preventDefault();
+        window.location.assign(await updateLatestWindowsDownload(link));
+      });
+    }
+  </script>
+</body>
+</html>

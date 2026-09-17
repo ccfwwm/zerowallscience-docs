@@ -1,0 +1,34 @@
+---
+interface Shot { id: string; tab: string; title: string; desc: string; input: string; output: string; image: string; alt: string; }
+interface Props { shots: Shot[]; }
+const { shots } = Astro.props;
+---
+<div class="showcase" data-showcase>
+  <div class="showcase-tabs" role="tablist" aria-label="Product views">
+    {shots.map((shot, index) => <button class="showcase-tab" type="button" role="tab" aria-selected={index === 0 ? 'true' : 'false'} data-showcase-tab={index}>{shot.tab}</button>)}
+  </div>
+  <div class="showcase-stage">
+    {shots.map((shot, index) => (
+      <article class:list={['showcase-panel', index === 0 && 'is-active']} data-showcase-panel={index} role="tabpanel">
+        <div class="showcase-image-wrap"><img src={shot.image} alt={shot.alt} loading={index === 0 ? 'eager' : 'lazy'} width="1440" height="900" /><button class="zoom-button" type="button" data-showcase-zoom={index} aria-label="Open image preview">+</button></div>
+        <div class="showcase-detail"><span class="eyebrow">{shot.tab}</span><h3>{shot.title}</h3><p>{shot.desc}</p><dl><div><dt>Input</dt><dd>{shot.input}</dd></div><div><dt>Output</dt><dd>{shot.output}</dd></div></dl></div>
+      </article>
+    ))}
+  </div>
+  <dialog class="image-dialog" data-showcase-dialog><button type="button" class="dialog-close" data-dialog-close aria-label="Close image preview">×</button><img data-dialog-image alt="" /></dialog>
+</div>
+
+<script>
+  const showcase = document.querySelector('[data-showcase]');
+  if (showcase) {
+    const tabs = [...showcase.querySelectorAll<HTMLButtonElement>('[data-showcase-tab]')];
+    const panels = [...showcase.querySelectorAll<HTMLElement>('[data-showcase-panel]')];
+    const select = (index: number) => { tabs.forEach((tab, i) => tab.setAttribute('aria-selected', String(i === index))); panels.forEach((panel, i) => panel.classList.toggle('is-active', i === index)); };
+    tabs.forEach((tab, index) => tab.addEventListener('click', () => select(index)));
+    const dialog = showcase.querySelector<HTMLDialogElement>('[data-showcase-dialog]');
+    const dialogImage = showcase.querySelector<HTMLImageElement>('[data-dialog-image]');
+    showcase.querySelectorAll<HTMLButtonElement>('[data-showcase-zoom]').forEach(button => button.addEventListener('click', () => { const image = panels[Number(button.dataset.showcaseZoom)]?.querySelector('img'); if (image && dialog && dialogImage) { dialogImage.src = image.src; dialogImage.alt = image.alt; dialog.showModal(); } }));
+    showcase.querySelector('[data-dialog-close]')?.addEventListener('click', () => dialog?.close());
+    dialog?.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  }
+</script>

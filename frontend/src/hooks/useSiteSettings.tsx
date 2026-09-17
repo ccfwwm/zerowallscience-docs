@@ -20,8 +20,8 @@ export interface SiteConfig {
 }
 
 const DEFAULT_CONFIG: SiteConfig = {
-  title: "nowen-note",
-  favicon: "",
+  title: "ZeroWall Science",
+  favicon: "/admin/zerowall-icon.png",
   icpBeian: "",
   publicWebOrigin: "",
   publicWebOriginSource: "current",
@@ -63,7 +63,7 @@ function parseDataUrlMime(url: string): string {
 }
 
 function applyToDOM(title: string, faviconUrl: string) {
-  document.title = title || "nowen-note";
+  document.title = title || "ZeroWall Science";
 
   const oldLinks = document.head.querySelectorAll<HTMLLinkElement>(
     'link[rel="icon"], link[rel="shortcut icon"], link[rel="alternate icon"], link[rel="apple-touch-icon"]'
@@ -120,8 +120,8 @@ function applyEditorFont(fontId: string, customFontName?: string) {
 
 function toSiteConfig(data: any, previous: SiteConfig = DEFAULT_CONFIG): SiteConfig {
   return {
-    title: data?.site_title || "nowen-note",
-    favicon: data?.site_favicon || "",
+    title: data?.site_title || "ZeroWall Science",
+    favicon: data?.site_favicon || "/admin/zerowall-icon.png",
     icpBeian: data?.site_icp_beian || previous.icpBeian || "",
     publicWebOrigin: data?.site_public_web_origin || "",
     publicWebOriginSource: data?.site_public_web_origin_source || "current",

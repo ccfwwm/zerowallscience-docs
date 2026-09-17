@@ -21,6 +21,7 @@ export interface SiteSettings {
   site_public_web_origin: string;
   /** 地址来源，仅用于 UI 解释：settings / environment / current。 */
   site_public_web_origin_source: string;
+  site_docs_notebook_id: string;
   editor_font_family: string;
   /** @deprecated v6 起弃用，个人空间导出开关已下沉为 users.personalExportEnabled。 */
   feature_personal_export_enabled: string;
@@ -33,11 +34,12 @@ export interface SiteSettings {
 }
 
 const DEFAULTS: SiteSettings = {
-  site_title: "nowen-note",
-  site_favicon: "",
+  site_title: "ZeroWall Science",
+  site_favicon: "/admin/zerowall-icon.png",
   site_icp_beian: "",
   site_public_web_origin: "",
   site_public_web_origin_source: "current",
+  site_docs_notebook_id: "",
   editor_font_family: "",
   feature_personal_export_enabled: "true",
   feature_personal_import_enabled: "true",
@@ -75,7 +77,8 @@ settings.put("/", async (c) => {
   const wantsSiteIdentity =
     body.site_title !== undefined ||
     body.site_favicon !== undefined ||
-    body.site_public_web_origin !== undefined;
+    body.site_public_web_origin !== undefined ||
+    body.site_docs_notebook_id !== undefined;
   if (wantsSiteIdentity && !isSystemAdmin(userId)) {
     return c.json({ error: "仅管理员可修改该设置", code: "FORBIDDEN" }, 403);
   }
@@ -99,6 +102,9 @@ settings.put("/", async (c) => {
       return c.json({ error: resolved.error, code: "INVALID_PUBLIC_WEB_ORIGIN" }, 400);
     }
     entries.push(...resolved.entries);
+  }
+  if (body.site_docs_notebook_id !== undefined) {
+    entries.push({ key: "site_docs_notebook_id", value: body.site_docs_notebook_id.trim() });
   }
   if (body.editor_font_family !== undefined) {
     entries.push({ key: "editor_font_family", value: body.editor_font_family });

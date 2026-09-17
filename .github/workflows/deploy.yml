@@ -1,0 +1,31 @@
+name: Deploy production
+on:
+  push: { branches: [main] }
+  workflow_dispatch: {}
+  schedule: [{ cron: "17 */6 * * *" }]
+permissions: { contents: read }
+concurrency: { group: zerowallscience-production, cancel-in-progress: false }
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: npm ci && npm test && npm run build
+        working-directory: website
+      - run: docker build -t zerowallscience-docs:${GITHUB_SHA} .
+      - run: docker save zerowallscience-docs:${GITHUB_SHA} | gzip -1 > image.tar.gz
+      - run: tar -czf site.tar.gz -C website/dist .
+      - name: 部署到 uscavaslinux
+        env: { DEPLOY_KEY: "${{ secrets.DEPLOY_KEY }}", DEPLOY_HOST_KEY: "${{ secrets.DEPLOY_HOST_KEY }}" }
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key; chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          ssh=(ssh -p 22 -i ~/.ssh/deploy_key -o IdentitiesOnly=yes zerowall-deploy@66.154.100.202)
+          rsync_ssh="ssh -p 22 -i ~/.ssh/deploy_key -o IdentitiesOnly=yes"
+          "${ssh[@]}" "mkdir -p /opt/zerowallscience-docs/incoming/$GITHUB_SHA/nginx"
+          rsync -az -e "$rsync_ssh" image.tar.gz site.tar.gz deploy/docker-compose.production.yml zerowall-deploy@66.154.100.202:/opt/zerowallscience-docs/incoming/$GITHUB_SHA/
+          rsync -az -e "$rsync_ssh" deploy/nginx/ zerowall-deploy@66.154.100.202:/opt/zerowallscience-docs/incoming/$GITHUB_SHA/nginx/
+          "${ssh[@]}" "sudo /usr/local/sbin/deploy-zerowallscience-docs '$GITHUB_SHA'"

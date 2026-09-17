@@ -1,0 +1,11 @@
+---
+interface Props { label: string; code: string; copyLabel: string; copiedLabel: string; }
+const { label, code, copyLabel, copiedLabel } = Astro.props;
+---
+<div class="code-sample" data-copy-sample><div class="code-sample-head"><span>{label}</span><button type="button" data-copy-button data-copy-label={copyLabel} data-copied-label={copiedLabel} aria-label={copyLabel}>{copyLabel}</button></div><pre><code>{code}</code></pre></div>
+<script>
+  document.querySelectorAll<HTMLElement>('[data-copy-sample]').forEach(sample => {
+    const button = sample.querySelector<HTMLButtonElement>('[data-copy-button]'); const code = sample.querySelector('code');
+    button?.addEventListener('click', async () => { if (!code) return; await navigator.clipboard.writeText(code.textContent ?? ''); button.textContent = button.dataset.copiedLabel ?? 'Copied'; window.setTimeout(() => button.textContent = button.dataset.copyLabel ?? 'Copy', 1600); });
+  });
+</script>

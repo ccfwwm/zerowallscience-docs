@@ -39,6 +39,7 @@ import "./runtime/backup-restore-large-archive-guard.js";
 // Mount encrypted WebDAV backup configuration and upload routes before /api/backups is registered.
 import "./runtime/backup-webdav.js";
 import "./runtime/notebook-publication.js";
+import "./runtime/official-site-bootstrap.js";
 // Mount the unified content tree and capability guard around the legacy note/notebook routers.
 import "./runtime/knowledge-tree.js";
 // Install before the main Hono app registers its production wildcard static route.

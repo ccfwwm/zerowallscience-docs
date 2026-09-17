@@ -55,6 +55,7 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ linux-headers \
 
 COPY --from=backend-build /app/backend/dist ./backend/dist
 COPY backend/templates ./backend/templates
+COPY content ./content
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
 
 RUN mkdir -p /app/data /var/lib/nowen-updater \

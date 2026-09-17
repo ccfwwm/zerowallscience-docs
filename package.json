@@ -1,8 +1,8 @@
 {
-  "name": "nowen-note",
+  "name": "zerowallscience-docs",
   "version": "1.4.16",
-  "description": "Nowen Note - A modern note-taking application",
-  "author": "Nowen",
+  "description": "ZeroWall Science official website and documentation system",
+  "author": "ZeroWall Science contributors",
   "private": true,
   "main": "electron/main-bootstrap.js",
   "scripts": {

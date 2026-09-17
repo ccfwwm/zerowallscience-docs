@@ -1,0 +1,52 @@
+---
+import Base from '../layouts/Base.astro';
+import Nav from './Nav.astro';
+import WorkflowRail from './WorkflowRail.astro';
+import ProductShowcase from './ProductShowcase.astro';
+import ArchitectureGallery from './ArchitectureGallery.astro';
+import TrustStrip from './TrustStrip.astro';
+import CopySnippet from './CopySnippet.astro';
+import ArchitectureDetail from './ArchitectureDetail.astro';
+import releases from '../data/releases.json';
+
+interface Props { t: any; lang: 'en' | 'zh'; }
+const { t, lang } = Astro.props;
+const latestWindowsUrl = releases[0]?.assets.find((asset: any) => asset.name.toLowerCase().endsWith('.exe'))?.url;
+const latestVersion = releases[0]?.tag;
+if (!latestWindowsUrl || !latestVersion) throw new Error('Stable release metadata is missing.');
+const shots = t.showcase.shots;
+const architectureCards = t.architectureGallery.cards;
+const architectureDetail = lang === 'zh' ? {
+  title: '推理与特权执行保持分离', lead: 'DSH 负责会话和能力编排；Electron、Host 与领域服务拥有路径、凭据、执行和科研状态的最终控制权。',
+  items: [{ name: '模型提出行动', desc: '模型输出只是候选操作，不直接成为系统权限。' }, { name: '类型化边界校验', desc: 'RPC 请求经过 codec、项目所有权和路径边界验证。' }, { name: '科研事实持久化', desc: 'Research Store 独立保存对象、运行、证据、决策和交付状态。' }],
+} : {
+  title: 'Reasoning remains separate from privileged execution', lead: 'DSH orchestrates sessions and capabilities. Electron, the Host, and domain services retain authority over paths, credentials, execution, and research state.',
+  items: [{ name: 'Models propose actions', desc: 'Model output remains a candidate operation, never direct system authority.' }, { name: 'Typed boundaries validate', desc: 'RPC requests pass codecs, project ownership, and path containment checks.' }, { name: 'Research facts persist', desc: 'Research Store independently retains objects, runs, evidence, decisions, and delivery state.' }],
+};
+const snippet = lang === 'zh' ? { label: '科研工作流示例', code: '研究问题\n  → Agent 计划\n  → 受审批的 Local / WSL / SSH Run\n  → Artifact + Evidence + AuditEvent\n  → Publication / Presentation', copy: '复制', copied: '已复制' } : { label: 'Research workflow', code: 'Research question\n  → Agent plan\n  → Approved Local / WSL / SSH Run\n  → Artifact + Evidence + AuditEvent\n  → Publication / Presentation', copy: 'Copy', copied: 'Copied' };
+---
+<Base title={t.meta.title} description={t.meta.description} lang={lang}>
+  <Nav lang={lang} nav={t.nav} />
+  <main>
+    <section class="hero-section" id="hero">
+      <div class="hero-visual" aria-hidden="true"><img src="/assets/architecture/hero-research-orbit.png" alt="" width="1536" height="1024" /><div class="hero-orbit orbit-a"></div><div class="hero-orbit orbit-b"></div></div>
+      <div class="page-shell hero-grid">
+        <div class="hero-copy"><div class="eyebrow">{t.hero.eyebrow}</div><h1>{t.hero.title}</h1><p class="hero-sub">{t.hero.sub}</p><div class="hero-actions"><a class="button button-primary" href="#download">{t.hero.cta}</a><a class="button button-ghost" href="https://github.com/ccfwwm/zerowallscience" target="_blank" rel="noreferrer">{t.hero.github}</a></div><div class="hero-proof"><span><b>{latestVersion}</b>{t.hero.versionLabel}</span><span><b>Local-first</b>{t.hero.localLabel}</span><span><b>AGPL-3.0</b>{t.hero.licenseLabel}</span></div></div>
+        <div class="hero-product"><div class="window-chrome"><span></span><span></span><span></span><small>ZeroWall Science / Research session</small></div><img src="/assets/showcase-workspace.png" alt={t.hero.productAlt} width="2049" height="1327" /><div class="hero-status"><span class="status-dot"></span>{t.hero.status}</div></div>
+      </div>
+    </section>
+
+    <section class="section section-intro" id="workflow"><div class="page-shell intro-grid"><div><div class="eyebrow">{t.workflow.eyebrow}</div><h2>{t.workflow.title}</h2></div><p>{t.workflow.sub}</p></div><div class="page-shell"><WorkflowRail steps={t.workflow.steps} /></div></section>
+
+    <section class="section section-showcase" id="features"><div class="page-shell"><div class="section-heading"><div><div class="eyebrow">{t.showcase.eyebrow}</div><h2>{t.showcase.title}</h2></div><p>{t.showcase.sub}</p></div><ProductShowcase shots={shots} /></div></section>
+
+    <section class="section section-architecture" id="architecture"><div class="page-shell"><div class="section-heading"><div><div class="eyebrow">{t.architectureGallery.eyebrow}</div><h2>{t.architectureGallery.title}</h2></div><p>{t.architectureGallery.sub}</p></div><ArchitectureGallery cards={architectureCards} /><ArchitectureDetail title={architectureDetail.title} lead={architectureDetail.lead} items={architectureDetail.items} /></div></section>
+
+    <section class="section section-trust"><div class="page-shell"><div class="section-heading"><div><div class="eyebrow">{t.trust.eyebrow}</div><h2>{t.trust.title}</h2></div><p>{t.trust.sub}</p></div><TrustStrip items={t.trust.items} /></div></section>
+
+    <section class="section section-capabilities" id="capabilities"><div class="page-shell"><div class="section-heading"><div><div class="eyebrow">{t.capabilities.eyebrow}</div><h2>{t.capabilities.title}</h2></div><p>{t.capabilities.sub}</p></div><div class="capability-grid">{t.capabilities.items.map((item: any, index: number) => <article class="capability-card"><span class="capability-index">0{index + 1}</span><h3>{item.title}</h3><p>{item.desc}</p></article>)}</div><CopySnippet label={snippet.label} code={snippet.code} copyLabel={snippet.copy} copiedLabel={snippet.copied} /></div></section>
+
+    <section class="section section-download" id="download"><div class="page-shell download-panel"><div><div class="eyebrow">{t.download.eyebrow}</div><h2>{t.download.title}</h2><p>{t.download.sub}</p></div><div class="download-actions"><a class="button button-primary" href={latestWindowsUrl} data-latest-windows-download data-release-metadata-url="https://zerowall.chengxunkeji.cn/stable/releases/latest.json">{t.download.cta}</a><a class="button button-ghost" href="https://github.com/ccfwwm/zerowallscience" target="_blank" rel="noreferrer">{t.download.source}</a></div><div class="platform-row">{t.download.platforms.map((platform: any) => <span><b>{platform.name}</b>{platform.note}</span>)}</div></div></section>
+  </main>
+  <footer class="site-footer"><div class="page-shell footer-inner"><a href={lang === 'zh' ? '/zh' : '/'} class="footer-brand"><img src="/assets/app-icon.png" alt="" width="24" height="24" />ZeroWall Science</a><div class="footer-links"><a href="https://github.com/ccfwwm/zerowallscience" target="_blank" rel="noreferrer">{t.footer.github}</a><a href="https://github.com/ccfwwm/zerowallscience/blob/main/LICENSE" target="_blank" rel="noreferrer">{t.footer.license}</a></div><span>{t.footer.copyright} · {t.footer.tagline}</span></div></footer>
+</Base>

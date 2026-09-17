@@ -1,0 +1,33 @@
+---
+interface Props { steps: Array<{ title: string; desc: string; label?: string }>; }
+const { steps } = Astro.props;
+---
+<div class="workflow-rail" data-workflow-rail>
+  <div class="workflow-line" aria-hidden="true"><span></span></div>
+  <div class="workflow-steps" role="list">
+    {steps.map((step, index) => (
+      <article class="workflow-step" data-workflow-step={index} role="listitem">
+        <button class="workflow-step-button" type="button" aria-expanded={index === 0 ? 'true' : 'false'}>
+          <span class="workflow-index">0{index + 1}</span>
+          <span class="workflow-copy"><span class="workflow-label">{step.label ?? 'Research stage'}</span><strong>{step.title}</strong><span>{step.desc}</span></span>
+        </button>
+      </article>
+    ))}
+  </div>
+</div>
+
+<script>
+  const rail = document.querySelector('[data-workflow-rail]');
+  if (rail) {
+    const steps = [...rail.querySelectorAll<HTMLElement>('[data-workflow-step]')];
+    const activate = (index: number) => steps.forEach((step, i) => {
+      step.classList.toggle('is-active', i === index);
+      step.querySelector('button')?.setAttribute('aria-expanded', String(i === index));
+    });
+    steps.forEach((step, index) => step.querySelector('button')?.addEventListener('click', () => activate(index)));
+    const observer = new IntersectionObserver(entries => entries.forEach(entry => {
+      if (entry.isIntersecting) activate(Number((entry.target as HTMLElement).dataset.workflowStep));
+    }), { rootMargin: '-35% 0px -45% 0px', threshold: 0 });
+    steps.forEach(step => observer.observe(step));
+  }
+</script>

@@ -574,7 +574,7 @@ export default function LoginPage({ onLogin, onAccountLogin, isClientMode = fals
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1.5">
               {isTwoFactorStep
                 ? t("auth.twoFactor.prompt", { username: twoFactorUsername || username.trim() })
-                : isRegister ? t("auth.registerSubtitle") : isClientMode ? t("auth.subtitleClient") : t("auth.subtitle")}
+                : "登录后管理 ZeroWall Science 官方文档"}
             </p>
           </div>
 
@@ -587,7 +587,7 @@ export default function LoginPage({ onLogin, onAccountLogin, isClientMode = fals
             />
           )}
 
-          {!isTwoFactorStep && (
+          {!isTwoFactorStep && allowRegistration && (
           <div className="flex items-center gap-1 p-1 mb-5 rounded-lg bg-zinc-100 dark:bg-zinc-800">
             <button
               type="button"

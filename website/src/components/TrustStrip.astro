@@ -1,0 +1,5 @@
+---
+interface Props { items: Array<{ icon: string; title: string; desc: string }>; }
+const { items } = Astro.props;
+---
+<div class="trust-strip">{items.map(item => <div class="trust-item"><span class="trust-icon">{item.icon}</span><div><strong>{item.title}</strong><span>{item.desc}</span></div></div>)}</div>

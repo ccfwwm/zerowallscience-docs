@@ -229,7 +229,7 @@ export default function Sidebar({ variant = "mobile" }: { variant?: "desktop" | 
         className="flex shrink-0 items-center justify-between border-b border-app-border px-4 py-3"
         style={{ paddingTop: "calc(var(--safe-area-top) + 12px)" }}
       >
-        <span className="min-w-0 truncate text-sm font-semibold">{siteConfig.title || "nowen-note"}</span>
+        <span className="min-w-0 truncate text-sm font-semibold">{siteConfig.title || "ZeroWall Science"}</span>
         {variant === "desktop" && (
           <button
             type="button"

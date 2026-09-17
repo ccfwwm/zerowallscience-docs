@@ -256,6 +256,17 @@ export const notebookPublicationApi = {
     return request<PublicNotebookInfo>(`/shared/notebook-public/${encodeURIComponent(token)}`);
   },
 
+  getOfficialInfo() { return request<PublicNotebookInfo>("/docs"); },
+  async getOfficialTree() {
+    const tree = await request<{ notebooks: PublicNotebookNode[]; notes: PublicNoteSummary[] }>("/docs/tree");
+    return { notebooks: tree.notebooks, notes: tree.notes.map((note) => ({ ...note, contentFormat: normalizeContentFormat(note.contentFormat) })) };
+  },
+  async getOfficialNote(noteId: string) {
+    const note = await request<PublicNoteContent>(`/docs/notes/${encodeURIComponent(noteId)}`);
+    registerAttachmentAccessUrls(note.attachmentUrls || {});
+    return { ...note, contentFormat: normalizeContentFormat(note.contentFormat) };
+  },
+
   verifyPublicSecret(token: string, secret: string) {
     return request<{ success: true; accessToken: string }>(
       `/shared/notebook-public/${encodeURIComponent(token)}/verify`,

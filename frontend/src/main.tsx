@@ -140,14 +140,27 @@ function resolvePublicNotebookRoute(): { matched: boolean; token?: string } {
   }
 }
 
+function resolveOfficialDocsRoute(): { matched: boolean; noteId?: string } {
+  const match = resolveCurrentAppPathname().match(/^\/docs(?:\/([^/]+))?\/?$/);
+  if (!match) return { matched: false };
+  try { return { matched: true, noteId: match[1] ? decodeURIComponent(match[1]) : undefined }; }
+  catch { return { matched: true, noteId: match[1] }; }
+}
+
 const publicRoute = resolvePublicNotebookRoute();
+const docsRoute = resolveOfficialDocsRoute();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <SiteSettingsProvider>
       <ConfirmProvider>
         <BootSplashReadinessObserver />
-        {publicRoute.matched ? (
+        {docsRoute.matched ? (
+          <ThemeProvider>
+            <React.Suspense fallback={<MainRouteFallback />}><PublicNotebookView official noteId={docsRoute.noteId} /></React.Suspense>
+            <Toaster />
+          </ThemeProvider>
+        ) : publicRoute.matched ? (
           <ThemeProvider>
             <React.Suspense fallback={<MainRouteFallback />}>
               <PublicNotebookView token={publicRoute.token} />

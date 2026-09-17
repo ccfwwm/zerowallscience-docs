@@ -1,0 +1,27 @@
+---
+interface Card { title: string; desc: string; image: string; alt: string; nodes: string[]; }
+interface Props { cards: Card[]; }
+const { cards } = Astro.props;
+---
+<div class="architecture-gallery" data-architecture-gallery data-cards={JSON.stringify(cards)}>
+  <div class="architecture-grid">
+    {cards.map((card, index) => <button class="architecture-card" type="button" data-architecture-card={index}><span class="architecture-number">0{index + 1}</span><img src={card.image} alt={card.alt} loading="lazy" width="1536" height="864" /><span class="architecture-card-copy"><strong>{card.title}</strong><span>{card.desc}</span></span></button>)}
+  </div>
+  <dialog class="architecture-dialog" data-architecture-dialog><button class="dialog-close" data-architecture-close type="button" aria-label="Close architecture preview">×</button><div class="architecture-dialog-content"><img data-architecture-image alt="" /><div><span class="eyebrow" data-architecture-eyebrow></span><h3 data-architecture-title></h3><p data-architecture-desc></p><div class="node-list" data-architecture-nodes></div></div></div></dialog>
+</div>
+
+<script>
+  const cards = JSON.parse(document.querySelector('[data-architecture-gallery]')?.getAttribute('data-cards') ?? '[]');
+  const gallery = document.querySelector('[data-architecture-gallery]');
+  if (gallery) {
+    const dialog = gallery.querySelector<HTMLDialogElement>('[data-architecture-dialog]');
+    const image = gallery.querySelector<HTMLImageElement>('[data-architecture-image]');
+    const title = gallery.querySelector<HTMLElement>('[data-architecture-title]');
+    const desc = gallery.querySelector<HTMLElement>('[data-architecture-desc]');
+    const eyebrow = gallery.querySelector<HTMLElement>('[data-architecture-eyebrow]');
+    const nodes = gallery.querySelector<HTMLElement>('[data-architecture-nodes]');
+    gallery.querySelectorAll<HTMLButtonElement>('[data-architecture-card]').forEach((card, index) => card.addEventListener('click', () => { const item = cards[index]; if (!item || !dialog || !image || !title || !desc || !nodes) return; image.src = item.image; image.alt = item.alt; title.textContent = item.title; desc.textContent = item.desc; if (eyebrow) eyebrow.textContent = `Architecture 0${index + 1}`; nodes.innerHTML = item.nodes.map(node => `<span>${node}</span>`).join(''); dialog.showModal(); }));
+    gallery.querySelector('[data-architecture-close]')?.addEventListener('click', () => dialog?.close());
+    dialog?.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
+  }
+</script>

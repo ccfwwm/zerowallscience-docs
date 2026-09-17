@@ -1228,7 +1228,7 @@ export const api = {
     const res = await fetch(`${getBaseUrl()}/settings`, { cache: "no-store" });
     if (!res.ok)
       return {
-        site_title: "nowen-note",
+        site_title: "ZeroWall Science",
         site_favicon: "",
         site_icp_beian: "",
         editor_font_family: "",

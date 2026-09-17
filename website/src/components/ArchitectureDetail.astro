@@ -1,0 +1,5 @@
+---
+interface Props { title: string; lead: string; items: Array<{ name: string; desc: string }>; }
+const { title, lead, items } = Astro.props;
+---
+<div class="architecture-detail"><div><span class="eyebrow">Runtime contract</span><h3>{title}</h3><p>{lead}</p></div><div class="architecture-detail-list">{items.map((item, index) => <article><span>0{index + 1}</span><div><strong>{item.name}</strong><p>{item.desc}</p></div></article>)}</div></div>

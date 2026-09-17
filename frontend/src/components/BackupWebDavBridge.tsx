@@ -372,7 +372,7 @@ function BackupWebDavPanel() {
         <div className="mt-3 space-y-3 border-t border-zinc-200 pt-3 dark:border-zinc-700">
           <div className="flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-[11px] leading-5 text-blue-700 dark:border-blue-900/50 dark:bg-blue-500/10 dark:text-blue-300">
             <ShieldCheck size={14} className="mt-0.5 shrink-0" />
-            <span>Nowen Note 会先在本地生成并校验备份，再上传到 WebDAV。远端断线不会破坏本地备份，也不会把运行中的 SQLite 数据库直接放到网络文件系统。</span>
+            <span>文档系统会先在本地生成并校验备份，再上传到 WebDAV。远端断线不会破坏本地备份，也不会把运行中的 SQLite 数据库直接放到网络文件系统。</span>
           </div>
 
           <div className="flex flex-wrap items-center justify-between gap-2">

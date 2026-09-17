@@ -58,6 +58,7 @@ import tokensRouter from "./routes/tokens";
 import userPreferencesRouter from "./routes/user-preferences";
 import versionRouter, { resolveAppVersion } from "./routes/version";
 import releasesRouter from "./routes/releases";
+import { officialDocs } from "./routes/official-docs";
 import { seedDatabase } from "./db/seed";
 import { initApiTokensTable, looksLikeApiToken, resolveApiToken } from "./lib/api-tokens";
 import { enforceApiTokenAccess } from "./middleware/api-token-resource-scope";
@@ -247,6 +248,7 @@ app.use("/api/shared/*/verify", async (c, next) => {
 });
 
 app.route("/api/shared", sharedRouter);
+app.route("/api/docs", officialDocs);
 
 // 健康检查（无需 JWT）
 // version 字段动态读取根 package.json / ENV，避免常年停在 1.0.0 误导运维。

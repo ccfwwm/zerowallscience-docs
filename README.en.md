@@ -1,3 +1,5 @@
+> This repository now builds the ZeroWall Science website and official documentation system. The website is served at `/`, public docs at `/docs/`, and the documentation admin at `/admin/`. Editing and knowledge-management capabilities derive from Nowen Note under its existing GPL-3.0 license and history.
+
 <div align="center">
   <img src="./electron/icon.png" alt="Nowen Note" width="104" />
   <h1>Nowen Note</h1>

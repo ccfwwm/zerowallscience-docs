@@ -1,0 +1,33 @@
+services:
+  docs:
+    image: zerowallscience-docs:${DEPLOY_SHA}
+    container_name: zerowallscience-docs
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:13001:3001"
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: 3001
+      DB_PATH: /app/data/zerowallscience-docs.db
+      BACKUP_DIR: /app/backups
+      BACKUP_AUTO_ENABLED: "true"
+      BACKUP_AUTO_INTERVAL_HOURS: "24"
+      ZEROWALL_DOCS_SITE: "1"
+      ZEROWALL_DOCS_CONTENT: /app/content/docs
+      PUBLIC_WEB_ORIGIN: https://zerowallscience.org
+      TZ: Asia/Shanghai
+    volumes:
+      - /var/lib/zerowallscience-docs/data:/app/data
+      - /var/lib/zerowallscience-docs/backups:/app/backups
+    cpus: 1.0
+    mem_limit: 1536m
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s

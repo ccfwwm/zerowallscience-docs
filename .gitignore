@@ -64,4 +64,8 @@ tsconfig.tsbuildinfo
 backend-dev.out
 frontend-dev.out
 .worktrees/
+.github/upstream-workflows/
+website/.astro/
+website/dist/
+website/node_modules/
 frontend/dist.bak

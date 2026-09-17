@@ -424,7 +424,7 @@ export default function AndroidShareImportCenter() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <h2 className="font-semibold text-tx-primary">导入到 Nowen Note</h2>
+              <h2 className="font-semibold text-tx-primary">导入到 ZeroWall Science 文档</h2>
               {payloads.length > 1 && (
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-app-hover text-tx-tertiary">
                   还有 {payloads.length - 1} 项待处理
