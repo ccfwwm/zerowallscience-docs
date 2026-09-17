@@ -395,7 +395,9 @@ function PublicNotebookReader({ token, official = false, initialNoteId }: { toke
       <aside className="hidden w-[280px] shrink-0 flex-col border-r border-app-border bg-app-surface md:flex">
         <div className="border-b border-app-border p-4">
           <button className="flex min-w-0 items-center gap-3 text-left" onClick={() => official ? window.location.assign("/") : navigateToAppPath("/public")}>
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-xl">{info.icon || "📚"}</div>
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-xl">
+              {official ? <img src="/admin/zerowall-icon.png" alt="" className="h-9 w-9 rounded-lg object-contain" /> : info.icon || "📚"}
+            </div>
             <div className="min-w-0"><div className="truncate text-sm font-semibold">{info.name}</div><div className="truncate text-[11px] text-tx-tertiary">{official ? "官方使用文档" : `${info.ownerDisplayName || info.ownerUsername} 的公共知识库`}</div></div>
           </button>
           <div className="relative mt-4">
@@ -434,7 +436,10 @@ function PublicNotebookReader({ token, official = false, initialNoteId }: { toke
       <main className="min-w-0 flex-1 overflow-y-auto">
         <header className="sticky top-0 z-10 border-b border-app-border bg-app-surface/90 px-4 py-3 backdrop-blur-xl md:hidden">
           <div className="flex items-center justify-between gap-3">
-            <button className="flex min-w-0 items-center gap-2" onClick={() => official ? window.location.assign("/") : navigateToAppPath("/public")}><BookOpen size={17} className="text-accent-primary" /><span className="truncate text-sm font-semibold">{info.name}</span></button>
+            <button className="flex min-w-0 items-center gap-2" onClick={() => official ? window.location.assign("/") : navigateToAppPath("/public")}>
+              {official ? <img src="/admin/zerowall-icon.png" alt="" className="h-[18px] w-[18px] rounded object-contain" /> : <BookOpen size={17} className="text-accent-primary" />}
+              <span className="truncate text-sm font-semibold">{info.name}</span>
+            </button>
             {official ? <a className="text-xs text-accent-primary" href="/">返回官网</a> : <Button size="sm" variant="outline" onClick={join}><UserPlus size={13} className="mr-1" />加入</Button>}
           </div>
           <select className="mt-3 h-9 w-full rounded-lg border border-app-border bg-app-bg px-3 text-xs" value={activeNoteId} onChange={(event) => setActiveNoteId(event.target.value)}>
