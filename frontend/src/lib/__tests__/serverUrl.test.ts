@@ -233,6 +233,27 @@ describe("inferBrowserServerBaseUrl", () => {
     })).toBe("");
   });
 
+  it("不会把官方文档路由误判为服务器路径前缀", () => {
+    expect(inferBrowserServerBaseUrl({
+      protocol: "https:",
+      origin: "https://notes.example.com",
+      pathname: "/docs",
+    })).toBe("");
+    expect(inferBrowserServerBaseUrl({
+      protocol: "https:",
+      origin: "https://notes.example.com",
+      pathname: "/docs/overview",
+    })).toBe("");
+  });
+
+  it("保留官方文档路由之前的反向代理路径前缀", () => {
+    expect(inferBrowserServerBaseUrl({
+      protocol: "https:",
+      origin: "https://notes.example.com",
+      pathname: "/nowen/docs/overview",
+    })).toBe("https://notes.example.com/nowen");
+  });
+
   it("保留公共知识库路由之前的反向代理路径前缀", () => {
     expect(inferBrowserServerBaseUrl({
       protocol: "https:",

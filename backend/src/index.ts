@@ -209,7 +209,7 @@ app.use("/api/shared/*", async (c, next) => {
     "Content-Security-Policy",
     [
       "default-src 'self'",
-      "script-src 'self'",
+      "script-src 'self' 'sha256-3vMVZAz2TuX++6zOW4MD4mjdB0BssPI8UiXNEVXR0/Q=' 'sha256-uiVUgHUVflLan6Ybp4HAkxVs8CE+Wm1zcbIVOsAAV9c='",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https:",
       "font-src 'self' data:",
@@ -756,7 +756,7 @@ if (process.env.NODE_ENV === "production") {
         "Content-Security-Policy",
         [
           "default-src 'self'",
-          "script-src 'self'",
+          "script-src 'self' 'sha256-3vMVZAz2TuX++6zOW4MD4mjdB0BssPI8UiXNEVXR0/Q=' 'sha256-uiVUgHUVflLan6Ybp4HAkxVs8CE+Wm1zcbIVOsAAV9c='",
           "style-src 'self' 'unsafe-inline'",
           "img-src 'self' data: blob: https:",
           "font-src 'self' data:",
