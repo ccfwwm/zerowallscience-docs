@@ -18,6 +18,9 @@ export function initializeOfficialSite(): void {
       db.prepare("INSERT INTO users (id, username, passwordHash, role, displayName) VALUES (?, 'admin', ?, 'admin', 'ZeroWall Science')").run(admin.id, bcrypt.hashSync(password, 12));
     }
     const setting = db.prepare("INSERT OR IGNORE INTO system_settings (key,value) VALUES (?,?)");
+    // 文档站使用自己的入门内容，禁用上游首次登录示例教程。
+    db.exec("DROP TRIGGER IF EXISTS users_seed_onboarding_on_first_login; DROP TRIGGER IF EXISTS users_seed_onboarding_after_insert");
+    db.prepare("INSERT OR IGNORE INTO user_onboarding_state (userId,version,status) VALUES (?,1,'existing')").run(admin.id);
     for (const [key,value] of Object.entries({
       site_title: "ZeroWall Science 文档", site_favicon: "/admin/zerowall-icon.png",
       site_public_web_origin: "https://zerowallscience.org", site_docs_notebook_id: "zerowall-official-docs",

@@ -254,6 +254,12 @@ describe("inferBrowserServerBaseUrl", () => {
     })).toBe("https://notes.example.com/nowen");
   });
 
+  it("后台页面与官网共用根路径 API 和 WebSocket", () => {
+    expect(inferBrowserServerBaseUrl({
+      protocol: "https:", origin: "https://zerowallscience.org", pathname: "/admin/",
+    })).toBe("");
+  });
+
   it("保留公共知识库路由之前的反向代理路径前缀", () => {
     expect(inferBrowserServerBaseUrl({
       protocol: "https:",

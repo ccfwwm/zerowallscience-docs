@@ -168,6 +168,7 @@ export function inferBrowserServerBaseUrl(
   const routeSuffix = pathname.match(/\/(?:share|notebook-share)\/[A-Za-z0-9_-]+$/)?.[0]
     || pathname.match(/\/public(?:\/[^/]+)?$/)?.[0]
     || pathname.match(/\/docs(?:\/[^/]+)?$/)?.[0]
+    || pathname.match(/\/admin$/)?.[0]
     || pathname.match(/\/login$/)?.[0]
     || "";
   if (routeSuffix) pathname = pathname.slice(0, -routeSuffix.length);

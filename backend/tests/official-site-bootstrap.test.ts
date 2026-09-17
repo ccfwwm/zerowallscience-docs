@@ -13,6 +13,8 @@ test("官方文档初始化幂等且不会覆盖后台编辑", async () => {
   const { initializeOfficialSite } = await import("../src/runtime/official-site-bootstrap.ts");
   const { getDb, closeDb } = await import("../src/db/schema.ts");
   const db = getDb();
+  db.prepare("UPDATE users SET lastLoginAt = datetime('now') WHERE username = 'admin'").run();
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM notes WHERE id LIKE 'onboarding-%'").get() as { count: number }).count, 0);
   const count = db.prepare("SELECT COUNT(*) AS count FROM notes WHERE notebookId IN (SELECT id FROM notebooks WHERE parentId = 'zerowall-official-docs')").get() as { count: number };
   assert.equal(count.count, 13);
   db.prepare("UPDATE notes SET content = ?, contentText = ? WHERE id = 'overview'").run("人工修改", "人工修改");

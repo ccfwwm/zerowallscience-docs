@@ -268,7 +268,7 @@ export default function NavRail({ variant = "desktop" }: { variant?: "desktop" |
         </button>
       )}
 
-      <a href="/docs/" className="p-2 text-xs text-accent-primary" title="打开官方文档">文档</a>
+      <a href="/" className="p-2 text-xs text-accent-primary" title="返回官网">官网</a>
       <div className={cn("my-2 border-t border-app-border/60", showLabel ? "w-8" : "w-6")} aria-hidden />
 
       <div className="flex-1 min-h-0 w-full overflow-y-auto no-scrollbar flex flex-col items-center gap-1 px-1">

@@ -1,5 +1,5 @@
 name: CI
-on: { pull_request: {}, push: { branches: [main] } }
+on: { pull_request: {}, push: { branches: [main] }, workflow_call: {} }
 permissions: { contents: read }
 jobs:
   verify:
@@ -12,6 +12,9 @@ jobs:
         working-directory: frontend
       - run: npm run build
         working-directory: frontend
+      - run: npx vitest run src/lib/__tests__/serverUrl.test.ts
+        working-directory: frontend
+      - run: python3 scripts/tests/zerowall-deploy.test.py
       - run: npm ci
         working-directory: backend
       - run: npm run build

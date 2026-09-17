@@ -2564,6 +2564,7 @@ export const api = {
   getSiteSettings: () =>
     request<{
       site_title: string;
+      site_docs_notebook_id?: string;
       site_favicon: string;
       site_icp_beian?: string;
       editor_font_family: string;
@@ -2575,6 +2576,7 @@ export const api = {
     }>("/settings"),
   updateSiteSettings: (data: {
     site_title?: string;
+    site_docs_notebook_id?: string;
     site_favicon?: string;
     site_icp_beian?: string;
     editor_font_family?: string;
@@ -2587,6 +2589,7 @@ export const api = {
   }) =>
     request<{
       site_title: string;
+      site_docs_notebook_id?: string;
       site_favicon: string;
       site_icp_beian?: string;
       editor_font_family: string;

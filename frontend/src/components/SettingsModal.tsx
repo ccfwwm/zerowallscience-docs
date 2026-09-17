@@ -1,29 +1,25 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Palette, Shield, Database, X, Settings, Camera, Save, Loader2, Trash2, Upload, Type, Check, ChevronDown, Globe, Bot, Users, Info, ExternalLink, Heart, Sparkles, RefreshCw, ZoomIn, Key, Keyboard, Building2, BookOpen, ToggleLeft, Download, FolderSync, CloudDownload, Mail } from "lucide-react";
+import { Palette, Shield, Database, X, Settings, Camera, Save, Loader2, Trash2, Upload, Type, Check, ChevronDown, Globe, Users, Info, Keyboard, ToggleLeft, FolderSync } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import wechatSponsorQr from "@/assets/sponsor/weixin.jpg";
-import alipaySponsorQr from "@/assets/sponsor/zhifubao.png";
-import qqGroupQr from "@/assets/feedback/qq-group.jpg";
 import ThemeToggle from "@/components/ThemeToggle";
 import SkinSwitcher from "@/components/SkinSwitcher";
 import SecuritySettings from "@/components/SecuritySettings";
 import TokenManagement from "@/components/TokenManagement";
 import DataManager from "@/components/DataManager";
+import OfficialDocsSettings from "@/components/OfficialDocsSettings";
 import FolderSyncSettings from "@/components/settings/FolderSyncSettings";
 import OfflineSyncSettings from "@/components/settings/OfflineSyncSettings";
 import ShortcutSettingsPanel from "@/components/settings/ShortcutSettingsPanel";
 import AISettingsPanel from "@/components/AISettingsPanel";
 import UserManagement from "@/components/UserManagement";
 import WorkspaceManagement from "@/components/WorkspaceManagement";
-import WhatsNewModal from "@/components/WhatsNewModal";
-import AuthorStoryModal from "@/components/AuthorStoryModal";
 import DownloadPanel from "@/components/DownloadPanel";
 import { useSiteSettings, BUILTIN_FONTS, getBuiltinFontName } from "@/hooks/useSiteSettings";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { api } from "@/lib/api";
-import { isDesktop, checkForUpdates, onUpdaterStatus, getReleaseChannel, isPortableDesktop, getAppInfo, setDesktopHideMenuBar as setDesktopHideMenuBarPreference, type UpdaterPayload } from "@/lib/desktopBridge";
+import { isDesktop, getAppInfo, setDesktopHideMenuBar as setDesktopHideMenuBarPreference } from "@/lib/desktopBridge";
 import { CustomFont } from "@/types";
 import { cn } from "@/lib/utils";
 import { detectShortcutSurface } from "@/lib/shortcutRegistry";
@@ -44,7 +40,7 @@ import {
   type MobileKnowledgeTreeViewMode,
 } from "@/lib/mobileKnowledgeTreeViewMode";
 
-type TabId = "appearance" | "switches" | "shortcuts" | "ai" | "security" | "tokens" | "data" | "offlineSync" | "folderSync" | "users" | "workspaces" | "download" | "about";
+type TabId = "docs" | "appearance" | "switches" | "shortcuts" | "ai" | "security" | "tokens" | "data" | "offlineSync" | "folderSync" | "users" | "workspaces" | "download" | "about";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -84,638 +80,22 @@ class PanelErrorBoundary extends React.Component<
   }
 }
 
-/**
- * VersionCompareCard — "关于"页的版本对比卡
- *
- * 展示：
- *   - 当前客户端版本（编译期 __APP_VERSION__）
- *   - 服务端版本（/api/version, 由后端从根 package.json 解析）
- *   - GitHub 最新 release（后端 /api/releases/latest 代理，含 60s 缓存）
- *
- * 交互：
- *   - 桌面端（Electron）额外渲染"检查更新"按钮，走 electron-updater；
- *     同时订阅 updater 状态并在卡片下方滚动显示（checking / downloading %）。
- *   - Web / 移动端没有桥接，只显示三个版本 + 仓库链接。
- *
- * 错误策略：
- *   - 后端失败 → serverVersion 显示"unknown"并给"重试"按钮；
- *   - release 失败 → 展示 fallback 文案 + 仓库链接；
- *   - 都静默失败，不弹错误弹窗——"版本对比"本身是锦上添花，不要阻塞 About 渲染。
- */
-function VersionCompareCard() {
-  const [serverVersion, setServerVersion] = useState<string | null>(null);
-  const [serverError, setServerError] = useState<string | null>(null);
-  const [release, setRelease] = useState<
-    | {
-        available: true;
-        tag: string;
-        version: string;
-        name: string;
-        htmlUrl: string;
-        publishedAt: string;
-        prerelease: boolean;
-        draft: boolean;
-        body?: string;
-      }
-    | { available: false; reason: string }
-    | null
-  >(null);
-  const [loading, setLoading] = useState(false);
-  const [updaterStatus, setUpdaterStatus] = useState<UpdaterPayload | null>(null);
-  const [reloadTick, setReloadTick] = useState(0);
-
-  const desktop = isDesktop();
-  const releaseChannel = getReleaseChannel();
-  // Portable / 免安装版（Windows portable target）不走 electron-updater，
-  // autoUpdater.checkForUpdates() 会抛 error；此时按钮要换成"前往下载页"，
-  // 避免用户点了之后静默失败还以为是网络问题。
-  const portable = isPortableDesktop();
-  const clientVersion = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0";
-
-  // 拉版本信息
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setServerError(null);
-    Promise.allSettled([api.getVersion(), api.getLatestRelease()])
-      .then(([v, r]) => {
-        if (cancelled) return;
-        if (v.status === "fulfilled") {
-          setServerVersion(v.value.appVersion || null);
-        } else {
-          setServerError(v.reason instanceof Error ? v.reason.message : String(v.reason));
-        }
-        if (r.status === "fulfilled") {
-          setRelease(r.value);
-        } else {
-          setRelease({ available: false, reason: "request_failed" });
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [reloadTick]);
-
-  // 桌面端订阅 autoUpdater 状态
-  useEffect(() => {
-    if (!desktop) return;
-    const off = onUpdaterStatus((p) => setUpdaterStatus(p));
-    return off;
-  }, [desktop]);
-
-  const handleRetry = () => setReloadTick((t) => t + 1);
-  const handleCheckUpdates = async () => {
-    setUpdaterStatus({ status: "checking" });
-    try {
-      const res = await checkForUpdates();
-      if (!res.ok && res.reason) {
-        setUpdaterStatus({ status: "error", message: res.reason });
-      }
-    } catch (e) {
-      setUpdaterStatus({
-        status: "error",
-        message: e instanceof Error ? e.message : String(e),
-      });
-    }
-  };
-
-  // 比较结果：outdated = 客户端 < 服务端
-  const isOutdated =
-    !!serverVersion && serverVersion !== "0.0.0" && serverVersion !== clientVersion;
-  const hasNewerRelease =
-    release?.available &&
-    release.version !== clientVersion &&
-    release.version !== serverVersion;
-
-  return (
-    <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 p-4 space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">版本信息</h3>
-        <button
-          type="button"
-          onClick={handleRetry}
-          disabled={loading}
-          className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400 hover:text-accent-primary disabled:opacity-50"
-          title="重新拉取"
-        >
-          <RefreshCw size={12} className={loading ? "animate-spin" : ""} />
-          {loading ? "检查中" : "重新检查"}
-        </button>
-      </div>
-
-      <div className="grid grid-cols-[auto_1fr_auto] gap-x-3 gap-y-2 text-xs">
-        {/* 客户端 */}
-        <span className="text-zinc-500 dark:text-zinc-400">当前客户端</span>
-        <span className="font-mono text-zinc-900 dark:text-zinc-100">v{clientVersion}</span>
-        <span className="text-zinc-400 dark:text-zinc-600">
-          {typeof navigator !== "undefined" && navigator.userAgent.includes("Electron")
-            ? "Desktop"
-            : desktop
-              ? "Desktop"
-              : "Web"}
-        </span>
-
-        {/* 服务端 */}
-        <span className="text-zinc-500 dark:text-zinc-400">服务端</span>
-        <span className="font-mono text-zinc-900 dark:text-zinc-100">
-          {serverError ? (
-            <span className="text-amber-500">unknown</span>
-          ) : serverVersion ? (
-            <>v{serverVersion}</>
-          ) : (
-            <span className="text-zinc-400">—</span>
-          )}
-        </span>
-        <span className="text-right">
-          {isOutdated ? (
-            <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400">
-              需刷新
-            </span>
-          ) : serverVersion ? (
-            <span className="text-emerald-500">匹配</span>
-          ) : null}
-        </span>
-
-        {/* GitHub 最新 release */}
-        <span className="text-zinc-500 dark:text-zinc-400">最新发布</span>
-        <span className="font-mono text-zinc-900 dark:text-zinc-100 truncate">
-          {release?.available ? (
-            <a
-              href={release.htmlUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-accent-primary hover:underline"
-              title={release.name || release.tag}
-            >
-              v{release.version}
-            </a>
-          ) : release && !release.available ? (
-            <span className="text-zinc-400">不可用</span>
-          ) : (
-            <span className="text-zinc-400">—</span>
-          )}
-        </span>
-        <span className="text-right">
-          {hasNewerRelease ? (
-            <span className="px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-600 dark:text-blue-400">
-              可升级
-            </span>
-          ) : null}
-        </span>
-      </div>
-
-      {/* 桌面端：检查更新按钮 + autoUpdater 状态
-          Portable 版本不支持 electron-updater，切换成"前往下载页"CTA，
-          并显式给出原因提示，避免用户点按钮后只看到模糊的错误。 */}
-      {desktop && (
-        <div className="pt-2 border-t border-zinc-200/60 dark:border-zinc-800/60 space-y-2">
-          {releaseChannel && (
-            <div className="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
-              <span>发布渠道</span>
-              <span className="font-mono px-1.5 py-0.5 rounded bg-zinc-200/60 dark:bg-zinc-700/40 text-zinc-700 dark:text-zinc-200">
-                {releaseChannel}
-                {portable ? " · portable" : ""}
-              </span>
-            </div>
-          )}
-          {portable ? (
-            <>
-              <a
-                href="https://github.com/cropflre/nowen-note/releases/latest"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary text-white text-xs font-medium hover:opacity-90"
-              >
-                <ExternalLink size={12} />
-                前往下载页
-              </a>
-              <p className="text-[11px] text-zinc-400 dark:text-zinc-500 text-center leading-relaxed">
-                免安装版不支持自动更新，请下载新版本 portable.exe 替换当前文件。
-              </p>
-            </>
-          ) : (
-            <>
-              <button
-                type="button"
-                onClick={handleCheckUpdates}
-                disabled={updaterStatus?.status === "checking" || updaterStatus?.status === "downloading"}
-                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-primary text-white text-xs font-medium hover:opacity-90 disabled:opacity-60"
-              >
-                <RefreshCw
-                  size={12}
-                  className={
-                    updaterStatus?.status === "checking" || updaterStatus?.status === "downloading"
-                      ? "animate-spin"
-                      : ""
-                  }
-                />
-                检查桌面端更新
-              </button>
-              {updaterStatus && (
-                <div className="text-xs text-zinc-500 dark:text-zinc-400 text-center">
-                  {renderUpdaterStatus(updaterStatus)}
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function renderUpdaterStatus(p: UpdaterPayload): string {
-  switch (p.status) {
-    case "checking":
-      return "正在检查更新…";
-    case "not-available":
-      return "已是最新版本";
-    case "available":
-      return `发现新版本 v${p.version ?? "?"}，准备下载`;
-    case "downloading": {
-      const pct = typeof p.percent === "number" ? ` ${p.percent.toFixed(1)}%` : "";
-      return `正在下载${pct}`;
-    }
-    case "downloaded":
-      return `新版本 v${p.version ?? "?"} 已下载，将在下次重启时安装`;
-    case "error":
-      return `更新失败：${p.message || "未知错误"}`;
-    default:
-      return "";
-  }
-}
-
-/**
- * 简易图片放大 Lightbox
- * - 点击图片打开，Esc/点击蒙层/关闭按钮 关闭
- * - createPortal 到 body，避免被 SettingsModal 的 overflow/transform 截断
- * - 故意做轻：赞赏码场景只需要看清原图，不需要缩放/平移
- */
-function ImageLightbox({ src, alt, onClose }: { src: string; alt?: string; onClose: () => void }) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [onClose]);
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-[10000] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <button
-        type="button"
-        className="absolute top-3 right-3 p-2 rounded-lg bg-black/60 border border-white/10 text-white/90 hover:bg-white/10 transition-colors"
-        title="关闭 (Esc)"
-        aria-label="关闭"
-        onClick={onClose}
-      >
-        <X size={16} />
-      </button>
-      <img
-        src={src}
-        alt={alt}
-        className="max-w-[92vw] max-h-[88vh] object-contain rounded-lg shadow-2xl bg-white"
-        draggable={false}
-      />
-    </div>,
-    document.body
-  );
-}
-
 function AboutPanel() {
-  const { t } = useTranslation();
-  const feedbackEmail = "nowenlab@qq.com";
-  const feedbackMailto = `mailto:${feedbackEmail}?subject=${encodeURIComponent("[Nowen Note 反馈]")}`;
-  const feedbackQqGroupNumber = "1093473044";
-  const [showSponsor, setShowSponsor] = useState(false);
-  const [sponsorMethod, setSponsorMethod] = useState<"wechat" | "alipay">("wechat");
-  const [showWhatsNew, setShowWhatsNew] = useState(false);
-  const [showAuthorStory, setShowAuthorStory] = useState(false);
-  // 赞赏码大图预览：点击赞赏码缩略图时弹起 Lightbox
-  const [sponsorPreviewOpen, setSponsorPreviewOpen] = useState(false);
-  const [feedbackQqPreviewOpen, setFeedbackQqPreviewOpen] = useState(false);
-  const sponsorImage = sponsorMethod === "wechat" ? wechatSponsorQr : alipaySponsorQr;
-  const sponsorLabel = sponsorMethod === "wechat"
-    ? t('about.sponsorWechat')
-    : t('about.sponsorAlipay');
   return (
-    <div className="space-y-6">
-      {/* 标题区 */}
-      <div className="text-center py-4">
-        <h2 className="text-2xl font-bold text-zinc-900 dark:text-zinc-100">{t('about.appName')}</h2>
-        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">{t('about.slogan')}</p>
-        <span className="inline-block mt-2 px-3 py-0.5 rounded-full bg-accent-primary/10 text-accent-primary text-xs font-medium">
-          {t('about.version')} {__APP_VERSION__}
-        </span>
-      </div>
-
-      {/* 版本对比卡（客户端 / 服务端 / GitHub 最新 release） */}
-      <VersionCompareCard />
-
-      <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
-
-      {/* 简介 */}
-      <p className="text-sm text-zinc-600 dark:text-zinc-400 leading-relaxed">
-        {t('about.description')}
+    <section className="space-y-5">
+      <img src="/admin/zerowall-icon.png" width="64" height="64" alt="ZeroWall Science" />
+      <h2 className="text-2xl font-bold">ZeroWall Science 文档中心</h2>
+      <p>管理官方使用指南、科研流程和常见问题。正式文档目录保存即发布；草稿请保存在独立的非公开目录。</p>
+      <nav className="flex flex-wrap gap-5 text-accent-primary">
+        <a href="/">返回官网</a>
+        <a href="/docs/">查看文档</a>
+        <a href="/#download">下载 ZeroWall Science</a>
+      </nav>
+      <p className="text-sm text-tx-secondary">
+        本文档管理系统基于 <a href="https://github.com/cropflre/nowen-note">Nowen Note</a>，
+        保留其 GPL-3.0 许可证及第三方归属。ZeroWall Science 桌面产品遵循自身许可证。
       </p>
-
-      {/* 核心能力 */}
-      <div>
-        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100 mb-3">{t('about.features')}</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-          {[
-            'featureEditor', 'featureAI', 'featureClipper',
-            'featureMindMap', 'featureSync', 'featureSelfHost',
-          ].map((key) => (
-            <div key={key} className="flex items-start gap-2 p-2.5 rounded-lg bg-zinc-50 dark:bg-zinc-800/40">
-              <Check size={14} className="text-accent-primary mt-0.5 shrink-0" />
-              <span className="text-xs text-zinc-700 dark:text-zinc-300">{t(`about.${key}`)}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="h-px bg-zinc-200 dark:bg-zinc-800" />
-
-      {/* 开源信息 */}
-      <div className="flex items-center justify-between p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30">
-        <div>
-          <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{t('about.openSource')}</span>
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('about.license')}</p>
-        </div>
-        <a
-          href="https://github.com/cropflre/nowen-note"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 text-xs font-medium hover:opacity-80 transition-opacity"
-        >
-          <ExternalLink size={12} />
-          {t('about.github')}
-        </a>
-      </div>
-
-      {/* 更新日志 */}
-      <button
-        type="button"
-        onClick={() => setShowWhatsNew(true)}
-        className="w-full flex items-center justify-between p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/50 transition-colors text-left"
-      >
-        <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-accent-primary/10 text-accent-primary">
-            <Sparkles size={16} />
-          </span>
-          <div>
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              {t('about.changelog')}
-            </div>
-            <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              {t('about.changelogDesc')}
-            </div>
-          </div>
-        </div>
-        <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-          {t('about.viewChangelog')}
-        </span>
-      </button>
-
-      {/* 作者感言 —— 项目背后的故事 */}
-      <button
-        type="button"
-        onClick={() => setShowAuthorStory(true)}
-        className="w-full flex items-center justify-between p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/50 transition-colors text-left"
-      >
-        <div className="flex items-center gap-3">
-          <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-amber-500/10 text-amber-500">
-            <BookOpen size={16} />
-          </span>
-          <div>
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              {t('about.authorStory')}
-            </div>
-            <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              {t('about.authorStoryDesc')}
-            </div>
-          </div>
-        </div>
-        <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-          {t('about.authorStoryAction')}
-        </span>
-      </button>
-
-      {/* 意见与 Bug 反馈 */}
-      <a
-        href={feedbackMailto}
-        className="w-full flex items-center justify-between p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/50 transition-colors text-left"
-      >
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 shrink-0">
-            <Mail size={16} />
-          </span>
-          <div className="min-w-0">
-            <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              {t('about.feedback')}
-            </div>
-            <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-              {t('about.feedbackDesc')}
-            </div>
-          </div>
-        </div>
-        <div className="ml-4 text-right shrink-0">
-          <div className="text-xs text-zinc-500 dark:text-zinc-400">
-            {t('about.feedbackAction')}
-          </div>
-          <div className="text-[11px] text-zinc-400 dark:text-zinc-500 mt-0.5">
-            {feedbackEmail}
-          </div>
-        </div>
-      </a>
-
-      {/* QQ 群反馈 */}
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 overflow-hidden">
-        <div className="flex items-center justify-between gap-3 p-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-sky-500/10 text-sky-500 shrink-0">
-              <Users size={16} />
-            </span>
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                {t('about.feedbackQqGroup')}
-              </div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                {t('about.feedbackQqGroupDesc')}
-              </div>
-              <div className="text-xs font-medium text-zinc-600 dark:text-zinc-300 mt-1">
-                {t('about.feedbackQqGroupNumber', { number: feedbackQqGroupNumber })}
-              </div>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={() => setFeedbackQqPreviewOpen(true)}
-            className="shrink-0 rounded-lg overflow-hidden cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
-            title={t('about.feedbackQqGroup')}
-            aria-label={t('about.feedbackQqGroup')}
-          >
-            <img
-              src={qqGroupQr}
-              alt={t('about.feedbackQqGroupNumber', { number: feedbackQqGroupNumber })}
-              className="w-16 h-16 object-cover bg-white p-1"
-              loading="lazy"
-              draggable={false}
-            />
-          </button>
-        </div>
-      </div>
-
-      {/* 支持作者 / 打赏 */}
-      <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setShowSponsor((v) => !v)}
-          className="w-full flex items-center justify-between p-4 hover:bg-zinc-100/60 dark:hover:bg-zinc-800/50 transition-colors"
-        >
-          <div className="flex items-center gap-3">
-            <span className="flex items-center justify-center w-8 h-8 rounded-lg bg-rose-500/10 text-rose-500">
-              <Heart size={16} fill="currentColor" />
-            </span>
-            <div className="text-left">
-              <div className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                {t('about.sponsor')}
-              </div>
-              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
-                {t('about.sponsorDesc')}
-              </div>
-            </div>
-          </div>
-          <span className="text-xs text-zinc-500 dark:text-zinc-400 shrink-0">
-            {showSponsor ? t('about.sponsorCollapse') : t('about.sponsorAction')}
-          </span>
-        </button>
-        <AnimatePresence initial={false}>
-          {showSponsor && (
-            <motion.div
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: 'auto', opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="overflow-hidden"
-            >
-              <div className="px-4 pb-4 pt-2 flex flex-col items-center gap-3 border-t border-zinc-200/60 dark:border-zinc-800/60">
-                <div
-                  className="grid w-full max-w-xs grid-cols-2 rounded-lg bg-zinc-200/70 p-1 dark:bg-zinc-800"
-                  role="tablist"
-                  aria-label={t('about.sponsorMethod')}
-                >
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={sponsorMethod === "wechat"}
-                    onClick={() => setSponsorMethod("wechat")}
-                    className={cn(
-                      "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                      sponsorMethod === "wechat"
-                        ? "bg-emerald-500 text-white shadow-sm"
-                        : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                    )}
-                  >
-                    {t('about.sponsorWechat')}
-                  </button>
-                  <button
-                    type="button"
-                    role="tab"
-                    aria-selected={sponsorMethod === "alipay"}
-                    onClick={() => setSponsorMethod("alipay")}
-                    className={cn(
-                      "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-                      sponsorMethod === "alipay"
-                        ? "bg-blue-500 text-white shadow-sm"
-                        : "text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100",
-                    )}
-                  >
-                    {t('about.sponsorAlipay')}
-                  </button>
-                </div>
-                {/* 点击图片打开 Lightbox 看大图（按钮包裹 → 无障碍/键盘可达） */}
-                <button
-                  type="button"
-                  onClick={() => setSponsorPreviewOpen(true)}
-                  className="group relative rounded-lg overflow-hidden cursor-zoom-in focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-400"
-                  title={sponsorLabel}
-                  aria-label={sponsorLabel}
-                >
-                  <img
-                    src={sponsorImage}
-                    alt={sponsorLabel}
-                    className="w-44 sm:w-52 max-h-72 object-contain rounded-lg bg-white p-2 shadow-sm transition-transform duration-200 group-hover:scale-[1.02]"
-                    loading="lazy"
-                    draggable={false}
-                  />
-                  {/* hover 时浮现的放大图标提示 */}
-                  <span className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/20 transition-colors">
-                    <span className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 px-2 py-1 rounded-md bg-black/60 text-white text-[11px]">
-                      <ZoomIn size={12} />
-                      点击放大
-                    </span>
-                  </span>
-                </button>
-                <p className="text-xs text-zinc-500 dark:text-zinc-400 text-center">
-                  {sponsorMethod === "wechat"
-                    ? t('about.sponsorWechatTip')
-                    : t('about.sponsorAlipayTip')}
-                </p>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-
-      {/* 底部 */}
-      <p className="text-center text-xs text-zinc-400 dark:text-zinc-600">
-        {t('about.madeWith')}
-      </p>
-
-      {/* 更新日志 Modal —— 用户点"查看更新"按钮时唤起 */}
-      <WhatsNewModal
-        open={showWhatsNew}
-        onClose={() => setShowWhatsNew(false)}
-      />
-
-      {/* 作者感言 Modal —— 项目背后的故事 */}
-      <AuthorStoryModal
-        open={showAuthorStory}
-        onClose={() => setShowAuthorStory(false)}
-      />
-
-      {feedbackQqPreviewOpen && (
-        <ImageLightbox
-          src={qqGroupQr}
-          alt={t('about.feedbackQqGroupNumber', { number: feedbackQqGroupNumber })}
-          onClose={() => setFeedbackQqPreviewOpen(false)}
-        />
-      )}
-
-      {/* 赞赏码大图预览 Lightbox */}
-      {sponsorPreviewOpen && (
-        <ImageLightbox
-          src={sponsorImage}
-          alt={sponsorLabel}
-          onClose={() => setSponsorPreviewOpen(false)}
-        />
-      )}
-    </div>
+    </section>
   );
 }
 
@@ -1539,6 +919,7 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
   const isAdmin = currentUser?.role === "admin";
 
   const SETTING_TABS = [
+    ...(isAdmin ? [{ id: "docs" as const, label: "文档发布", icon: Globe }] : []),
     { id: "appearance" as const, label: t('settings.appearance'), icon: Palette },
     { id: "switches" as const, label: t('settings.switches'), icon: ToggleLeft },
     ...(shortcutSurface !== "android" ? [{ id: "shortcuts" as const, label: "快捷键", icon: Keyboard }] : []),
@@ -1729,6 +1110,7 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
                     </div>
                   }
                 >
+            {activeTab === "docs" && isAdmin && <OfficialDocsSettings />}
             {activeTab === "appearance" && <AppearancePanel />}
             {activeTab === "switches" && <SwitchesPanel />}
             {activeTab === "shortcuts" && shortcutSurface !== "android" && <ShortcutSettingsPanel />}

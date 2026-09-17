@@ -1,19 +1,8 @@
-import { Fragment, Profiler, type PropsWithChildren, type ReactNode } from "react";
-import OnboardingOpenBridge from "@/components/OnboardingOpenBridge";
+import { Profiler, type PropsWithChildren } from "react";
 import { recordPhaseAPerfEvent } from "@/lib/phaseAPerfDiagnostics";
 
-function withAppOnboarding(children: ReactNode, id: string): ReactNode {
-  if (id !== "AppLayout") return children;
-  return (
-    <Fragment>
-      <OnboardingOpenBridge />
-      {children}
-    </Fragment>
-  );
-}
-
 export function PhaseAPerfProfiler({ children, id = "TiptapEditor" }: PropsWithChildren<{ id?: string }>) {
-  const content = withAppOnboarding(children, id);
+  const content = children;
   if (import.meta.env.VITE_PHASE_A_PERF !== "1") return content;
   return (
     <Profiler
