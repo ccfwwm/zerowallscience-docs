@@ -137,13 +137,19 @@ settings.put("/", async (c) => {
   }
 
   if (entries.length > 0) getDb().transaction(() => {
+    const db = getDb();
+    const upsertSetting = db.prepare(`
+      INSERT INTO system_settings (key, value, "updatedAt")
+      VALUES (?, ?, datetime('now'))
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, "updatedAt" = datetime('now')
+    `);
     if (body.site_docs_notebook_id !== undefined) {
       // 绑定动作与关闭评论原子提交，保证官方文档始终只读。
       getDb().prepare("UPDATE notebook_publications SET allowComment = 0, updatedAt = datetime('now') WHERE notebookId = ?")
         .run(body.site_docs_notebook_id.trim());
     }
-    // setMany 自带事务；这里已经处于同一事务中，逐项写入以避免 SQLite 嵌套写事务锁定。
-    for (const entry of entries) systemSettingsRepository.set(entry.key, entry.value);
+    // 绑定和设置写入共用同一个 SQLite 事务，避免嵌套 repository 事务导致锁定。
+    for (const entry of entries) upsertSetting.run(entry.key, entry.value);
   })();
   return c.json(readSettings());
 });
