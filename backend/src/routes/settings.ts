@@ -142,7 +142,8 @@ settings.put("/", async (c) => {
       getDb().prepare("UPDATE notebook_publications SET allowComment = 0, updatedAt = datetime('now') WHERE notebookId = ?")
         .run(body.site_docs_notebook_id.trim());
     }
-    systemSettingsRepository.setMany(entries);
+    // setMany 自带事务；这里已经处于同一事务中，逐项写入以避免 SQLite 嵌套写事务锁定。
+    for (const entry of entries) systemSettingsRepository.set(entry.key, entry.value);
   })();
   return c.json(readSettings());
 });
