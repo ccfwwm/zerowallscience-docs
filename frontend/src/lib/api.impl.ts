@@ -2561,6 +2561,7 @@ export const api = {
   },
 
   // Site Settings
+  getOfficialDocsCandidates: () => request<{ id: string; name: string; workspaceName: string | null; allowComment: number }[]>("/settings/official-docs-candidates"),
   getSiteSettings: () =>
     request<{
       site_title: string;

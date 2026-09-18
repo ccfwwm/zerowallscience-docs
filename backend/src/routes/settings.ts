@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { isSystemAdmin } from "../middleware/acl";
+import { getDb } from "../db/schema";
+import { getOfficialDocsCandidates } from "../lib/officialDocsCandidates";
 import { invalidateFilesQueryDebugCache } from "./files";
 import { systemSettingsRepository } from "../repositories";
 import {
@@ -70,6 +72,12 @@ function readSettings(): Record<string, string> {
 
 settings.get("/", (c) => c.json(readSettings()));
 
+settings.get("/official-docs-candidates", (c) => {
+  const userId = c.req.header("X-User-Id") || "";
+  if (!isSystemAdmin(userId)) return c.json({ error: "仅管理员可设置官方文档" }, 403);
+  return c.json(getOfficialDocsCandidates(userId));
+});
+
 settings.put("/", async (c) => {
   const body = await c.req.json() as Partial<SiteSettings>;
   const userId = c.req.header("X-User-Id") || "";
@@ -104,6 +112,9 @@ settings.put("/", async (c) => {
     entries.push(...resolved.entries);
   }
   if (body.site_docs_notebook_id !== undefined) {
+    if (typeof body.site_docs_notebook_id !== "string" || !getOfficialDocsCandidates(userId).some((row) => row.id === body.site_docs_notebook_id!.trim())) {
+      return c.json({ error: "请选择有管理权限、未过期且已公开的只读目录" }, 400);
+    }
     entries.push({ key: "site_docs_notebook_id", value: body.site_docs_notebook_id.trim() });
   }
   if (body.editor_font_family !== undefined) {
@@ -125,7 +136,14 @@ settings.put("/", async (c) => {
     });
   }
 
-  if (entries.length > 0) systemSettingsRepository.setMany(entries);
+  if (entries.length > 0) getDb().transaction(() => {
+    if (body.site_docs_notebook_id !== undefined) {
+      // 绑定动作与关闭评论原子提交，保证官方文档始终只读。
+      getDb().prepare("UPDATE notebook_publications SET allowComment = 0, updatedAt = datetime('now') WHERE notebookId = ?")
+        .run(body.site_docs_notebook_id.trim());
+    }
+    systemSettingsRepository.setMany(entries);
+  })();
   return c.json(readSettings());
 });
 
