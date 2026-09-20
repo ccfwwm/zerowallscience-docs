@@ -2326,6 +2326,8 @@
     "versionLabel": "Version {{version}}",
     "restore": "Restore this version",
     "restoreConfirm": "Confirm Restore",
+    "restoreSuccess": "Switched to the selected version",
+    "restoreFailed": "Failed to switch version",
     "cancel": "Cancel",
     "typeEdit": "Edit",
     "typeRestore": "Restore",

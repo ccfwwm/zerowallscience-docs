@@ -152,9 +152,11 @@ export default function VersionHistoryPanel({ noteId, noteTitle, onRestore, onCl
       const updated = await api.restoreNoteVersion(noteId, versionId);
       onRestore(updated);
       setConfirmRestore(null);
+      toast.success(t("versions.restoreSuccess"));
       onClose();
     } catch (e: any) {
       console.error("恢复版本失败:", e);
+      toast.error(t("versions.restoreFailed") + (e?.message ? `: ${e.message}` : ""));
     } finally {
       setRestoring(false);
     }
@@ -193,7 +195,7 @@ export default function VersionHistoryPanel({ noteId, noteTitle, onRestore, onCl
         animate={{ opacity: 1, scale: 1, y: 0 }}
         exit={{ opacity: 0, scale: 0.95 }}
         transition={{ duration: 0.2 }}
-        className="w-full max-w-2xl mx-4 bg-app-elevated rounded-xl shadow-2xl border border-app-border overflow-hidden max-h-[85vh] flex flex-col"
+        className="w-full max-w-6xl mx-2 sm:mx-4 bg-app-elevated rounded-xl shadow-2xl border border-app-border overflow-hidden max-h-[90vh] flex flex-col"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-app-border">
@@ -249,9 +251,9 @@ export default function VersionHistoryPanel({ noteId, noteTitle, onRestore, onCl
         </div>
 
         {/* Content */}
-        <div className="flex flex-1 overflow-hidden min-h-0">
+        <div className="flex flex-1 flex-col md:flex-row overflow-hidden min-h-0">
           {/* 版本列表 */}
-          <div className="w-1/2 border-r border-app-border flex flex-col">
+          <div className="w-full md:w-2/5 border-b md:border-b-0 md:border-r border-app-border flex flex-col max-h-[34vh] md:max-h-none">
             <ScrollArea className="flex-1">
               <div className="py-2">
                 {loading ? (
@@ -296,7 +298,7 @@ export default function VersionHistoryPanel({ noteId, noteTitle, onRestore, onCl
           </div>
 
           {/* 预览区域 */}
-          <div className="w-1/2 flex flex-col">
+          <div className="w-full md:w-3/5 flex flex-col min-h-0">
             {selectedVersion ? (
               <>
                 <div className="px-4 py-3 border-b border-app-border bg-app-bg/50">

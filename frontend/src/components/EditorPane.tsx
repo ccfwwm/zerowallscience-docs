@@ -244,6 +244,8 @@ export default function EditorPane({
   const [showMobileOutline, setShowMobileOutline] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showVersionHistory, setShowVersionHistory] = useState(false);
+  // 恢复历史版本后强制重建编辑器实例，避免同一 noteId 下编辑器继续显示旧文档。
+  const [editorResetToken, setEditorResetToken] = useState(0);
   const [showCommentPanel, setShowCommentPanel] = useState(false);
   const [showAttachmentsPanel, setShowAttachmentsPanel] = useState(false);
   const [showBacklinksPanel, setShowBacklinksPanel] = useState(false);
@@ -3472,7 +3474,7 @@ const moveToTrash = useCallback(async () => {
           ) : null}
           {/* ErrorBoundary �������ֱ༭�����бʼ�Ϊ key���������Զ����ã�
               �ײ㻹�ܴ� console �� [EditorErrorBoundary] ��־�� window.__lastDirtyDoc */}
-          <EditorErrorBoundary resetKey={activeNote.id}>
+          <EditorErrorBoundary resetKey={`${activeNote.id}:${editorResetToken}`}>
           {/* 文件夹同步的 PDF / DOCX 笔记默认直接显示原文件，并隐藏内部同步元数据。 */}
           {isFolderSyncAttachmentNote(activeNote.content) ? (
             <FolderSyncAttachmentPreviewPane
@@ -3486,7 +3488,7 @@ const moveToTrash = useCallback(async () => {
             <MarkdownEditor
               // useYDoc only exposes the document after y:sync. Remount at that point so
               // CodeMirror gains yCollab without disabling normal saves while unsynced.
-              key={collabYDoc ? `md-native-y-${activeNote.id}` : `md-native-${activeNote.id}`}
+              key={collabYDoc ? `md-native-y-${activeNote.id}-${editorResetToken}` : `md-native-${activeNote.id}-${editorResetToken}`}
               ref={editorHandleRef}
               note={activeNote}
               onUpdate={handleUpdate}
@@ -3500,7 +3502,7 @@ const moveToTrash = useCallback(async () => {
             />
           ) : htmlPreviewMode ? (
             <HtmlPreviewPane
-              key={`html-${activeNote.id}`}
+              key={`html-${activeNote.id}-${editorResetToken}`}
               ref={editorHandleRef}
               note={activeNote}
               onUpdate={handleUpdate}
@@ -3514,7 +3516,7 @@ const moveToTrash = useCallback(async () => {
             <MarkdownEditor
               // Phase 3: key �� CRDT ����̬���л� provider ʱǿ���ؽ��༭����
               // ���� yCollab ��չ������ʱ���� yText ������״̬����
-              key={collabYDoc ? `md-y-${activeNote.id}` : `md-${activeNote.id}`}
+              key={collabYDoc ? `md-y-${activeNote.id}-${editorResetToken}` : `md-${activeNote.id}-${editorResetToken}`}
               ref={editorHandleRef}
               note={activeNote}
               onUpdate={handleUpdate}
@@ -3530,6 +3532,7 @@ const moveToTrash = useCallback(async () => {
           ) : (
             <PhaseAPerfProfiler>
               <TiptapEditor
+                key={`tiptap-${activeNote.id}-${editorResetToken}`}
                 ref={editorHandleRef}
                 note={activeNote}
                 onUpdate={handleEditorUpdate}
@@ -3585,6 +3588,7 @@ const moveToTrash = useCallback(async () => {
             try { editorHandleRef.current?.discardPending?.(); } catch { /* ignore */ }
             try { clearDraft(updated.id); } catch { /* ignore */ }
             skipNextSwitchFlushForNoteIdRef.current = updated.id;
+            setEditorResetToken((token) => token + 1);
             actions.setActiveNote(updated);
             actions.updateNoteInList({
               id: updated.id,

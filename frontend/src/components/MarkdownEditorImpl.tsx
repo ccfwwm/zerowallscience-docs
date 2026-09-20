@@ -782,8 +782,10 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
   // ---------- AI ���֣����ڸ��� ----------
   const [aiOpen, setAiOpen] = useState(false);
   const [aiSelectedText, setAiSelectedText] = useState("");
+  const [aiHasSelection, setAiHasSelection] = useState(false);
   const [aiFullText, setAiFullText] = useState("");
   const [aiPosition, setAiPosition] = useState<{ top: number; left: number }>({ top: 100, left: 100 });
+  const aiSelectionRef = useRef<{ from: number; to: number }>({ from: 0, to: 0 });
 
   /** �� AI ���㣺���ⲿ�ṩ onAIAssistant ��ת���ⲿ */
   const openAIAssistant = useCallback(() => {
@@ -798,14 +800,18 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     const doc = view.state.doc;
     const selected = doc.sliceString(sel.from, sel.to);
     const full = doc.toString();
+    aiSelectionRef.current = { from: sel.from, to: sel.to };
+    setAiHasSelection(!sel.empty);
     setAiSelectedText(selected || full.slice(0, 500));
     setAiFullText(full);
     // ���꣺����ѡ����㣬�䵽��Ļ��
     const coords = view.coordsAtPos(sel.from);
     if (coords) {
+      const panelWidth = Math.min(900, Math.max(0, window.innerWidth - 16));
+      const panelHeight = Math.min(760, Math.max(0, window.innerHeight - 16));
       setAiPosition({
-        top: Math.min(coords.top + 24, window.innerHeight - 500),
-        left: Math.min(coords.left, window.innerWidth - 420),
+        top: Math.max(8, Math.min(coords.top + 24, window.innerHeight - panelHeight - 8)),
+        left: Math.max(8, Math.min(coords.left, window.innerWidth - panelWidth - 8)),
       });
     }
     setAiOpen(true);
@@ -826,7 +832,13 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
   const handleAIReplace = useCallback((text: string) => {
     const view = viewRef.current;
     if (!view) return;
-    replaceSelection(view, text);
+    const { from, to } = aiSelectionRef.current;
+    if (to <= from) return;
+    view.dispatch({
+      changes: { from, to, insert: text },
+      selection: { anchor: from + text.length },
+    });
+    view.focus();
   }, []);
 
   const openTaskCapture = useCallback(() => {
@@ -2492,6 +2504,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
       {!isGuest && aiOpen && (
         <AIWritingAssistant
           selectedText={aiSelectedText}
+          hasSelection={aiHasSelection}
           fullText={aiFullText}
           onInsert={handleAIInsert}
           onReplace={handleAIReplace}

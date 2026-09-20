@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { extractFinalAnswer } from "@/lib/aiOutput";
 import { buildAiContext } from "@/lib/aiContextBuilder";
 import { toast } from "@/lib/toast";
+import { MarkdownPreview } from "@/components/MarkdownPreview";
 import { siteAIModels, type SiteAIProfile } from "@/lib/siteAIModels";
 import { aiProfiles, type AIProfile } from "@/lib/aiProfiles";
 import {
@@ -35,6 +36,7 @@ interface SavedPrompt {
 interface AIWritingAssistantProps {
   selectedText: string;
   fullText: string;
+  hasSelection?: boolean;
   onInsert: (text: string) => void;
   onReplace: (text: string) => void;
   onClose: () => void;
@@ -52,6 +54,7 @@ type AssistantModelChoice = {
 export default function AIWritingAssistant({
   selectedText,
   fullText,
+  hasSelection = Boolean(selectedText.trim()),
   onInsert,
   onReplace,
   onClose,
@@ -80,6 +83,7 @@ export default function AIWritingAssistant({
   const [modelChoices, setModelChoices] = useState<AssistantModelChoice[]>([]);
   const [activeModelId, setActiveModelId] = useState("");
   const [switchingModel, setSwitchingModel] = useState(false);
+  const [replaceConfirming, setReplaceConfirming] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const customInputRef = useRef<HTMLTextAreaElement>(null);
@@ -309,9 +313,19 @@ export default function AIWritingAssistant({
   };
 
   const handleReplace = () => {
-    onReplace(restoreInternalMarkdownMarkers(selectedText, visibleResult));
+    if (!hasSelection) {
+      toast.info("请先选中要替换的内容");
+      return;
+    }
+    setReplaceConfirming(true);
+  };
+
+  const confirmReplace = () => {
+    onReplace(restoreInternalMarkdownMarkers(selectedText, previewResult));
     onClose();
   };
+
+  const previewResult = isLoading ? visibleResult : extractFinalAnswer(visibleResult);
 
   return (
     <motion.div
@@ -320,7 +334,7 @@ export default function AIWritingAssistant({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 8, scale: 0.96 }}
       transition={{ duration: 0.15 }}
-      className="fixed z-[60] w-[400px] max-h-[480px] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden"
+      className="fixed z-[60] w-[min(900px,calc(100vw-16px))] max-h-[min(760px,calc(100vh-16px))] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden"
       style={position ? { top: position.top, left: position.left } : { top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}
     >
       {/* Header */}
@@ -522,7 +536,7 @@ export default function AIWritingAssistant({
 
       {/* 加载状态 / 结果展示 */}
       {(isLoading || result) && (
-        <div ref={resultRef} className="flex-1 overflow-auto px-3 py-3 min-h-[100px] max-h-[280px]">
+        <div ref={resultRef} className="flex-1 overflow-auto px-3 py-3 min-h-[220px] max-h-[min(560px,calc(100vh-220px))]">
           {/* 首 chunk 返回前：展示明显的 Loader，避免用户以为卡死 */}
           {isLoading && !result && (
             <div className="flex items-center gap-2 py-4 text-xs text-zinc-500 dark:text-zinc-400">
@@ -530,13 +544,37 @@ export default function AIWritingAssistant({
               <span>{t("ai.generating")}</span>
             </div>
           )}
-          <div className="text-sm text-zinc-800 dark:text-zinc-200 leading-relaxed whitespace-pre-wrap">
-            {/* 流式输出完成时清洗 <think>...</think> 推理内容 */}
-            {isLoading ? visibleResult : extractFinalAnswer(visibleResult)}
-            {isLoading && result && (
-              <span className="inline-block w-1.5 h-4 bg-accent-primary/60 animate-pulse ml-0.5 align-middle rounded-sm" />
-            )}
-          </div>
+          {result && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 min-w-0">
+              <section className="min-w-0 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50/70 dark:bg-zinc-800/40 overflow-hidden">
+                <div className="px-3 py-2 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700">
+                  原内容
+                </div>
+                <div className="p-3 max-h-[360px] overflow-auto">
+                  {hasSelection && visibleSelectedText.trim() ? (
+                    <MarkdownPreview markdown={visibleSelectedText} compact className="break-words" />
+                  ) : (
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400">当前没有选区，AI 结果只能插入到光标处。</p>
+                  )}
+                </div>
+              </section>
+              <section className="min-w-0 rounded-lg border border-accent-primary/30 bg-accent-primary/[0.03] overflow-hidden">
+                <div className="px-3 py-2 text-[11px] font-medium text-accent-primary border-b border-accent-primary/20">
+                  AI 实时预览
+                </div>
+                <div className="p-3 max-h-[360px] overflow-auto">
+                  {previewResult.trim() ? (
+                    <MarkdownPreview markdown={previewResult} compact className="break-words" />
+                  ) : (
+                    <div className="text-sm text-zinc-500 dark:text-zinc-400 whitespace-pre-wrap">
+                      {isLoading ? "正在生成…" : "暂无内容"}
+                    </div>
+                  )}
+                  {isLoading && result && <span className="inline-block w-1.5 h-4 bg-accent-primary/60 animate-pulse ml-0.5 align-middle rounded-sm" />}
+                </div>
+              </section>
+            </div>
+          )}
         </div>
       )}
 
@@ -553,13 +591,24 @@ export default function AIWritingAssistant({
       {/* 底部操作栏 */}
       {(result && !isLoading) && (
         <div className="flex items-center gap-1.5 px-3 py-2 border-t border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30">
-          <button
-            onClick={handleReplace}
-            className="flex items-center gap-1 px-3 py-1.5 bg-accent-primary hover:bg-accent-primary/90 text-white rounded-lg text-xs font-medium transition-colors"
-          >
-            <Replace size={12} />
-            {t("ai.replace")}
-          </button>
+          {replaceConfirming ? (
+            <>
+              <span className="text-xs text-zinc-600 dark:text-zinc-400">确认用右侧预览替换左侧内容？</span>
+              <button onClick={() => setReplaceConfirming(false)} className="ml-auto px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs text-zinc-600 dark:text-zinc-400">取消</button>
+              <button onClick={confirmReplace} className="flex items-center gap-1 px-3 py-1.5 bg-accent-primary hover:bg-accent-primary/90 text-white rounded-lg text-xs font-medium transition-colors">
+                <Replace size={12} />确认替换
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={handleReplace}
+              disabled={!hasSelection}
+              className="flex items-center gap-1 px-3 py-1.5 bg-accent-primary hover:bg-accent-primary/90 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg text-xs font-medium transition-colors"
+            >
+              <Replace size={12} />
+              预览并替换
+            </button>
+          )}
           <button
             onClick={handleInsert}
             className="flex items-center gap-1 px-3 py-1.5 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs text-zinc-600 dark:text-zinc-400 hover:border-accent-primary/50 hover:text-accent-primary transition-colors"

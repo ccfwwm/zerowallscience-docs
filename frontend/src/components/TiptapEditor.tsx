@@ -1626,7 +1626,9 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
   }, []);
   const [showAI, setShowAI] = useState(false);
   const [aiSelectedText, setAiSelectedText] = useState("");
+  const [aiHasSelection, setAiHasSelection] = useState(false);
   const [aiPosition, setAiPosition] = useState<{ top: number; left: number } | undefined>();
+  const aiSelectionRef = useRef<{ from: number; to: number }>({ from: 0, to: 0 });
   // 附件详情：内联可预览附件进入右侧抽屉；桌面本地办公附件优先交给系统程序打开。
   // 采用 attachmentId 走 api.files.get 拿完整详情（包含外链分享 / 重命名 / 引用列表），
   // 与文件管理抽屉体验一致。
@@ -4883,6 +4885,8 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
   const openAIAssistant = useCallback(() => {
     if (!editor) return;
     const { from, to } = editor.state.selection;
+    aiSelectionRef.current = { from, to };
+    setAiHasSelection(from < to);
 
     // ⚠️ 关键修复：不要用 doc.textBetween(from, to) ——它只提取 text 节点的
     // 纯文本，会把 link mark、image 节点、bold/italic 等格式全部丢弃。
@@ -4913,9 +4917,11 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
     // 获取选区在屏幕上的位置
     const coords = editor.view.coordsAtPos(from);
     const editorRect = editor.view.dom.getBoundingClientRect();
+    const panelWidth = Math.min(900, Math.max(0, window.innerWidth - 16));
+    const panelHeight = Math.min(760, Math.max(0, window.innerHeight - 16));
     setAiPosition({
-      top: Math.min(coords.top + 28, window.innerHeight - 500),
-      left: Math.min(coords.left, window.innerWidth - 420),
+      top: Math.max(8, Math.min(coords.top + 28, window.innerHeight - panelHeight - 8)),
+      left: Math.max(8, Math.min(coords.left, window.innerWidth - panelWidth - 8)),
     });
     setShowAI(true);
   }, [editor]);
@@ -4990,7 +4996,8 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
 
   const handleAIReplace = useCallback((text: string) => {
     if (!editor) return;
-    const { from, to } = editor.state.selection;
+    const { from, to } = aiSelectionRef.current;
+    if (to <= from) return;
     insertWithMarkdownDetect(text, from, to);
   }, [editor, insertWithMarkdownDetect]);
 
@@ -6485,6 +6492,7 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
         {showAI && (
           <AIWritingAssistant
             selectedText={aiSelectedText}
+            hasSelection={aiHasSelection}
             // fullText 作为上下文传给 AI（截前 2000 字），同样用 Markdown
             // 序列化而非 editor.getText()，保留链接 / 图片 URL，让 AI 在
             // 续写、改写等任务里也能感知到这些资源。失败时回退到纯文本。
