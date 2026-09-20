@@ -29,6 +29,29 @@ export interface CallAIOptions {
   timeout_ms?: number;
 }
 
+/**
+ * Resolve the two OpenAI-compatible API styles from one user-facing base URL.
+ * A bare host is intentionally mapped to /v1/responses because Responses is
+ * the default protocol for the official AI writing assistant.
+ */
+export function resolveAIEndpoint(apiUrl: string, suffix: "responses" | "chat/completions"): string {
+  const base = apiUrl.replace(/\/+$/, "");
+  if (new RegExp(`/${suffix.replace("/", "\\/")}$`, "i").test(base)) return base;
+  if (/\/v1$/i.test(base)) return `${base}/${suffix}`;
+  return `${base}/v1/${suffix}`;
+}
+
+function shouldFallbackToChat(status: number): boolean {
+  return status === 400 || status === 404 || status === 405 || status === 415 || status === 422 || status === 501;
+}
+
+function responsesInput(messages: ChatMessage[]): Array<{ role: string; content: string }> {
+  return messages.map((message) => ({
+    role: message.role === "system" ? "system" : message.role === "assistant" ? "assistant" : "user",
+    content: message.content,
+  }));
+}
+
 const FINAL_MARKER_RE = /(?:^|\n)\s*(最终答案|最终标题|标题|答案|Final|Answer|Result)\s*[:：]\s*/gi;
 const QUOTE_RE = /^[\s"'"'"''''「」『』《》#*`\-\:：]+|[\s"'"'"''''「」『』《》#*`\-\:：。.!！?？]+$/g;
 
@@ -162,26 +185,37 @@ export async function callAIChat(
   messages: ChatMessage[],
   options: CallAIOptions = {},
 ): Promise<string> {
-  const baseUrl = settings.ai_api_url.replace(/\/+$/, "");
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (settings.ai_api_key) {
     headers["Authorization"] = `Bearer ${settings.ai_api_key}`;
   }
 
-  const body: Record<string, unknown> = {
+  const responsesBody: Record<string, unknown> = {
     model: settings.ai_model,
-    messages,
+    input: responsesInput(messages),
     stream: false,
   };
-  if (options.temperature !== undefined) body.temperature = options.temperature;
-  if (options.max_tokens !== undefined) body.max_tokens = options.max_tokens;
+  if (options.max_tokens !== undefined) responsesBody.max_output_tokens = options.max_tokens;
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  let res = await fetch(resolveAIEndpoint(settings.ai_api_url, "responses"), {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify(responsesBody),
     signal: AbortSignal.timeout(options.timeout_ms ?? 30000),
   });
+
+  // Keep compatibility with providers that expose only Chat Completions.
+  if (!res.ok && shouldFallbackToChat(res.status)) {
+    const chatBody: Record<string, unknown> = { model: settings.ai_model, messages, stream: false };
+    if (options.temperature !== undefined) chatBody.temperature = options.temperature;
+    if (options.max_tokens !== undefined) chatBody.max_tokens = options.max_tokens;
+    res = await fetch(resolveAIEndpoint(settings.ai_api_url, "chat/completions"), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(chatBody),
+      signal: AbortSignal.timeout(options.timeout_ms ?? 30000),
+    });
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
@@ -203,26 +237,36 @@ export async function* callAIChatStream(
   messages: ChatMessage[],
   options: CallAIOptions = {},
 ): AsyncGenerator<string, void, undefined> {
-  const baseUrl = settings.ai_api_url.replace(/\/+$/, "");
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (settings.ai_api_key) {
     headers["Authorization"] = `Bearer ${settings.ai_api_key}`;
   }
 
-  const body: Record<string, unknown> = {
+  const responsesBody: Record<string, unknown> = {
     model: settings.ai_model,
-    messages,
+    input: responsesInput(messages),
     stream: true,
   };
-  if (options.temperature !== undefined) body.temperature = options.temperature;
-  if (options.max_tokens !== undefined) body.max_tokens = options.max_tokens;
+  if (options.max_tokens !== undefined) responsesBody.max_output_tokens = options.max_tokens;
 
-  const res = await fetch(`${baseUrl}/chat/completions`, {
+  let res = await fetch(resolveAIEndpoint(settings.ai_api_url, "responses"), {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify(responsesBody),
     signal: AbortSignal.timeout(options.timeout_ms ?? 60000),
   });
+
+  if (!res.ok && shouldFallbackToChat(res.status)) {
+    const chatBody: Record<string, unknown> = { model: settings.ai_model, messages, stream: true };
+    if (options.temperature !== undefined) chatBody.temperature = options.temperature;
+    if (options.max_tokens !== undefined) chatBody.max_tokens = options.max_tokens;
+    res = await fetch(resolveAIEndpoint(settings.ai_api_url, "chat/completions"), {
+      method: "POST",
+      headers,
+      body: JSON.stringify(chatBody),
+      signal: AbortSignal.timeout(options.timeout_ms ?? 60000),
+    });
+  }
 
   if (!res.ok) {
     const errText = await res.text().catch(() => "");
@@ -255,7 +299,7 @@ export async function* callAIChatStream(
         if (data === "[DONE]") return;
         try {
           const json = JSON.parse(data);
-          const content = parseOpenAIStreamDelta(json);
+          const content = parseResponsesStreamDelta(json) || parseOpenAIStreamDelta(json);
           if (content) yield content;
         } catch {
           // skip malformed JSON
@@ -270,7 +314,7 @@ export async function* callAIChatStream(
         if (data !== "[DONE]") {
           try {
             const json = JSON.parse(data);
-            const content = parseOpenAIStreamDelta(json);
+            const content = parseResponsesStreamDelta(json) || parseOpenAIStreamDelta(json);
             if (content) yield content;
           } catch { /* skip */ }
         }
@@ -330,19 +374,32 @@ export function extractTextFromChatCompletion(data: Record<string, unknown>): st
     return data.output_text;
   }
 
-  // 3. output.text (某些 API)
-  const output = data.output as Record<string, unknown> | undefined;
-  if (output) {
-    const outputText = readContentPart(output.text);
+  // 3. Responses API: output is a list of message items whose content parts
+  // carry `text` or `output_text`.
+  if (Array.isArray(data.output)) {
+    const outputText = data.output.map((item) => {
+      if (!item || typeof item !== "object") return "";
+      const outputItem = item as Record<string, unknown>;
+      if (outputItem.type && outputItem.type !== "message" && outputItem.type !== "output_text") return "";
+      const content = outputItem.content;
+      return readContentPart(content);
+    }).filter(Boolean).join("");
     if (outputText) return outputText;
+  } else {
+    // 4. output.text (some compatible proxies)
+    const output = data.output as Record<string, unknown> | undefined;
+    if (output) {
+      const outputText = readContentPart(output.text);
+      if (outputText) return outputText;
+    }
   }
 
-  // 4. 顶层 response / content / text
+  // 5. 顶层 response / content / text
   if (typeof data.response === "string" && data.response) return data.response;
   if (typeof data.content === "string" && data.content) return data.content;
   if (typeof data.text === "string" && data.text) return data.text;
 
-  // 5. Gemini: candidates[0].content.parts[].text
+  // 6. Gemini: candidates[0].content.parts[].text
   const candidates = data.candidates;
   if (Array.isArray(candidates) && candidates.length > 0) {
     const cand = candidates[0] as Record<string, unknown>;
@@ -377,6 +434,18 @@ function parseOpenAIStreamDelta(json: Record<string, unknown>): string {
   }
   // 关键：不要返回 delta.reasoning_content / message.reasoning_content。
   // DeepSeek、MiMo 等推理模型会把思考过程放到这些字段里，前端不应展示、保存或插入。
+  return "";
+}
+
+/** Parse Responses API SSE events (`response.output_text.delta`). */
+function parseResponsesStreamDelta(json: Record<string, unknown>): string {
+  if (json.type === "response.output_text.delta" && typeof json.delta === "string") {
+    return json.delta;
+  }
+  const response = json.response;
+  if (response && typeof response === "object") {
+    return extractTextFromChatCompletion(response as Record<string, unknown>);
+  }
   return "";
 }
 

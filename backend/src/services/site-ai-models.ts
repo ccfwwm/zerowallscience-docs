@@ -90,7 +90,9 @@ export function resolveSiteAIProfileKey(rawKey: unknown, currentKey: string): st
 
 export function modelEndpoint(apiUrl: string): string {
   const base = apiUrl.replace(/\/+$/, "");
-  return /\/models$/i.test(base) ? base : `${base}/models`;
+  if (/\/models$/i.test(base)) return base;
+  if (/\/v1$/i.test(base)) return `${base}/models`;
+  return `${base}/v1/models`;
 }
 
 export function extractSiteAIModels(data: unknown): Array<{ id: string; name: string }> {
