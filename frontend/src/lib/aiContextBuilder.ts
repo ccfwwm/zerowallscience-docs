@@ -233,15 +233,15 @@ export function buildAiContext(input: BuildAiContextInput): BuildAiContextResult
     };
   }
 
-  const editActions = new Set(["rewrite", "polish", "shorten", "expand", "fix_grammar", "format_markdown", "format_code"]);
-  if (editActions.has(action) && !selectedText && sourceTokens > maxInputTokens) {
+  const editActions = new Set(["rewrite", "polish", "shorten", "expand", "fix_grammar", "format_markdown", "format_code", "translate_en", "translate_zh", "custom"]);
+  if (editActions.has(action) && sourceTokens > maxInputTokens) {
     const chunks = splitNoteIntoChunks(source, { maxTokensPerChunk: maxInputTokens, preserveMarkdownStructure: true });
     return {
-      promptText: takeByTokens(source, maxInputTokens),
+      promptText: chunks[0]?.text || takeByTokens(source, maxInputTokens),
       strategy: "chunked",
       truncated: true,
       chunks,
-      notice: "当前笔记较长，建议先选中一段文字处理，或使用分段处理全文。",
+      notice: `当前内容较长，已分为 ${chunks.length} 段，AI 将按顺序处理并合并结果。`,
     };
   }
 

@@ -84,9 +84,13 @@ export default function AIWritingAssistant({
   const [activeModelId, setActiveModelId] = useState("");
   const [switchingModel, setSwitchingModel] = useState(false);
   const [replaceConfirming, setReplaceConfirming] = useState(false);
+  const [chunkProgress, setChunkProgress] = useState<{ current: number; total: number } | null>(null);
+  const [panelSize, setPanelSize] = useState({ width: 900, height: 760 });
+  const [panelResized, setPanelResized] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const customInputRef = useRef<HTMLTextAreaElement>(null);
+  const resizeRef = useRef<{ startX: number; startY: number; width: number; height: number } | null>(null);
   const visibleSelectedText = useMemo(
     () => projectMarkdownForUser(selectedText),
     [selectedText],
@@ -99,6 +103,13 @@ export default function AIWritingAssistant({
     () => projectMarkdownForUser(result),
     [result],
   );
+
+  useEffect(() => {
+    setPanelSize({
+      width: Math.min(900, Math.max(320, window.innerWidth - 16)),
+      height: Math.min(760, Math.max(420, window.innerHeight - 16)),
+    });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -175,31 +186,64 @@ export default function AIWritingAssistant({
     setResult("");
     setError("");
     setIsLoading(true);
+    setChunkProgress(null);
     setShowCustomInput(false);
 
     try {
       const ctx = buildAiContext({ action, selectedText: visibleSelectedText, contentText: visibleFullText, maxInputTokens: 1800, question: action === "custom" ? prompt : undefined });
-      const editActions = new Set(["polish", "rewrite", "shorten", "expand", "fix_grammar", "format_markdown", "format_code"]);
-      if (!visibleSelectedText && editActions.has(action) && ctx.truncated) {
-        toast.info(t("ai.noteTooLongSelectFirst") || "当前笔记较长，建议先选中一段文字处理，或使用分段处理全文。");
-      } else if (ctx.notice) {
-        toast.info(ctx.notice);
+      if (ctx.notice) toast.info(ctx.notice);
+
+      const chunks = ctx.strategy === "chunked" && ctx.chunks?.length ? ctx.chunks : null;
+      const requests = chunks || [{ text: visibleSelectedText || ctx.promptText, context: visibleSelectedText ? ctx.promptText : undefined }];
+      if (requests.length > 1) setChunkProgress({ current: 1, total: requests.length });
+
+      for (let index = 0; index < requests.length; index += 1) {
+        const request = requests[index];
+        if (index > 0) setResult(prev => `${prev.trimEnd()}\n\n`);
+        await api.aiChat(
+          action,
+          request.text,
+          "context" in request ? request.context : undefined,
+          (chunk) => setResult(prev => prev + chunk),
+          action === "custom" ? prompt : undefined,
+        );
+        if (requests.length > 1 && index + 1 < requests.length) {
+          setChunkProgress({ current: index + 2, total: requests.length });
+        }
       }
-      await api.aiChat(
-        action,
-        visibleSelectedText,
-        ctx.promptText,
-        (chunk) => {
-          setResult(prev => prev + chunk);
-        },
-        action === "custom" ? prompt : undefined
-      );
     } catch (err: any) {
+      setResult("");
+      setChunkProgress(null);
       setError(err.message || t("ai.requestFailed"));
     } finally {
       setIsLoading(false);
+      setChunkProgress(null);
     }
   }, [visibleSelectedText, visibleFullText, t]);
+
+  const handleResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeRef.current = { startX: event.clientX, startY: event.clientY, width: panelSize.width, height: panelSize.height };
+    setPanelResized(true);
+    const handleMove = (moveEvent: PointerEvent) => {
+      const start = resizeRef.current;
+      if (!start) return;
+      const maxWidth = Math.max(320, window.innerWidth - 16);
+      const maxHeight = Math.max(420, window.innerHeight - 16);
+      setPanelSize({
+        width: Math.min(1200, maxWidth, Math.max(320, start.width + moveEvent.clientX - start.startX)),
+        height: Math.min(960, maxHeight, Math.max(420, start.height + moveEvent.clientY - start.startY)),
+      });
+    };
+    const handleUp = () => {
+      resizeRef.current = null;
+      window.removeEventListener("pointermove", handleMove);
+      window.removeEventListener("pointerup", handleUp);
+    };
+    window.addEventListener("pointermove", handleMove);
+    window.addEventListener("pointerup", handleUp);
+  }, [panelSize]);
 
   const handleCustomSubmit = useCallback(() => {
     if (!customPrompt.trim()) return;
@@ -334,8 +378,12 @@ export default function AIWritingAssistant({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 8, scale: 0.96 }}
       transition={{ duration: 0.15 }}
-      className="fixed z-[60] w-[min(900px,calc(100vw-16px))] max-h-[min(760px,calc(100vh-16px))] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden"
-      style={position ? { top: position.top, left: position.left } : { top: "50%", left: "50%", transform: "translate(-50%, -50%)" }}
+      className="fixed z-[60] flex flex-col min-h-[420px] max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden"
+      style={{
+        width: panelSize.width,
+        ...(panelResized ? { height: panelSize.height } : {}),
+        ...(position ? { top: position.top, left: position.left } : { top: "50%", left: "50%", transform: "translate(-50%, -50%)" }),
+      }}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-100 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30">
@@ -360,6 +408,11 @@ export default function AIWritingAssistant({
           {currentAction && (
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
               · {actions.find(a => a.id === currentAction)?.label}
+            </span>
+          )}
+          {chunkProgress && (
+            <span className="text-[10px] text-accent-primary">
+              · 第 {chunkProgress.current} / {chunkProgress.total} 段
             </span>
           )}
         </div>
@@ -536,12 +589,12 @@ export default function AIWritingAssistant({
 
       {/* 加载状态 / 结果展示 */}
       {(isLoading || result) && (
-        <div ref={resultRef} className="flex-1 overflow-auto px-3 py-3 min-h-[220px] max-h-[min(560px,calc(100vh-220px))]">
+        <div ref={resultRef} className="flex-1 min-h-0 overflow-auto px-3 py-3">
           {/* 首 chunk 返回前：展示明显的 Loader，避免用户以为卡死 */}
           {isLoading && !result && (
             <div className="flex items-center gap-2 py-4 text-xs text-zinc-500 dark:text-zinc-400">
               <Loader2 size={14} className="animate-spin text-accent-primary" />
-              <span>{t("ai.generating")}</span>
+              <span>{chunkProgress ? `正在处理第 ${chunkProgress.current} / ${chunkProgress.total} 段…` : t("ai.generating")}</span>
             </div>
           )}
           {result && (
@@ -550,7 +603,7 @@ export default function AIWritingAssistant({
                 <div className="px-3 py-2 text-[11px] font-medium text-zinc-500 dark:text-zinc-400 border-b border-zinc-200 dark:border-zinc-700">
                   原内容
                 </div>
-                <div className="p-3 max-h-[360px] overflow-auto">
+                <div className="p-3 overflow-auto">
                   {hasSelection && visibleSelectedText.trim() ? (
                     <MarkdownPreview markdown={visibleSelectedText} compact className="break-words" />
                   ) : (
@@ -562,7 +615,7 @@ export default function AIWritingAssistant({
                 <div className="px-3 py-2 text-[11px] font-medium text-accent-primary border-b border-accent-primary/20">
                   AI 实时预览
                 </div>
-                <div className="p-3 max-h-[360px] overflow-auto">
+                <div className="p-3 overflow-auto">
                   {previewResult.trim() ? (
                     <MarkdownPreview markdown={previewResult} compact className="break-words" />
                   ) : (
@@ -633,6 +686,14 @@ export default function AIWritingAssistant({
           </button>
         </div>
       )}
+      <div
+        role="separator"
+        aria-label="调整 AI 助手大小"
+        onPointerDown={handleResizeStart}
+        className="absolute bottom-0 right-0 h-5 w-5 cursor-se-resize touch-none"
+      >
+        <span className="absolute bottom-1 right-1 h-2.5 w-2.5 border-b-2 border-r-2 border-zinc-300 dark:border-zinc-600" />
+      </div>
     </motion.div>
   );
 }
