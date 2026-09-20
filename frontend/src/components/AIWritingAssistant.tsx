@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 import { extractFinalAnswer } from "@/lib/aiOutput";
 import { buildAiContext } from "@/lib/aiContextBuilder";
 import { toast } from "@/lib/toast";
+import { siteAIModels, type SiteAIProfile } from "@/lib/siteAIModels";
+import { aiProfiles, type AIProfile } from "@/lib/aiProfiles";
 import {
   projectMarkdownForUser,
   restoreInternalMarkdownMarkers,
@@ -38,6 +40,14 @@ interface AIWritingAssistantProps {
   onClose: () => void;
   position?: { top: number; left: number };
 }
+
+type AssistantModelChoice = {
+  id: string;
+  name: string;
+  provider: string;
+  model: string;
+  source: "site" | "personal";
+};
 
 export default function AIWritingAssistant({
   selectedText,
@@ -67,6 +77,9 @@ export default function AIWritingAssistant({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveHint, setSaveHint] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  const [modelChoices, setModelChoices] = useState<AssistantModelChoice[]>([]);
+  const [activeModelId, setActiveModelId] = useState("");
+  const [switchingModel, setSwitchingModel] = useState(false);
   const resultRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const customInputRef = useRef<HTMLTextAreaElement>(null);
@@ -82,6 +95,43 @@ export default function AIWritingAssistant({
     () => projectMarkdownForUser(result),
     [result],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadModels = async () => {
+      try {
+        const site = await siteAIModels.list();
+        if (cancelled) return;
+        if (site.profiles.length > 0) {
+          setModelChoices(site.profiles.map((profile: SiteAIProfile) => ({ id: profile.id, name: profile.name, provider: profile.provider, model: profile.model, source: "site" })));
+          setActiveModelId(site.activeProfileId || site.defaultProfileId);
+          return;
+        }
+        const personal = await aiProfiles.list();
+        if (cancelled) return;
+        setModelChoices(personal.profiles.map((profile: AIProfile) => ({ id: profile.id, name: profile.name, provider: profile.provider, model: profile.model, source: "personal" })));
+        setActiveModelId(personal.activeProfileId);
+      } catch {
+        if (!cancelled) { setModelChoices([]); setActiveModelId(""); }
+      }
+    };
+    void loadModels();
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleModelChange = useCallback(async (profileId: string) => {
+    const choice = modelChoices.find((item) => item.id === profileId);
+    if (!choice || profileId === activeModelId || switchingModel) return;
+    setSwitchingModel(true);
+    try {
+      if (choice.source === "site") await siteAIModels.activate(profileId);
+      else await aiProfiles.activate(profileId);
+      setActiveModelId(profileId);
+      window.dispatchEvent(new CustomEvent("nowen:ai-profiles-changed", { detail: { activeProfileId: profileId } }));
+    } catch (error) {
+      setError((error as Error)?.message || "切换 AI 渠道失败");
+    } finally { setSwitchingModel(false); }
+  }, [activeModelId, modelChoices, switchingModel]);
 
   const actions: { id: AIAction; icon: React.ElementType; label: string; group: string }[] = [
     { id: "continue", icon: ArrowRight, label: t("ai.actionContinue"), group: "write" },
@@ -278,6 +328,21 @@ export default function AIWritingAssistant({
         <div className="flex items-center gap-1.5">
           <Sparkles size={14} className="text-accent-primary" />
           <span className="text-xs font-medium text-zinc-700 dark:text-zinc-300">{t("ai.assistant")}</span>
+          {modelChoices.length > 0 && (
+            <label className="relative ml-1 inline-flex max-w-[190px] items-center">
+              <span className="sr-only">AI 渠道与模型</span>
+              <select
+                value={activeModelId}
+                disabled={switchingModel}
+                onChange={(event) => void handleModelChange(event.target.value)}
+                title="切换 AI 渠道与模型"
+                className="max-w-[170px] appearance-none truncate rounded-md border border-zinc-200 bg-white py-1 pl-2 pr-5 text-[10px] text-zinc-600 outline-none hover:border-accent-primary/50 focus:border-accent-primary dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300"
+              >
+                {modelChoices.map((choice) => <option key={choice.id} value={choice.id}>{choice.name} · {choice.model || choice.provider}</option>)}
+              </select>
+              <ChevronDown size={11} className="pointer-events-none absolute right-1 text-zinc-400" />
+            </label>
+          )}
           {currentAction && (
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
               · {actions.find(a => a.id === currentAction)?.label}

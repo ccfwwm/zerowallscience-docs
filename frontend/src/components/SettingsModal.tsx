@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Palette, Shield, Database, X, Settings, Camera, Save, Loader2, Trash2, Upload, Type, Check, ChevronDown, Globe, Users, Info, Keyboard, ToggleLeft, FolderSync } from "lucide-react";
+import { Palette, Shield, Database, X, Settings, Camera, Save, Loader2, Trash2, Upload, Type, Check, ChevronDown, Globe, Users, Info, Keyboard, ToggleLeft, FolderSync, Bot } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import ThemeToggle from "@/components/ThemeToggle";
 import SkinSwitcher from "@/components/SkinSwitcher";
@@ -13,6 +13,7 @@ import FolderSyncSettings from "@/components/settings/FolderSyncSettings";
 import OfflineSyncSettings from "@/components/settings/OfflineSyncSettings";
 import ShortcutSettingsPanel from "@/components/settings/ShortcutSettingsPanel";
 import AISettingsPanel from "@/components/AISettingsPanel";
+import AIModelSettingsPanel from "@/components/AIModelSettingsPanel";
 import UserManagement from "@/components/UserManagement";
 import WorkspaceManagement from "@/components/WorkspaceManagement";
 import DownloadPanel from "@/components/DownloadPanel";
@@ -40,7 +41,7 @@ import {
   type MobileKnowledgeTreeViewMode,
 } from "@/lib/mobileKnowledgeTreeViewMode";
 
-type TabId = "docs" | "appearance" | "switches" | "shortcuts" | "ai" | "security" | "tokens" | "data" | "offlineSync" | "folderSync" | "users" | "workspaces" | "download" | "about";
+type TabId = "docs" | "appearance" | "switches" | "shortcuts" | "ai" | "aiModels" | "security" | "tokens" | "data" | "offlineSync" | "folderSync" | "users" | "workspaces" | "download" | "about";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -920,6 +921,7 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
 
   const SETTING_TABS = [
     ...(isAdmin ? [{ id: "docs" as const, label: "文档发布", icon: Globe }] : []),
+    ...(isAdmin ? [{ id: "aiModels" as const, label: "AI 模型配置", icon: Bot }] : []),
     { id: "appearance" as const, label: t('settings.appearance'), icon: Palette },
     { id: "switches" as const, label: t('settings.switches'), icon: ToggleLeft },
     ...(shortcutSurface !== "android" ? [{ id: "shortcuts" as const, label: "快捷键", icon: Keyboard }] : []),
@@ -1115,6 +1117,7 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
             {activeTab === "switches" && <SwitchesPanel />}
             {activeTab === "shortcuts" && shortcutSurface !== "android" && <ShortcutSettingsPanel />}
             {activeTab === "ai" && <AISettingsPanel />}
+            {activeTab === "aiModels" && isAdmin && <AIModelSettingsPanel />}
             {activeTab === "security" && <SecuritySettings />}
             {activeTab === "tokens" && <TokenManagement />}
                   {activeTab === "users" && isAdmin && <UserManagement currentUserId={currentUser?.id ?? null} />}
