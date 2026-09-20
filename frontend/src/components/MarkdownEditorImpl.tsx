@@ -802,7 +802,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     const full = doc.toString();
     aiSelectionRef.current = { from: sel.from, to: sel.to };
     setAiHasSelection(!sel.empty);
-    setAiSelectedText(selected || full.slice(0, 500));
+    setAiSelectedText(selected);
     setAiFullText(full);
     // ���꣺����ѡ����㣬�䵽��Ļ��
     const coords = view.coordsAtPos(sel.from);

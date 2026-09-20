@@ -51,6 +51,13 @@ type AssistantModelChoice = {
   source: "site" | "personal";
 };
 
+function removeRepeatedSourceTail(output: string, source: string): string {
+  const answer = output.trim();
+  const original = source.trim();
+  if (answer.length <= original.length + 20 || original.length < 80 || answer === original) return answer;
+  return answer.endsWith(original) ? answer.slice(0, -original.length).trimEnd() : answer;
+}
+
 export default function AIWritingAssistant({
   selectedText,
   fullText,
@@ -92,8 +99,8 @@ export default function AIWritingAssistant({
   const customInputRef = useRef<HTMLTextAreaElement>(null);
   const resizeRef = useRef<{ startX: number; startY: number; width: number; height: number } | null>(null);
   const visibleSelectedText = useMemo(
-    () => projectMarkdownForUser(selectedText),
-    [selectedText],
+    () => hasSelection ? projectMarkdownForUser(selectedText) : "",
+    [hasSelection, selectedText],
   );
   const visibleFullText = useMemo(
     () => projectMarkdownForUser(fullText),
@@ -106,8 +113,8 @@ export default function AIWritingAssistant({
 
   useEffect(() => {
     setPanelSize({
-      width: Math.min(900, Math.max(320, window.innerWidth - 16)),
-      height: Math.min(760, Math.max(420, window.innerHeight - 16)),
+      width: Math.min(900, Math.max(320, window.innerWidth)),
+      height: Math.min(760, Math.max(420, window.innerHeight)),
     });
   }, []);
 
@@ -197,16 +204,28 @@ export default function AIWritingAssistant({
       const requests = chunks || [{ text: visibleSelectedText || ctx.promptText, context: visibleSelectedText ? ctx.promptText : undefined }];
       if (requests.length > 1) setChunkProgress({ current: 1, total: requests.length });
 
+      const completedParts: string[] = [];
       for (let index = 0; index < requests.length; index += 1) {
         const request = requests[index];
-        if (index > 0) setResult(prev => `${prev.trimEnd()}\n\n`);
-        await api.aiChat(
+        let streamed = "";
+        setResult(completedParts.join("\n\n"));
+        const rawResponse = await api.aiChat(
           action,
           request.text,
           "context" in request ? request.context : undefined,
-          (chunk) => setResult(prev => prev + chunk),
+          (chunk) => {
+            streamed += chunk;
+            const liveParts = [...completedParts, streamed];
+            setResult(liveParts.join("\n\n"));
+          },
           action === "custom" ? prompt : undefined,
         );
+        const cleaned = removeRepeatedSourceTail(
+          extractFinalAnswer(rawResponse || streamed),
+          request.text,
+        );
+        if (cleaned) completedParts.push(cleaned);
+        setResult(completedParts.join("\n\n"));
         if (requests.length > 1 && index + 1 < requests.length) {
           setChunkProgress({ current: index + 2, total: requests.length });
         }
@@ -229,10 +248,10 @@ export default function AIWritingAssistant({
     const handleMove = (moveEvent: PointerEvent) => {
       const start = resizeRef.current;
       if (!start) return;
-      const maxWidth = Math.max(320, window.innerWidth - 16);
+      const maxWidth = Math.max(320, window.innerWidth);
       const maxHeight = Math.max(420, window.innerHeight - 16);
       setPanelSize({
-        width: Math.min(1200, maxWidth, Math.max(320, start.width + moveEvent.clientX - start.startX)),
+        width: Math.min(maxWidth, Math.max(320, start.width + moveEvent.clientX - start.startX)),
         height: Math.min(960, maxHeight, Math.max(420, start.height + moveEvent.clientY - start.startY)),
       });
     };
@@ -378,7 +397,7 @@ export default function AIWritingAssistant({
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: 8, scale: 0.96 }}
       transition={{ duration: 0.15 }}
-      className="fixed z-[60] flex flex-col min-h-[420px] max-w-[calc(100vw-16px)] max-h-[calc(100vh-16px)] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden"
+      className="fixed z-[60] flex flex-col min-h-[420px] max-w-[100vw] max-h-[100vh] bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl overflow-hidden"
       style={{
         width: panelSize.width,
         ...(panelResized ? { height: panelSize.height } : {}),

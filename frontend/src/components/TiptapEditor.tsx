@@ -4912,7 +4912,7 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
     if (!selectedMd) {
       selectedMd = editor.state.doc.textBetween(from, to, " ");
     }
-    setAiSelectedText(selectedMd || editor.getText().slice(0, 500));
+    setAiSelectedText(selectedMd);
 
     // 获取选区在屏幕上的位置
     const coords = editor.view.coordsAtPos(from);
