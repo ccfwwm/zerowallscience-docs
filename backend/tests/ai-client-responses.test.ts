@@ -22,6 +22,7 @@ const settings: AISettings = {
 test("bare AI host resolves to Responses and extracts Responses output", async () => {
   assert.equal(resolveAIEndpoint(settings.ai_api_url, "responses"), "https://example.test/v1/responses");
   assert.equal(resolveAIEndpoint("https://example.test/v1", "chat/completions"), "https://example.test/v1/chat/completions");
+  assert.equal(resolveAIEndpoint("https://example.test/v1/responses", "chat/completions"), "https://example.test/v1/chat/completions");
 
   const previous = globalThis.fetch;
   const requests: Array<{ url: string; body: any }> = [];

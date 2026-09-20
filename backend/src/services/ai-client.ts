@@ -35,8 +35,12 @@ export interface CallAIOptions {
  * the default protocol for the official AI writing assistant.
  */
 export function resolveAIEndpoint(apiUrl: string, suffix: "responses" | "chat/completions"): string {
-  const base = apiUrl.replace(/\/+$/, "");
-  if (new RegExp(`/${suffix.replace("/", "\\/")}$`, "i").test(base)) return base;
+  let base = apiUrl.replace(/\/+$/, "");
+  const endpointMatch = base.match(/\/(responses|chat\/completions)$/i);
+  if (endpointMatch) {
+    if (endpointMatch[1].toLowerCase() === suffix.toLowerCase()) return base;
+    base = base.slice(0, -endpointMatch[0].length);
+  }
   if (/\/v1$/i.test(base)) return `${base}/${suffix}`;
   return `${base}/v1/${suffix}`;
 }
