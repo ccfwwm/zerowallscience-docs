@@ -11,6 +11,7 @@ jobs:
       - run: npm ci --legacy-peer-deps
         working-directory: frontend
       - run: npm run build
+        env: { NODE_OPTIONS: --max-old-space-size=4096 }
         working-directory: frontend
       - run: npx vitest run src/lib/__tests__/serverUrl.test.ts
         working-directory: frontend
