@@ -25,7 +25,7 @@
     "busboy": "^1.6.0",
     "cron-parser": "^4.9.0",
     "ffmpeg-static": "5.3.0",
-    "hono": "^4.6.15",
+    "hono": "^4.13.13",
     "jsonwebtoken": "^9.0.3",
     "jszip": "^3.10.1",
     "libheif-js": "1.23.2",
