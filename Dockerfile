@@ -10,7 +10,7 @@ WORKDIR /app/frontend
 
 COPY package.json /app/package.json
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --legacy-peer-deps --no-audit --no-fund
+RUN npm ci --legacy-peer-deps --foreground-scripts --no-audit --no-fund
 
 RUN ROLLUP_VER=$(node -e "try{const l=require('./package-lock.json');const v=(l.packages||{})['node_modules/rollup']||(l.dependencies||{}).rollup||{};console.log(v.version||'')}catch(e){console.log('')}") && \
     [ -z "$ROLLUP_VER" ] && ROLLUP_VER="4.59.0" ; \
