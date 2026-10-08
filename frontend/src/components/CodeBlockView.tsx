@@ -1,4 +1,6 @@
 import React, { useCallback, useMemo, useState, useEffect, useRef, useSyncExternalStore } from "react";
+import { isEncryptedBlockLanguage } from "@/lib/encryptedNotes/blockDocument";
+import EncryptedBlockCard from "./EncryptedBlockCard";
 import { createPortal } from "react-dom";
 import { NodeViewWrapper, NodeViewContent, NodeViewProps } from "@tiptap/react";
 import { Copy, Check, ChevronDown, Palette, Eye, Code2, FileText, Minimize2, Maximize2 } from "lucide-react";
@@ -10,16 +12,29 @@ import {
   setCodeBlockTheme,
 } from "@/lib/codeBlockTheme";
 import MermaidView from "@/components/MermaidView";
+import "@/components/mermaid-inline-preview.css";
 import { isMermaidLang } from "@/lib/mermaidRenderer";
 import { replaceCodeBlockWithPlainText } from "@/lib/tiptapEditorCommands";
 import { canUseCodeBlockToolbarAction } from "@/lib/codeBlockPermissions";
+import { CodeBlockFormatButton } from "@/components/CodeBlockFormatButton";
+import { HtmlCodeBlockRunButton } from "@/components/HtmlCodeBlockRunButton";
+import { formatTiptapCodeBlock } from "@/lib/tiptapCodeBlockFormatting";
 import { formatCodeBlockLanguageLabel } from "@/lib/codeBlockLowlight";
+import { CODE_BLOCK_POPULAR_LANGUAGES } from "@/lib/codeBlockLanguageRegistry";
 import { copyText } from "@/lib/clipboard";
 import { recordPhaseAPerfEvent } from "@/lib/phaseAPerfDiagnostics";
 import {
   getEditorEditableSnapshot,
   subscribeEditorEditable,
 } from "@/lib/editorEditableStore";
+import {
+  CODE_BLOCK_TOOLBAR_CLASS,
+  CODE_BLOCK_TOOL_BUTTON_CLASS,
+  CODE_BLOCK_WRAPPER_CLASS,
+  getCodeBlockCollapseMode,
+  shouldCollapseCodeBlock,
+  subscribeCodeBlockCollapseMode,
+} from "@/lib/codeBlockPresentation";
 
 /**
  * 自定义代码块视图：
@@ -28,20 +43,6 @@ import {
  *  - 深色代码区与浅色页面形成清晰对比，突出代码语义
  */
 
-// 常用语言列表（超集由 lowlight.common 决定）
-// 注：mermaid 不在 lowlight 注册，是 nowen 自己识别的特殊语言（用于流程图渲染），
-// 把它放进常用列表是为了在语言下拉里可以一键切换到 mermaid，触发 MermaidView。
-const POPULAR_LANGUAGES = [
-  "auto", "plaintext",
-  "javascript", "typescript", "tsx", "jsx",
-  "html", "css", "scss", "json", "xml",
-  "python", "java", "c", "cpp", "csharp",
-  "go", "rust", "php", "ruby", "kotlin", "swift",
-  "bash", "shell", "powershell",
-  "sql", "yaml", "markdown", "diff", "dockerfile",
-  "maxscript", "mermaid",
-];
-
 export function normalizeCodeBlockIndent(value: unknown): number {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return 0;
@@ -49,6 +50,20 @@ export function normalizeCodeBlockIndent(value: unknown): number {
 }
 
 export function CodeBlockView(props: NodeViewProps) {
+  if (isEncryptedBlockLanguage(props.node.attrs.language)) return <EncryptedCodeBlockView {...props} />;
+  return <OrdinaryCodeBlockView {...props} />;
+}
+function EncryptedCodeBlockView({ node, editor, getPos }: NodeViewProps) {
+  const editable = useSyncExternalStore((listener) => subscribeEditorEditable(editor, listener), () => getEditorEditableSnapshot(editor), () => false);
+  const source = node.textContent;
+  return <NodeViewWrapper contentEditable={false}><EncryptedBlockCard language={node.attrs.language} source={source} onCommit={editable ? (next) => {
+    const position = getPos();
+    const current = typeof position === "number" ? editor.state.doc.nodeAt(position) : null;
+    if (typeof position !== "number" || !editor.isEditable || !current?.eq(node)) throw new Error("Encrypted region changed");
+    if (!editor.commands.insertContentAt({ from: position, to: position + node.nodeSize }, { type: "codeBlock", attrs: node.attrs, content: [{ type: "text", text: next }] })) throw new Error("Encrypted region write failed");
+  } : undefined} /></NodeViewWrapper>;
+}
+function OrdinaryCodeBlockView(props: NodeViewProps) {
   const { node, updateAttributes, extension, editor, getPos } = props;
   const lowlight = (extension.options as any)?.lowlight;
   const perfBlockId = String(node.attrs.blockId || node.attrs.language || "code-block");
@@ -62,7 +77,14 @@ export function CodeBlockView(props: NodeViewProps) {
   const [langFilter, setLangFilter] = useState("");
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [activeTheme, setActiveTheme] = useState<CodeBlockThemeId>(getSavedCodeBlockTheme);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapseOverride, setCollapseOverride] = useState<boolean | null>(null);
+  const collapseMode = useSyncExternalStore(
+    subscribeCodeBlockCollapseMode,
+    getCodeBlockCollapseMode,
+    getCodeBlockCollapseMode,
+  );
+  const lineCount = node.textContent ? node.textContent.split("\n").length : 0;
+  const collapsed = collapseOverride ?? shouldCollapseCodeBlock(collapseMode, lineCount);
   const subscribeToEditable = useCallback((listener: () => void) => (
     subscribeEditorEditable(editor, () => {
       recordPhaseAPerfEvent({ type: "code-block-permission-state-update", blockId: perfBlockId });
@@ -155,7 +177,7 @@ export function CodeBlockView(props: NodeViewProps) {
     } catch {
       /* ignore */
     }
-    const set = new Set<string>(["auto", "plaintext", ...registered, ...POPULAR_LANGUAGES]);
+    const set = new Set<string>(["auto", "plaintext", ...registered, ...CODE_BLOCK_POPULAR_LANGUAGES]);
     return Array.from(set).sort((a, b) => {
       if (a === "auto") return -1;
       if (b === "auto") return 1;
@@ -295,14 +317,15 @@ export function CodeBlockView(props: NodeViewProps) {
 
   return (
     <NodeViewWrapper
-      className="code-block-wrapper group relative my-4 rounded-xl overflow-hidden border shadow-sm"
+      className={CODE_BLOCK_WRAPPER_CLASS}
       data-indent={indent > 0 ? indent : undefined}
+      data-nowen-mermaid-inline-preview={isMermaid && mermaidPreview ? "true" : undefined}
       // 预览态时把隐藏的 NodeViewContent 用绝对定位藏起来，依赖外层 relative
       style={{ position: "relative" }}
     >
       {/* 顶部工具栏（不可编辑） */}
       <div
-        className="code-block-toolbar flex items-center justify-between px-3 py-1.5 border-b select-none"
+        className={CODE_BLOCK_TOOLBAR_CLASS}
         contentEditable={false}
       >
         {/* 左侧：mac 风格小圆点 + 语言徽章（可点击切换） */}
@@ -387,8 +410,8 @@ export function CodeBlockView(props: NodeViewProps) {
           {!isMermaid && (
             <button
               type="button"
-              onClick={() => setCollapsed((v) => !v)}
-              className="code-block-tool-btn flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
+              onClick={() => setCollapseOverride(!collapsed)}
+              className={CODE_BLOCK_TOOL_BUTTON_CLASS}
               title={collapsed ? "展开代码" : "折叠代码"}
             >
               {collapsed ? <Maximize2 size={12} /> : <Minimize2 size={12} />}
@@ -475,6 +498,13 @@ export function CodeBlockView(props: NodeViewProps) {
             )}
           </div>
 
+          <CodeBlockFormatButton
+            language={currentLang}
+            disabled={!canUseCodeBlockToolbarAction("format", editor)}
+            onFormat={() => formatTiptapCodeBlock(editor, getPos)}
+            className="code-block-tool-btn flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          />
+          <HtmlCodeBlockRunButton language={currentLang} source={node.textContent} />
           <button
             type="button"
             onClick={handleCopy}

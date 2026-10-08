@@ -20,7 +20,7 @@ import {
   PDF_NO_TEXT_LAYER_FLAG, PDF_TOO_LARGE_FLAG, MAX_PDF_SIZE,
 } from "@/lib/importService";
 import { useApp, useAppActions } from "@/store/AppContext";
-import { api, withSudo, getCurrentWorkspace, setCurrentWorkspace, getBaseUrl } from "@/lib/api";
+import { api, withSudo, getCurrentWorkspace, setCurrentWorkspace, getServerUrl } from "@/lib/api";
 import { emitKnowledgeTreeRefresh } from "@/lib/workspaceRefreshBridge";
 import { toast } from "@/lib/toast";
 import { storeAuthTokens } from "@/lib/authSession";
@@ -54,7 +54,7 @@ import {
   shouldResetSharedFileImport,
   type ImportMethod,
 } from "@/lib/importHub";
-import type { Workspace } from "@/types";
+import type { User, Workspace } from "@/types";
 import { openTaskDataTransfer } from "@/lib/taskDataTransferBridge";
 import { runFullBackupJob } from "@/lib/fullBackupJobClient";
 
@@ -164,8 +164,8 @@ function SyncCenterCard() {
           <span className="text-zinc-300 dark:text-zinc-700">·</span>
           <span className="min-w-0 truncate">上次同步 {formatSyncTime(summary.lastSyncAt)}</span>
           <span className="hidden sm:inline text-zinc-300 dark:text-zinc-700">·</span>
-          <span className="hidden sm:inline truncate" title={getBaseUrl()}>
-            {getBaseUrl().replace(/\/api$/, "")}
+          <span className="hidden sm:inline truncate" title={getServerUrl()}>
+            {getServerUrl()}
           </span>
         </div>
         <button
@@ -188,7 +188,7 @@ function SyncCenterCard() {
   );
 }
 
-function DesktopDataSafetyCard() {
+function DesktopDataSafetyCard({ currentUser }: { currentUser: Pick<User, "id" | "username"> | null }) {
   const [info, setInfo] = useState<AppInfo | null>(null);
   const [dataDirInfo, setDataDirInfo] = useState<DataDirInfo | null>(null);
   const [resetting, setResetting] = useState(false);
@@ -299,6 +299,11 @@ function DesktopDataSafetyCard() {
                 : "轻量模式数据存储在远端服务器，本机不保存完整数据库。"}
               {dataDirInfo?.isCustom ? " · 自定义目录" : ""}
             </p>
+            {isFullLocal && currentUser && (
+              <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 break-all">
+                当前会话账号：{currentUser.username} · ID：{currentUser.id}（请与旧版本核对；当前会话不一定属于此数据库）
+              </p>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -355,6 +360,7 @@ export default function DataManager() {
   // 这里直接从 /api/me 读最新值；老后端若不返回字段则按 true 兜底保持原行为。
   // -----------------------------------------------------------------
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  const [currentUser, setCurrentUser] = useState<Pick<User, "id" | "username"> | null>(null);
   const [personalExportAllowed, setPersonalExportAllowed] = useState(true);
   const [personalImportAllowed, setPersonalImportAllowed] = useState(true);
   useEffect(() => {
@@ -363,6 +369,7 @@ export default function DataManager() {
       .then((u) => {
         if (cancelled) return;
         setIsAdmin((u as any)?.role === "admin");
+        setCurrentUser(u?.id && u?.username ? { id: u.id, username: u.username } : null);
         // 老后端可能不返回这两个字段——按 true 兜底，保持原行为。
         const exp = (u as any)?.personalExportEnabled;
         const imp = (u as any)?.personalImportEnabled;
@@ -1116,7 +1123,7 @@ export default function DataManager() {
 
         <div className="space-y-3 mb-4">
           <SyncCenterCard />
-          <DesktopDataSafetyCard />
+          <DesktopDataSafetyCard currentUser={currentUser} />
           <RemoteImageLocalizationPanel />
         </div>
 
@@ -4652,6 +4659,30 @@ function BackupRestoreDialog(props: {
                   plugins: dryRun.files.plugins,
                 })}
               </div>
+
+              {(dryRun.backupType === "db-only" || target.type === "db-only") && (
+                <div className="flex items-start gap-2 rounded-lg border border-amber-200 dark:border-amber-700/40 bg-amber-50 dark:bg-amber-500/10 px-3 py-2 text-xs">
+                  <AlertTriangle size={14} className="mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" />
+                  <div>
+                    <div className="font-semibold text-amber-700 dark:text-amber-300">
+                      {t("dataManager.backup.dbOnlyRestoreWarningTitle")}
+                    </div>
+                    <div className="mt-0.5 text-amber-700/90 dark:text-amber-300/90">
+                      {t("dataManager.backup.dbOnlyRestoreWarningDesc")}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {dryRun.attachmentAudit && (
+                <div className="rounded-lg border border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/70 dark:bg-emerald-500/10 px-3 py-2 text-xs text-emerald-800 dark:text-emerald-300">
+                  {t("dataManager.backup.attachmentAuditSummary", {
+                    archive: dryRun.attachmentAudit.archiveCount,
+                    rows: dryRun.attachmentAudit.dbRows,
+                    paths: dryRun.attachmentAudit.dbDistinctPaths,
+                  })}
+                </div>
+              )}
 
               {/* 表级明细：只显示净变化 != 0 的，避免一屏几十张表全 0 */}
               <div className="border border-zinc-200 dark:border-zinc-700 rounded overflow-hidden">

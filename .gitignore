@@ -69,3 +69,4 @@ website/.astro/
 website/dist/
 website/node_modules/
 frontend/dist.bak
+backend/dist.root-owned-backup/

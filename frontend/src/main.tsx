@@ -1,6 +1,8 @@
+import "./lib/runtimePrelude";
 import "./lib/runtimeCompatibility";
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { initializeMobileLocalFirstRuntime } from "./lib/mobileLocalFirstRuntime";
 import "./lib/androidCompat";
 import "./lib/noteTransferRefreshBridge";
 import "./lib/workspaceRefreshBridge";
@@ -10,10 +12,12 @@ import "./lib/imageNodeTransformBootstrap";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { SiteSettingsProvider } from "./hooks/useSiteSettings";
 import { ConfirmProvider } from "./components/ui/confirm";
+import VoiceRecorderSheet from "./components/VoiceRecorderSheet";
 import Toaster from "./components/Toaster";
 import NoteIconBridge from "./components/NoteIconBridge";
 import EmbedPasswordBridge from "./components/EmbedPasswordBridge";
 import MediaExperienceBridge from "./components/MediaExperienceBridge";
+import CameraCaptureBridge from "./components/CameraCaptureBridge";
 import EditorImageTransformBridge from "./components/EditorImageTransformBridge";
 import ImageClipboardBridge from "./components/ImageClipboardBridge";
 import MarkdownMobileViewControlsBridge from "./components/MarkdownMobileViewControlsBridge";
@@ -24,6 +28,7 @@ import AndroidShareImportCenter from "./components/AndroidShareImportCenter";
 import DeferredGlobalFeatureCentersMount from "./components/DeferredGlobalFeatureCentersMount";
 import SiyuanRichTextCalloutBridge from "./components/SiyuanRichTextCalloutBridge";
 import InlineCommentBridge from "./components/InlineCommentBridge";
+import { isMobileLocalMode } from "./lib/mobileLocalMode";
 import "./index.css";
 import "./editor-list-markers.css";
 import "./code-block-wrap.css";
@@ -36,12 +41,16 @@ import "./siyuan-rich-text-callout.css";
 import "./knowledge-tree-markdown-drop.css";
 import "./inline-comments.css";
 import "./loading-experience.css";
+import "./note-appearance.css";
 import { initCodeBlockTheme } from "./lib/codeBlockTheme";
 import { installAndroidNativeHttpBridge } from "./lib/androidNativeHttpBridge";
 import { installDesktopNativeHttpBridge } from "./lib/desktopNativeHttpBridge";
 import { installMobileStartupBridge } from "./lib/mobileStartupBridge";
 import { installMobileWebStartupBridge } from "./lib/mobileWebStartupBridge";
+import { installAttachmentUploadPolicyBridge } from "./lib/attachmentUploadPolicyBridge";
+import { captureAttachmentAccessUpstreamFetch } from "./lib/attachmentAccessUpstreamFetch";
 import { installNoteAttachmentAccessBridge } from "./lib/noteAttachmentAccessBridge";
+import { installNonBlockingNoteFetch } from "./lib/nonBlockingNoteFetch";
 import { installReliableExportDownloadBridge } from "./lib/reliableExportDownloadBridge";
 import { installNoteSyncSafety } from "./lib/noteSyncSafety";
 import { installNoteUpdateResponseGuard } from "./lib/noteUpdateResponseGuard";
@@ -68,8 +77,51 @@ import { observeBootSplashReadiness } from "./lib/bootSplash";
 const App = React.lazy(() => import("./App"));
 const PublicNotebookView = React.lazy(() => import("./components/PublicNotebookView"));
 
-void cleanupRemovedServerProfiles();
-installUgreenCredentialedFetch();
+function reportBootError(source: string, error: unknown, fatal: boolean): void {
+  try {
+    const reporter = (window as Window & { __NOWEN_REPORT_BOOT_ERROR__?: (source: string, error: unknown, fatal: boolean) => void }).__NOWEN_REPORT_BOOT_ERROR__;
+    if (typeof reporter === "function") reporter(source, error, fatal);
+  } catch {
+    /* diagnostics must never become another startup failure */
+  }
+}
+
+function installOptionalRuntime(source: string, install: () => unknown): void {
+  try {
+    install();
+  } catch (error) {
+    console.error(`[boot] optional runtime failed: ${source}`, error);
+    reportBootError(source, error, false);
+  }
+}
+
+class ApplicationBootErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: unknown) {
+    reportBootError("react-render", error, true);
+  }
+
+  render() {
+    return this.state.failed ? null : this.props.children;
+  }
+}
+
+try {
+  void Promise.resolve(cleanupRemovedServerProfiles()).catch((error) => {
+    reportBootError("removed-server-profile-cleanup", error, false);
+  });
+} catch (error) {
+  reportBootError("removed-server-profile-cleanup", error, false);
+}
+installOptionalRuntime("ugreen-credentialed-fetch", installUgreenCredentialedFetch);
 
 /**
  * The HTML startup card stays above React while lazy modules, auth restoration and quick
@@ -89,35 +141,46 @@ function MainRouteFallback() {
   return null;
 }
 
-installKnowledgeTreeScrollbarBridge();
-installKnowledgeTreeMarkdownDrop();
-installNodeViewMutationGuard();
-installEditorMediaScopeGuard();
-installAndroidNativeHttpBridge();
-installDesktopNativeHttpBridge();
-installMobileStartupBridge();
-installMobileWebStartupBridge();
-installNoteAttachmentAccessBridge();
-installTwoFactorLoginChallengeBridge();
-installNoteSyncSafety();
-installNoteUpdateResponseGuard();
-installNoteUpdateSerialQueue();
-installKnowledgeTreeTitleSyncBridge();
-installKnowledgeTreeNoteLoadRecovery();
-installTaskAttachmentExportFallback();
-installTaskUpdateSafetyBridge();
-installReliableExportDownloadBridge();
-installRoundTripImportReviewBridge();
-installRoundTripPermissionExportBridge();
-installEditorPerformanceGlobal();
-installIssue210SignoffRuntime();
-installInlineCommentTooltipMount();
-
-initCodeBlockTheme();
+installOptionalRuntime("knowledge-tree-scrollbar", installKnowledgeTreeScrollbarBridge);
+installOptionalRuntime("knowledge-tree-markdown-drop", installKnowledgeTreeMarkdownDrop);
+installOptionalRuntime("node-view-mutation-guard", installNodeViewMutationGuard);
+installOptionalRuntime("editor-media-scope-guard", installEditorMediaScopeGuard);
+installOptionalRuntime("android-native-http", installAndroidNativeHttpBridge);
+installOptionalRuntime("desktop-native-http", installDesktopNativeHttpBridge);
+installOptionalRuntime("mobile-startup", installMobileStartupBridge);
+installOptionalRuntime("mobile-web-startup", installMobileWebStartupBridge);
+// Install the runtime upload contract before any editor starts sending attachments. The policy
+// endpoint is warmed in the background; every actual upload still re-checks it before POST.
+installOptionalRuntime("attachment-upload-policy", installAttachmentUploadPolicyBridge);
+// Keep every transport wrapper installed above, but capture the chain before the attachment
+// bridge adds its note-detail prerequisite wait. Canonical note text can then render first while
+// signed media access is prepared in the background.
+installOptionalRuntime("attachment-access-upstream", captureAttachmentAccessUpstreamFetch);
+installOptionalRuntime("note-attachment-access", installNoteAttachmentAccessBridge);
+installOptionalRuntime("non-blocking-note-fetch", installNonBlockingNoteFetch);
+installOptionalRuntime("two-factor-login-challenge", installTwoFactorLoginChallengeBridge);
+installOptionalRuntime("note-sync-safety", installNoteSyncSafety);
+installOptionalRuntime("note-update-response-guard", installNoteUpdateResponseGuard);
+installOptionalRuntime("note-update-serial-queue", installNoteUpdateSerialQueue);
+installOptionalRuntime("knowledge-tree-title-sync", installKnowledgeTreeTitleSyncBridge);
+installOptionalRuntime("knowledge-tree-note-load-recovery", installKnowledgeTreeNoteLoadRecovery);
+installOptionalRuntime("task-attachment-export-fallback", installTaskAttachmentExportFallback);
+installOptionalRuntime("task-update-safety", installTaskUpdateSafetyBridge);
+installOptionalRuntime("reliable-export-download", installReliableExportDownloadBridge);
+installOptionalRuntime("round-trip-import-review", installRoundTripImportReviewBridge);
+installOptionalRuntime("round-trip-permission-export", installRoundTripPermissionExportBridge);
+installOptionalRuntime("editor-performance-global", installEditorPerformanceGlobal);
+installOptionalRuntime("issue-210-signoff", installIssue210SignoffRuntime);
+installOptionalRuntime("inline-comment-tooltip", installInlineCommentTooltipMount);
+installOptionalRuntime("code-block-theme", initCodeBlockTheme);
 
 const THEME_KEY = "nowen-note-theme";
-if (typeof localStorage !== "undefined" && !localStorage.getItem(THEME_KEY)) {
-  localStorage.setItem(THEME_KEY, "light");
+try {
+  if (typeof localStorage !== "undefined" && !localStorage.getItem(THEME_KEY)) {
+    localStorage.setItem(THEME_KEY, "light");
+  }
+} catch (error) {
+  reportBootError("theme-storage", error, false);
 }
 
 try {
@@ -150,8 +213,17 @@ function resolveOfficialDocsRoute(): { matched: boolean; noteId?: string } {
 const publicRoute = resolvePublicNotebookRoute();
 const docsRoute = resolveOfficialDocsRoute();
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
+let applicationRendered = false;
+
+function renderApplication() {
+  if (applicationRendered) return;
+  applicationRendered = true;
+  try {
+    const root = document.getElementById("root");
+    if (!root) throw new Error("Missing #root mount element");
+    ReactDOM.createRoot(root).render(
+      <ApplicationBootErrorBoundary>
+      <React.StrictMode>
     <SiteSettingsProvider>
       <ConfirmProvider>
         <BootSplashReadinessObserver />
@@ -171,6 +243,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           <>
             <NoteIconBridge />
             <EmbedPasswordBridge />
+            <CameraCaptureBridge />
+            <VoiceRecorderSheet />
             <MediaExperienceBridge />
             <EditorImageTransformBridge />
             <ImageClipboardBridge />
@@ -181,7 +255,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <AndroidShareImportCenter />
             <DeferredGlobalFeatureCentersMount />
             <SiyuanRichTextCalloutBridge />
-            <InlineCommentBridge />
+            {!isMobileLocalMode() && <InlineCommentBridge />}
             <React.Suspense fallback={<MainRouteFallback />}>
               <App />
             </React.Suspense>
@@ -189,5 +263,23 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
         )}
       </ConfirmProvider>
     </SiteSettingsProvider>
-  </React.StrictMode>,
-);
+      </React.StrictMode>
+      </ApplicationBootErrorBoundary>,
+    );
+  } catch (error) {
+    applicationRendered = false;
+    reportBootError("react-root", error, true);
+  }
+}
+
+Promise.resolve()
+  .then(() => initializeMobileLocalFirstRuntime())
+  .then(
+    () => renderApplication(),
+    (error) => {
+      // Native local-first initialization is an enhancement. A rejected or unsupported
+      // native bridge must never prevent Web/WKWebView users from reaching login/workspace.
+      reportBootError("mobile-local-first", error, false);
+      renderApplication();
+    },
+  );

@@ -10,7 +10,7 @@ WORKDIR /app/frontend
 
 COPY package.json /app/package.json
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --legacy-peer-deps --no-audit --no-fund
 
 RUN ROLLUP_VER=$(node -e "try{const l=require('./package-lock.json');const v=(l.packages||{})['node_modules/rollup']||(l.dependencies||{}).rollup||{};console.log(v.version||'')}catch(e){console.log('')}") && \
     [ -z "$ROLLUP_VER" ] && ROLLUP_VER="4.59.0" ; \
@@ -28,27 +28,29 @@ COPY frontend/ .
 COPY scripts/precompress-frontend.mjs /app/scripts/precompress-frontend.mjs
 COPY scripts/verify-sync-notification-ui.cjs /app/scripts/verify-sync-notification-ui.cjs
 # Web/Docker 产物生成 .br/.gz；Electron 与 Capacitor 继续使用普通 build，避免安装包重复携带压缩副本。
-RUN npm run build:web
+RUN NODE_OPTIONS=--max-old-space-size=4096 npm run build:web
 
 # ---------- Stage 2: 后端构建（包含 updater 专用入口） ----------
 FROM node:20-alpine AS backend-build
 WORKDIR /app/backend
 RUN apk add --no-cache --virtual .build-deps python3 make g++ linux-headers
+RUN apk add --no-cache ffmpeg
 COPY backend/package.json backend/package-lock.json ./
-RUN npm ci --no-audit --no-fund
+RUN FFMPEG_BIN=/usr/bin/ffmpeg npm ci --no-audit --no-fund
 COPY backend/ .
-RUN npx tsc
+RUN npx tsc \
+    && cp src/plugins/runner-child.mjs src/plugins/sandbox-child.mjs dist/plugins/
 RUN apk del .build-deps
 
 # ---------- Stage 3: 运行时镜像 ----------
 FROM node:20-alpine
 WORKDIR /app
-RUN apk add --no-cache tini tzdata
+RUN apk add --no-cache tini tzdata ffmpeg
 
 COPY package.json ./package.json
 COPY backend/package.json backend/package-lock.json ./backend/
 RUN apk add --no-cache --virtual .build-deps python3 make g++ linux-headers \
-    && cd backend && npm ci --omit=dev --no-audit --no-fund \
+    && cd backend && FFMPEG_BIN=/usr/bin/ffmpeg npm ci --omit=dev --no-audit --no-fund \
     && apk del .build-deps \
     && npm cache clean --force \
     && rm -rf /root/.npm /tmp/* /var/cache/apk/*
@@ -57,6 +59,9 @@ COPY --from=backend-build /app/backend/dist ./backend/dist
 COPY backend/templates ./backend/templates
 COPY content ./content
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist
+COPY backend/scripts/smoke-plugin-artifacts.cjs ./backend/scripts/smoke-plugin-artifacts.cjs
+# 仅使用生产依赖与 dist；没有 src，避免开发入口兜底掩盖遗漏的运行器。
+RUN node backend/scripts/smoke-plugin-artifacts.cjs
 
 RUN mkdir -p /app/data /var/lib/nowen-updater \
     && chmod 700 /var/lib/nowen-updater
@@ -81,6 +86,7 @@ LABEL org.opencontainers.image.title="Nowen Note" \
 ENV NODE_ENV=production
 ENV DB_PATH=/app/data/nowen-note.db
 ENV PORT=3001
+ENV FFMPEG_PATH=/usr/bin/ffmpeg
 
 EXPOSE 3001
 

@@ -13,6 +13,8 @@ import "./runtime/notebook-permission-management.js";
 import "./runtime/note-format-yjs-transition.js";
 // Install schema/route hardening before the main backend module evaluates.
 import "./runtime/task-stats-hardening.js";
+// Note appearance is note metadata. Mount its schema/API capability before /api/notes is registered.
+import "./runtime/note-appearance.js";
 // Keep the legacy Xiaomi route as a reusable, single-row-safe import pipeline.
 import "./runtime/micloud-import-hardening.js";
 // Mount persistent Xiaomi background jobs and one SSE progress stream before /api/micloud mounts.
@@ -44,4 +46,7 @@ import "./runtime/official-site-bootstrap.js";
 import "./runtime/knowledge-tree.js";
 // Install before the main Hono app registers its production wildcard static route.
 import "./runtime/static-precompressed-assets.js";
+// Publish the effective attachment-size policy and normalize oversized upload errors before the
+// legacy /api/attachments router is mounted.
+import "./runtime/attachment-upload-policy.js";
 import "./index.js";

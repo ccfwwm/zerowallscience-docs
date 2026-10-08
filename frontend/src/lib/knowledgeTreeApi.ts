@@ -1,5 +1,7 @@
-import { getCurrentWorkspace, getServerUrl } from "@/lib/api";
+import { getBaseUrl, getCurrentWorkspace } from "@/lib/api";
 import { applyKnowledgeTreeSort } from "@/lib/knowledgeTreeSort";
+import type { SheetDataModel } from "@/lib/sheetModel";
+import type { NoteColorMark } from "@/types";
 
 export type KnowledgeNodeType = "folder" | "note" | "markdown" | "word" | "mindmap" | "file";
 export type KnowledgeRolePreset = "readonly" | "editor" | "maintainer" | "admin" | "deny";
@@ -42,6 +44,8 @@ export interface KnowledgeTreeNode {
   isLocked?: number;
   isPasswordProtected?: number;
   contentFormat?: string | null;
+  colorMark?: NoteColorMark | null;
+  noteType?: string | null;
   sortOrder: number;
   isExpanded: number;
   isDeleted: number;
@@ -73,8 +77,7 @@ export interface KnowledgePermissionsResponse {
 }
 
 function apiBase(): string {
-  const server = (getServerUrl() || "").replace(/\/+$/, "");
-  return server ? `${server}/api/knowledge-tree` : "/api/knowledge-tree";
+  return `${getBaseUrl()}/knowledge-tree`;
 }
 
 function token(): string {
@@ -132,8 +135,15 @@ export const knowledgeTreeApi = {
     return request<{ nodes: KnowledgeTreeNode[] }>(`/shared-with-me?${workspaceQuery()}`).then(withDisplaySort);
   },
 
-  create(input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word"; title: string }) {
+  create(input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word" | "mindmap" | "sheet"; title: string; sheetData?: SheetDataModel }) {
     return request<KnowledgeTreeNode>(`/nodes?${workspaceQuery()}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
+  linkFile(input: { fileId: string; notebookPath: string[] }) {
+    return request<KnowledgeTreeNode>(`/files/link?${workspaceQuery()}`, {
       method: "POST",
       body: JSON.stringify(input),
     });
@@ -141,7 +151,7 @@ export const knowledgeTreeApi = {
 
   createForWorkspace(
     workspaceId: string,
-    input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word"; title: string },
+    input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word" | "mindmap" | "sheet"; title: string },
   ) {
     return request<KnowledgeTreeNode>(`/nodes?${workspaceQuery(false, workspaceId)}`, {
       method: "POST",

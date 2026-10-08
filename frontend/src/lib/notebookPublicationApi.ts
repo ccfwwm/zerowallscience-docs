@@ -1,4 +1,4 @@
-import { getServerUrl } from "@/lib/api";
+import { getBaseUrl } from "@/lib/api";
 import { registerAttachmentAccessUrls } from "@/lib/noteAttachmentAccessBridge";
 import { normalizeShareCommentTimestamp } from "@/lib/shareCommentTime";
 
@@ -68,6 +68,33 @@ export interface PublicNotebookNode {
   depth: number;
 }
 
+export type PublicKnowledgeResourceType = "notebook" | "note" | "mindmap" | "sheet";
+
+export interface PublicKnowledgeResourceSummary {
+  nodeId: string;
+  parentNodeId: string | null;
+  resourceType: PublicKnowledgeResourceType;
+  resourceId: string;
+  notebookId: string | null;
+  title: string;
+  contentText: string;
+  contentFormat: string | null;
+  updatedAt: string;
+  sortOrder: number;
+  depth: number;
+}
+
+export interface PublicKnowledgeResourceContent extends PublicKnowledgeResourceSummary {
+  content?: string;
+  data?: string;
+  version?: number;
+  attachmentUrls?: Record<string, string>;
+  permission: NotebookPublicationPermission;
+  allowDownload: boolean;
+  allowComment: boolean;
+  allowEdit: boolean;
+}
+
 export interface PublicNoteSummary {
   id: string;
   notebookId: string;
@@ -116,8 +143,7 @@ export interface ManagedPublicationComment extends PublicComment {
 }
 
 function apiBase(): string {
-  const server = (getServerUrl() || "").replace(/\/+$/, "");
-  return server ? `${server}/api` : "/api";
+  return getBaseUrl();
 }
 
 function loginToken(): string {
@@ -275,7 +301,11 @@ export const notebookPublicationApi = {
   },
 
   async getPublicTree(token: string, accessToken?: string) {
-    const tree = await request<{ notebooks: PublicNotebookNode[]; notes: PublicNoteSummary[] }>(
+    const tree = await request<{
+      notebooks: PublicNotebookNode[];
+      notes: PublicNoteSummary[];
+      resources?: PublicKnowledgeResourceSummary[];
+    }>(
       `/shared/notebook-public/${encodeURIComponent(token)}/tree`,
       {},
       { accessToken },
@@ -283,6 +313,26 @@ export const notebookPublicationApi = {
     return {
       notebooks: tree.notebooks,
       notes: tree.notes.map((note) => ({ ...note, contentFormat: normalizeContentFormat(note.contentFormat) })),
+      resources: (tree.resources || []).map((resource) => ({
+        ...resource,
+        contentFormat: normalizeContentFormat(resource.contentFormat) || null,
+      })),
+    };
+  },
+
+  async getPublicResource(token: string, nodeId: string, accessToken?: string) {
+    const path = `/shared/notebook-public/${encodeURIComponent(token)}/resources/${encodeURIComponent(nodeId)}`;
+    const resource = await request<PublicKnowledgeResourceContent>(
+      path,
+      {},
+      { accessToken },
+    );
+    if (resource.attachmentUrls) {
+      registerAttachmentAccessUrls(resource.attachmentUrls, `${apiBase()}${path}`);
+    }
+    return {
+      ...resource,
+      contentFormat: normalizeContentFormat(resource.contentFormat) || null,
     };
   },
 

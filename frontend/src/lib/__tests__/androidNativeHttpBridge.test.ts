@@ -26,6 +26,8 @@ describe("androidNativeHttpBridge", () => {
   let browserFetch: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    localStorage.clear();
+    Reflect.deleteProperty(window, "Capacitor");
     capacitorState.native = true;
     capacitorState.platform = "android";
     capacitorState.request.mockReset();
@@ -55,7 +57,7 @@ describe("androidNativeHttpBridge", () => {
     expect(capacitorState.request).toHaveBeenCalledWith(expect.objectContaining({
       url: "https://note.example.com/api/auth/verify",
       method: "GET",
-      headers: expect.objectContaining({ Authorization: "Bearer token-1" }),
+      headers: expect.objectContaining({ authorization: "Bearer token-1" }),
       responseType: "text",
     }));
     expect(browserFetch).not.toHaveBeenCalled();
@@ -143,6 +145,20 @@ describe("androidNativeHttpBridge", () => {
 
     expect(capacitorState.request).not.toHaveBeenCalled();
     expect(browserFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("blocks every API transport while Android is in unsigned local mode", async () => {
+    Object.assign(window, { Capacitor: {
+      isNativePlatform: () => true,
+      getPlatform: () => "android",
+      platform: "android",
+    } });
+    cleanup = installAndroidNativeHttpBridge();
+
+    await expect(fetch("https://note.example.com/api/attachments/file-1/download"))
+      .rejects.toMatchObject({ code: "MOBILE_LOCAL_ONLY" });
+    expect(capacitorState.request).not.toHaveBeenCalled();
+    expect(browserFetch).not.toHaveBeenCalled();
   });
 
   it("does not intercept non-API resources", async () => {

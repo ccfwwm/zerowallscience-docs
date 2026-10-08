@@ -1,4 +1,5 @@
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
+import { isMobileLocalMode, MobileLocalModeRemoteRequestError } from "./mobileLocalMode";
 
 const BRIDGE_FLAG = "__nowenAndroidNativeHttpBridgeInstalled";
 const DEFAULT_NATIVE_TIMEOUT_MS = 30_000;
@@ -127,18 +128,18 @@ function isNativeCapacitorRuntime(): boolean {
 }
 
 function isJsonApiRequest(input: FetchInput, init: FetchInit | undefined, url: URL): boolean {
-  if (!/(?:^|\/)api(?:\/|$)/.test(url.pathname)) return false;
+  if (!/(?:^|\/)(?:api|publicapi)(?:\/|$)/.test(url.pathname)) return false;
 
   const headers = mergeRequestHeaders(input, init);
   const contentType = headers["content-type"] || "";
   const accept = headers.accept || "";
-  if (/text\/event-stream/i.test(accept) || /(?:^|\/)api\/ai(?:\/|$)/.test(url.pathname)) {
+  if (/text\/event-stream/i.test(accept) || /(?:^|\/)(?:api|publicapi)\/ai(?:\/|$)/.test(url.pathname)) {
     return false;
   }
   if (/json/i.test(contentType) || /json/i.test(accept)) return true;
 
   // 这些启动阶段请求直接通过 fetch 发出，不一定携带 JSON header。
-  return /(?:^|\/)api\/(?:auth\/(?:login|refresh|2fa\/verify|register(?:\/config)?)|settings|health|version)\/?$/.test(url.pathname);
+  return /(?:^|\/)(?:api|publicapi)\/(?:auth\/(?:login|verify|refresh|2fa\/verify|register(?:\/config)?)|settings|health|version)\/?$/.test(url.pathname);
 }
 
 /**
@@ -230,6 +231,16 @@ export function installAndroidNativeHttpBridge(
   const nativeTimeoutMs = Math.max(1000, options.nativeTimeoutMs ?? DEFAULT_NATIVE_TIMEOUT_MS);
 
   const bridgedFetch: FetchFn = async (input, init) => {
+    if (isMobileLocalMode()) {
+      try {
+        const url = new URL(getRequestUrl(input), window.location.href);
+        if (/(?:^|\/)(?:api|publicapi)(?:\/|$)/.test(url.pathname)) {
+          throw new MobileLocalModeRemoteRequestError(url.pathname);
+        }
+      } catch (error) {
+        if (error instanceof MobileLocalModeRemoteRequestError) throw error;
+      }
+    }
     if (!shouldUseAndroidNativeHttp(input, init)) {
       return originalFetch(input, init);
     }

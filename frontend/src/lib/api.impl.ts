@@ -1,4 +1,10 @@
-import { Notebook, NotebookMember, NotebookShareLink, Note, NoteListItem, Tag, SearchResult, User, UserPublicInfo, Task, TaskStats, TaskFilter, CustomFont, MindMap, MindMapListItem, Diary, DiaryMediaItem, DiaryTimeline, DiaryStats, Share, ShareInfo, SharedNoteContent, NoteVersion, ShareComment, Workspace, WorkspaceAdminItem, WorkspaceMember, WorkspaceInvite, WorkspaceRole, WorkspaceFeatures, FileItem, FileDetail, FileListResponse, FileStats, FileSortKey, FileCategory, FileFilter, FileMyUploadsRef } from "@/types";
+import { getOfflineQueueStorageKey } from "./offlineScope";
+import { withConversionRequestLease } from "./encryptedNotes/conversionBarrier";
+import { ConversionCleanupError } from "./encryptedNotes/conversionCoordination";
+import type { EncryptionConversionPreflight } from "./encryptedNotes/conversionPreflight";
+import { withEncryptedBlocksSupport } from "./encryptedNotes/blockDocument";
+import type { WorkspaceIssue, WorkspaceIssueDetail, IssueActivity, IssueListResponse, NotificationListResponse } from "@/types/workspaceIssues";
+import { Notebook, NotebookMember, NotebookShareLink, Note, NoteListItem, Tag, SearchResult, User, UserPublicInfo, Task, TaskStats, TaskFilter, CustomFont, MindMap, MindMapListItem, Diary, DiaryMediaItem, DiaryTimeline, DiaryStats, Share, ShareInfo, SharedNoteContent, NoteVersion, ShareComment, NoteCommentListResponse, Workspace, WorkspaceAdminItem, WorkspaceMember, WorkspaceInvite, WorkspaceRole, WorkspaceFeatures, FileItem, FileDetail, FileListResponse, FileStats, FileSortKey, FileCategory, FileFilter, FileMyUploadsRef } from "@/types";
 import { TASK_REMINDER_SYNC_EVENT, type TaskReminderScheduleItem } from "@/lib/taskNotificationSchedule";
 
 export type TaskMutationResponse = { task: Task; generatedTask: Task | null };
@@ -40,8 +46,15 @@ import {
 } from "@/lib/offlineRead";
 
 import {
+  buildServerPathCandidates as _buildServerPathCandidates,
+  cacheResolvedServerConnection as _cacheResolvedServerConnection,
+  clearResolvedServerConnection as _clearResolvedServerConnection,
+  getResolvedApiBaseUrl as _getResolvedApiBaseUrl,
   inferBrowserServerBaseUrl as _inferBrowserServerBaseUrl,
+  isNativeClientRuntime,
   normalizeServerBaseUrl as _normalizeBase,
+  type ProxyCompatibilityMode,
+  type ServerPathCandidate,
 } from "@/lib/serverUrl";
 import { withShareSessionHeader } from "@/lib/shareSession";
 import { clearFolderUnlockTokens, folderUnlockRequestHeaders } from "@/lib/knowledgeTreePassword";
@@ -61,18 +74,23 @@ import {
   getRefreshToken,
   storeAuthTokens,
 } from "@/lib/authSession";
+import { isMobileLocalMode, MobileLocalModeRemoteRequestError } from "@/lib/mobileLocalMode";
 
 // 本模块所有显式携带 Authorization 的请求共享同一套 401 刷新与单飞锁；
 // 公共请求不带 Authorization，authSession 会原样透传。
-const fetch: typeof globalThis.fetch = (input, init) =>
-  fetchWithAuthRefresh(input, init, getBaseUrl());
+const fetch: typeof globalThis.fetch = (input, init) => {
+  if (isMobileLocalMode()) {
+    return Promise.reject(new MobileLocalModeRemoteRequestError(String(input)));
+  }
+  return fetchWithAuthRefresh(input, init, getBaseUrl());
+};
 
 function protectNoteMutationPayload<T extends Partial<Note>>(
   data: T,
   context: Record<string, unknown>,
 ): T {
   try {
-    return stabilizeNoteMutationPayload(data);
+    return withEncryptedBlocksSupport(stabilizeNoteMutationPayload(data));
   } catch (error) {
     reportTransientNoteImageSource(error, context);
     throw error;
@@ -162,10 +180,11 @@ function shouldPreferInjectedServerUrl(stored: string, injected: string): boolea
  * 不写 localStorage，无副作用。
  */
 export function getServerUrl(): string {
+  if (!isNativeClientRuntime()) return _inferBrowserServerBaseUrl();
   const injected = readServerUrlFromQuery();
   const stored = localStorage.getItem(SERVER_URL_KEY) || "";
   const raw = shouldPreferInjectedServerUrl(stored, injected) ? injected : stored;
-  return _normalizeBase(raw) || _inferBrowserServerBaseUrl();
+  return _normalizeBase(raw);
 }
 
 /**
@@ -185,6 +204,7 @@ export function setServerUrl(url: string) {
  */
 export function clearServerUrl() {
   try { localStorage.removeItem(SERVER_URL_KEY); } catch { /* ignore */ }
+  _clearResolvedServerConnection();
   try {
     window.dispatchEvent(new CustomEvent(SERVER_URL_CHANGED_EVENT, { detail: { serverUrl: "" } }));
   } catch { /* ignore */ }
@@ -199,6 +219,7 @@ export function clearServerUrl() {
  * 调用时机：App.tsx 最顶层 useEffect，仅执行一次。
  */
 export function initializeServerUrlFromRuntime(): void {
+  if (!isNativeClientRuntime()) return;
   const injected = readServerUrlFromQuery();
   const stored = localStorage.getItem(SERVER_URL_KEY) || "";
 
@@ -223,7 +244,7 @@ export function initializeServerUrlFromRuntime(): void {
 
 export function getBaseUrl(): string {
   const server = getServerUrl();
-  return server ? `${server}/api` : "/api";
+  return _getResolvedApiBaseUrl(server);
 }
 
 export function isNativeCapacitor(): boolean {
@@ -552,6 +573,9 @@ export function resolveAttachmentUrl(src: string | null | undefined): string {
 
   // 归一化：确保以 / 开头
   const normalized = src.startsWith("/") ? src : `/${src}`;
+  if (normalized === "/api" || normalized.startsWith("/api/")) {
+    return resolveAttachmentAccessUrl(`${getBaseUrl()}${normalized.slice(4)}`);
+  }
   return resolveAttachmentAccessUrl(`${base}${normalized}`);
 }
 
@@ -610,6 +634,11 @@ function reconcileAcknowledgedDeletion(
     } catch {
       /* 非 JSON 请求体与笔记删除协调无关 */
     }
+    return;
+  }
+
+  if (/^\/trash(?:\/batch)?(?:\?|$)/.test(url) && Array.isArray(data?.noteIds)) {
+    discardNoteQueueItems(data.noteIds.filter((id): id is string => typeof id === "string"));
     return;
   }
 
@@ -739,6 +768,24 @@ interface RequestOptions extends RequestInit {
 }
 
 async function request<T>(url: string, options?: RequestOptions): Promise<T> {
+  const match = url.match(/^\/(?:notes|blocks\/note|shares\/note)\/([^/?]+)(?:[/?]|$)/);
+  const createsNote = url === "/notes" && options?.method === "POST";
+  const body = (match || createsNote) && typeof options?.body === "string" ? JSON.parse(options.body) : null;
+  const noteId = match ? decodeURIComponent(match[1]) : createsNote && typeof body?.id === "string" ? body.id : null;
+  if (noteId) return withConversionRequestLease(noteId, body, () => requestInternal<T>(url, options));
+  const scope = getOfflineQueueStorageKey();
+  const result = await requestInternal<T>(url, options);
+  if ((url === "/notes" || url.startsWith("/notes?")) && scope !== getOfflineQueueStorageKey()) {
+    throw new ConversionCleanupError("scope_changed");
+  }
+  return result;
+}
+
+async function requestInternal<T>(url: string, options?: RequestOptions): Promise<T> {
+  if (isMobileLocalMode()) {
+    throw new MobileLocalModeRemoteRequestError(url);
+  }
+  const requestScope = getOfflineQueueStorageKey();
   const token = getToken();
   const { sudoToken, _skipOfflineQueue, ...restOptions } = options || {};
   const fullUrl = `${getBaseUrl()}${url}`;
@@ -750,7 +797,7 @@ async function request<T>(url: string, options?: RequestOptions): Promise<T> {
     !navigator.onLine &&
     _shouldEnqueue(url, method, new TypeError("offline"))
   ) {
-    return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined);
+    return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined, requestScope);
   }
 
   let res: Response;
@@ -865,7 +912,7 @@ async function request<T>(url: string, options?: RequestOptions): Promise<T> {
             const isTimeout = retryErr?.name === "AbortError";
             if (!_skipOfflineQueue && (isTimeout || _shouldEnqueue(url, method, retryErr))) {
               if (_shouldEnqueue(url, method, isTimeout ? new TypeError("timeout") : retryErr)) {
-                return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined);
+                return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined, requestScope);
               }
             }
             throw retryErr;
@@ -883,7 +930,7 @@ async function request<T>(url: string, options?: RequestOptions): Promise<T> {
           if (!_skipOfflineQueue) {
             const enqueueErr = isTimeout ? new TypeError("timeout") : firstErr;
             if (_shouldEnqueue(url, method, enqueueErr)) {
-              return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined);
+              return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined, requestScope);
             }
           }
           throw firstErr;
@@ -898,7 +945,7 @@ async function request<T>(url: string, options?: RequestOptions): Promise<T> {
     if (!_skipOfflineQueue) {
       const enqueueErr = isTimeout ? new TypeError("timeout") : fetchErr;
       if (_shouldEnqueue(url, method, enqueueErr)) {
-        return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined);
+        return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined, requestScope);
       }
     }
     throw fetchErr;
@@ -963,7 +1010,7 @@ async function request<T>(url: string, options?: RequestOptions): Promise<T> {
       isRetryable &&
       _shouldEnqueue(url, method, error)
     ) {
-      return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined);
+      return handleOfflineEnqueue<T>(url, method, restOptions?.body as string | undefined, requestScope);
     }
 
     throw error;
@@ -983,7 +1030,8 @@ async function request<T>(url: string, options?: RequestOptions): Promise<T> {
  *   - createNote → 返回带临时 id 的假 Note
  *   - deleteNote → 返回 {}
  */
-function handleOfflineEnqueue<T>(url: string, method: string, bodyStr?: string): T {
+function handleOfflineEnqueue<T>(url: string, method: string, bodyStr: string | undefined, cacheScope: string): T {
+  if (cacheScope !== getOfflineQueueStorageKey()) throw new ConversionCleanupError("scope_changed");
   const body = bodyStr ? JSON.parse(bodyStr) : null;
   const mutationType = _inferMutationType(url, method);
   const noteId = mutationType === "createNote"
@@ -1014,7 +1062,7 @@ function handleOfflineEnqueue<T>(url: string, method: string, bodyStr?: string):
       updatedAt: new Date().toISOString(),
       ...body,
     };
-    void import("@/lib/syncEngine").then((m) => m.cacheNoteContent(optimisticNote as any)).catch(() => { });
+    void import("@/lib/syncEngine").then((m) => m.cacheNoteContent(optimisticNote as unknown as Note, cacheScope)).catch(() => { });
   } else if (mutationType === "deleteNote") {
     void import("@/lib/localStore").then((m) => m.deleteNote(noteId)).catch(() => { });
   }
@@ -1038,6 +1086,7 @@ function handleOfflineEnqueue<T>(url: string, method: string, bodyStr?: string):
   // updateNote: 返回 body + noteId，让 EditorPane 的 reconcile 能拿到 version/updatedAt
   return {
     id: noteId,
+    __offlineQueued: true,
     version: body?.version || 1,
     updatedAt: new Date().toISOString(),
     title: body?.title || "",
@@ -1215,11 +1264,21 @@ function mergeImportNoteResponses(results: ImportNotesResponse[]): ImportNotesRe
 }
 
 export const api = {
+  trash: {
+    list: (workspaceId: string) => request<{ items: import("@/features/trash/trashTypes").TrashItem[] }>(`/trash?workspaceId=${encodeURIComponent(workspaceId)}`),
+    mutate: (workspaceId: string, action: "restore" | "permanent", ids: string[]) =>
+      request<import("@/features/trash/trashTypes").TrashBatchResult>(`/trash/batch?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "POST", body: JSON.stringify({ action, ids }) }),
+    empty: (workspaceId: string) => request<import("@/features/trash/trashTypes").TrashBatchResult>(`/trash?workspaceId=${encodeURIComponent(workspaceId)}`, { method: "DELETE" }),
+  },
   // Public (no auth required)
   getSiteSettingsPublic: async (): Promise<{
     site_title: string;
     site_favicon: string;
     site_icp_beian?: string;
+    site_public_web_origin?: string;
+    site_public_web_origin_source?: string;
+    site_file_public_origin?: string;
+    site_file_public_origin_source?: string;
     editor_font_family: string;
     // 功能开关（字符串 "true"/"false"，未写过时 DEFAULTS 保证为 "true"）
     feature_personal_export_enabled?: string;
@@ -1231,6 +1290,10 @@ export const api = {
         site_title: "ZeroWall Science",
         site_favicon: "",
         site_icp_beian: "",
+        site_public_web_origin: "",
+        site_public_web_origin_source: "current",
+        site_file_public_origin: "",
+        site_file_public_origin_source: "inherit",
         editor_font_family: "",
         feature_personal_export_enabled: "true",
         feature_personal_import_enabled: "true",
@@ -1313,9 +1376,15 @@ export const api = {
     outlineDefaultOpen: boolean;
     lockOnOpen: boolean;
     readingDensity: "cozy" | "compact";
+    editorFontSize: 0 | 14 | 16 | 18 | 20 | 22 | 24;
     showNoteListUpdatedTime: boolean;
     enableNoteTabs: boolean;
     markdownDefaultViewMode: "source" | "preview" | "split";
+    remoteImagePasteMode?: "localize" | "ask" | "keep-remote";
+    hiddenNavigationModules?: string[];
+    hiddenTaskCenterModules?: string[];
+    journalLockOnEntry?: boolean;
+    showNoteListDividers?: boolean;
     hasPreferences?: boolean;
   }>("/user-preferences"),
   updateUserPreferences: (data: {
@@ -1323,17 +1392,29 @@ export const api = {
     outlineDefaultOpen: boolean;
     lockOnOpen: boolean;
     readingDensity: "cozy" | "compact";
+    editorFontSize: 0 | 14 | 16 | 18 | 20 | 22 | 24;
     showNoteListUpdatedTime: boolean;
     enableNoteTabs: boolean;
     markdownDefaultViewMode: "source" | "preview" | "split";
+    remoteImagePasteMode?: "localize" | "ask" | "keep-remote";
+    hiddenNavigationModules?: string[];
+    hiddenTaskCenterModules?: string[];
+    journalLockOnEntry?: boolean;
+    showNoteListDividers?: boolean;
   }) => request<{
     noteTitleAsAppTitle: boolean;
     outlineDefaultOpen: boolean;
     lockOnOpen: boolean;
     readingDensity: "cozy" | "compact";
+    editorFontSize: 0 | 14 | 16 | 18 | 20 | 22 | 24;
     showNoteListUpdatedTime: boolean;
     enableNoteTabs: boolean;
     markdownDefaultViewMode: "source" | "preview" | "split";
+    remoteImagePasteMode?: "localize" | "ask" | "keep-remote";
+    hiddenNavigationModules?: string[];
+    hiddenTaskCenterModules?: string[];
+    journalLockOnEntry?: boolean;
+    showNoteListDividers?: boolean;
     hasPreferences?: boolean;
   }>("/user-preferences", { method: "PUT", body: JSON.stringify(data) }),
 
@@ -1413,7 +1494,7 @@ export const api = {
 
   // 注册配置（公开读，管理员写）
   getRegisterConfig: async (baseUrlOverride?: string): Promise<{ allowRegistration: boolean }> => {
-    const base = baseUrlOverride ? `${baseUrlOverride.replace(/\/+$/, "")}/api` : getBaseUrl();
+    const base = baseUrlOverride ? _getResolvedApiBaseUrl(baseUrlOverride) : getBaseUrl();
     const res = await fetch(`${base}/auth/register/config`);
     if (!res.ok) return { allowRegistration: true };
     return res.json();
@@ -1527,10 +1608,14 @@ export const api = {
       offlineFilter,
     );
   },
+  getEncryptionConversionPreflight: (id: string) => request<EncryptionConversionPreflight>(
+    `/notes/${encodeURIComponent(id)}/encryption-preflight`, { cache: "no-store" },
+  ),
   getNote: (id: string) => _readNote(id, async () => {
+    const cacheScope = getOfflineQueueStorageKey();
     const note = await request<Note>(`/notes/${id}`);
     // Phase C: \u6210\u529f\u62c9\u5230\u7b14\u8bb0\u6b63\u6587 \u2192 \u5199\u5165\u672c\u5730\u7f13\u5b58\uff0c\u4f9b\u540e\u7eed\u79bb\u7ebf\u6253\u5f00
-    void import("@/lib/syncEngine").then((m) => m.cacheNoteContent(note)).catch(() => { });
+    void import("@/lib/syncEngine").then((m) => m.cacheNoteContent(note, cacheScope)).catch(() => { });
     return note;
   }),
   /**
@@ -1592,18 +1677,22 @@ export const api = {
     }
     return request<Note>("/notes", { method: "POST", body: JSON.stringify(payload) });
   },
-  duplicateNote: (id: string) =>
+  duplicateNote: (id: string, options?: { placement: "sibling" | "child" }) =>
     request<Note & {
       tags: Tag[];
       treeNodeId: string;
       treeParentId: string | null;
-    }>(`/notes/${id}/duplicate`, { method: "POST" }),
+    }>(`/notes/${id}/duplicate`, {
+      method: "POST",
+      ...(options ? { body: JSON.stringify(options) } : {}),
+    }),
   updateNote: (id: string, data: Partial<Note>) => {
+    const cacheScope = getOfflineQueueStorageKey();
     const payload = protectNoteMutationPayload(data, { operation: "updateNote", noteId: id });
     const p = request<Note>(`/notes/${id}`, { method: "PUT", body: JSON.stringify(payload) });
     // Phase D: 成功后同步本地缓存，保证离线重启后也能看到最新内容
     p.then((note) => {
-      void import("@/lib/syncEngine").then((m) => m.cacheNoteContent(note)).catch(() => { });
+      void import("@/lib/syncEngine").then((m) => m.cacheNoteContent(note, cacheScope)).catch(() => { });
     }).catch(() => { /* 失败不写入本地 */ });
     return p;
   },
@@ -1665,12 +1754,15 @@ export const api = {
     const data = await request<any>(`/search?${params.toString()}`);
     // 后端返回数组或 { items: [...] }，兼容处理
     const items = Array.isArray(data) ? data : (data?.items || []);
-    return items.slice(0, limit).map((item: any) => ({
+    return items
+      .filter((item: { resourceType?: string }) => item?.resourceType !== "mindmap" && item?.resourceType !== "sheet")
+      .slice(0, limit)
+      .map((item: { id: string; title: string; notebookId: string; updatedAt: string }) => ({
       id: item.id,
       title: item.title,
       notebookId: item.notebookId,
-      updatedAt: item.updatedAt,
-    }));
+        updatedAt: item.updatedAt,
+      }));
   },
   /**
    * 释放笔记的 Y.js 房间：销毁服务端内存 Doc，并清空 note_yupdates / note_ysnapshots。
@@ -2302,6 +2394,49 @@ export const api = {
     const filename = filenameMatch ? decodeURIComponent(filenameMatch[1].replace(/"/g, "")) : "nowen-package.nowen.zip";
     return { blob, filename };
   },
+  resolveImportOrigins: (
+    sourceType: string,
+    externalIds: string[],
+  ) => {
+    const ws = getCurrentWorkspace();
+    const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
+    return request<{
+      origins: Record<string, {
+        externalId: string;
+        noteId: string;
+        contentHash: string | null;
+        metadata: string | null;
+        title: string;
+        notebookId: string;
+        version: number;
+        updatedAt: string;
+        isTrashed: number;
+      }>;
+    }>(`/export/import/origins/resolve${qs}`, {
+      method: "POST",
+      body: JSON.stringify({ sourceType, externalIds }),
+    });
+  },
+
+  registerImportOrigin: (input: {
+    sourceType: string;
+    externalId: string;
+    noteId: string;
+    contentHash?: string | null;
+    metadata?: unknown;
+  }) => {
+    const ws = getCurrentWorkspace();
+    const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
+    return request<{
+      created: boolean;
+      conflict: boolean;
+      noteId: string;
+    }>(`/export/import/origins/register${qs}`, {
+      method: "POST",
+      body: JSON.stringify(input),
+    });
+  },
+
   importNotes: async (
     notes: ImportNotePayload[],
     notebookId?: string,
@@ -2568,6 +2703,10 @@ export const api = {
       site_docs_notebook_id?: string;
       site_favicon: string;
       site_icp_beian?: string;
+      site_public_web_origin?: string;
+      site_public_web_origin_source?: string;
+      site_file_public_origin?: string;
+      site_file_public_origin_source?: string;
       editor_font_family: string;
       feature_personal_export_enabled?: string;
       feature_personal_import_enabled?: string;
@@ -2580,6 +2719,8 @@ export const api = {
     site_docs_notebook_id?: string;
     site_favicon?: string;
     site_icp_beian?: string;
+    site_public_web_origin?: string;
+    site_file_public_origin?: string;
     editor_font_family?: string;
     // 布尔值或 "true"/"false" 字符串；后端做归一化
     feature_personal_export_enabled?: boolean | string;
@@ -2593,6 +2734,10 @@ export const api = {
       site_docs_notebook_id?: string;
       site_favicon: string;
       site_icp_beian?: string;
+      site_public_web_origin?: string;
+      site_public_web_origin_source?: string;
+      site_file_public_origin?: string;
+      site_file_public_origin_source?: string;
       editor_font_family: string;
       feature_personal_export_enabled?: string;
       feature_personal_import_enabled?: string;
@@ -2841,20 +2986,24 @@ export const api = {
   // Mind Maps
   // Y4: 与 tasks/diary 一致——"集合"接口自动带当前 workspaceId（personal 不带），
   //   "按 id"接口（get/update/delete）不带，后端按行自带的 workspaceId 做 ACL。
-  getMindMaps: () => {
-    const ws = getCurrentWorkspace();
+  getMindMaps: (workspaceId?: string | null) => {
+    const ws = workspaceId === undefined ? getCurrentWorkspace() : workspaceId;
     const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
     return request<MindMapListItem[]>(`/mindmaps${qs}`);
   },
   getMindMap: (id: string) => request<MindMap>(`/mindmaps/${id}`),
-  createMindMap: (data: { title?: string; data?: string }) => {
-    const ws = getCurrentWorkspace();
+  createMindMap: (data: { title?: string; data?: string }, workspaceId?: string | null) => {
+    const ws = workspaceId === undefined ? getCurrentWorkspace() : workspaceId;
     const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
     return request<MindMap>(`/mindmaps${qs}`, { method: "POST", body: JSON.stringify(data) });
   },
-  updateMindMap: (id: string, data: { title?: string; data?: string }) =>
+  updateMindMap: (
+    id: string,
+    data: { title?: string; data?: string; expectedUpdatedAt?: string },
+  ) =>
     request<MindMap>(`/mindmaps/${id}`, { method: "PUT", body: JSON.stringify(data) }),
   deleteMindMap: (id: string) => request(`/mindmaps/${id}`, { method: "DELETE" }),
+  deleteMindMapPermanently: (id: string) => request(`/mindmaps/${id}/permanent`, { method: "DELETE" }),
   toggleStarMindMap: (id: string) => request<MindMap>(`/mindmaps/${id}/star`, { method: "PATCH" }),
 
   // MindMap Folders
@@ -2889,6 +3038,7 @@ export const api = {
     cursor?: string,
     limit?: number,
     range?: { from?: string; to?: string; mediaType?: string; mood?: string; q?: string },
+    workspaceOverride?: string,
   ) => {
     const params = new URLSearchParams();
     if (cursor) params.set("cursor", cursor);
@@ -2899,7 +3049,7 @@ export const api = {
     // from/to 接收 "YYYY-MM-DD" 或完整 ISO 时间；后端会做 normalize
     if (range?.from) params.set("from", range.from);
     if (range?.to) params.set("to", range.to);
-    const ws = getCurrentWorkspace();
+    const ws = workspaceOverride ?? getCurrentWorkspace();
     if (ws && ws !== "personal") params.set("workspaceId", ws);
     const qs = params.toString();
     return request<DiaryTimeline>(`/diary/timeline${qs ? `?${qs}` : ""}`);
@@ -3038,15 +3188,67 @@ export const api = {
       missing: number;
       restoredNotebooks: Array<{ id: string; name: string }>;
     }>("/journals/cleanup/restore", { method: "POST", body: JSON.stringify({ cleanupId }) }),
-    /** 获取日记列表 */
-    list: (cursor?: string, limit?: number) => {
+    /** 个人日记隐私状态；状态查询本身不要求已解锁。 */
+    getPrivacyStatus: () => request<{
+      exists: boolean;
+      rootNotebookId: string | null;
+      rootNodeId: string | null;
+      title: string;
+      isPasswordProtected: boolean;
+      unlocked: boolean;
+    }>("/journals/privacy"),
+    /** 只确保稳定的个人日记根存在，不会创建当天日记。 */
+    ensurePrivacyRoot: () => request<{
+      exists: boolean;
+      rootNotebookId: string | null;
+      rootNodeId: string | null;
+      title: string;
+      isPasswordProtected: boolean;
+      unlocked: boolean;
+    }>("/journals/privacy/ensure", { method: "POST" }),
+    /** 获取个人日记轻量档案列表。 */
+    list: (options: {
+      year?: string;
+      month?: string;
+      from?: string;
+      to?: string;
+      mood?: string;
+      q?: string;
+      sort?: "date_desc" | "date_asc" | "updated_desc" | "updated_asc";
+      offset?: number;
+      limit?: number;
+      tzOffsetMinutes?: number;
+    } = {}) => {
       const params = new URLSearchParams();
-      if (cursor) params.set("cursor", cursor);
-      if (limit) params.set("limit", String(limit));
+      if (options.year) params.set("year", options.year);
+      if (options.month) params.set("month", options.month);
+      if (options.from) params.set("from", options.from);
+      if (options.to) params.set("to", options.to);
+      if (options.mood) params.set("mood", options.mood);
+      if (options.q) params.set("q", options.q);
+      if (options.sort) params.set("sort", options.sort);
+      if (typeof options.offset === "number") params.set("offset", String(options.offset));
+      if (typeof options.limit === "number") params.set("limit", String(options.limit));
+      params.set("tzOffsetMinutes", String(
+        options.tzOffsetMinutes ?? (typeof Date !== "undefined" ? -new Date().getTimezoneOffset() : 0),
+      ));
       const qs = params.toString();
-      return request<{ items: any[]; hasMore: boolean; nextCursor: string | null }>(
-        `/journals/list${qs ? `?${qs}` : ""}`
-      );
+      return request<{
+        items: Array<{
+          id: string;
+          title: string;
+          subtitle: string;
+          journalDate: string;
+          preview: string;
+          moods: string[];
+          createdAt: string;
+          updatedAt: string;
+        }>;
+        total: number;
+        hasMore: boolean;
+        nextOffset: number | null;
+        nextCursor: string | null;
+      }>(`/journals/list?${qs}`);
     },
     /** 获取日记年月归档结构 */
     getArchive: () =>
@@ -3060,6 +3262,7 @@ export const api = {
             journals: Array<{
               id: string;
               title: string;
+              subtitle?: string;
               journalDate: string;
               createdAt: string;
               updatedAt: string;
@@ -3274,23 +3477,28 @@ export const api = {
   getNoteVersion: (noteId: string, versionId: string) =>
     request<NoteVersion>(`/shares/note/${noteId}/versions/${versionId}`),
   restoreNoteVersion: (noteId: string, versionId: string) => {
+    const cacheScope = getOfflineQueueStorageKey();
     const p = request<Note>(`/shares/note/${noteId}/versions/${versionId}/restore`, { method: "POST" });
     p.then((note) => {
-      void import("@/lib/syncEngine").then((m) => m.cacheNoteContent(note)).catch(() => { });
+      void import("@/lib/syncEngine").then((m) => m.cacheNoteContent(note, cacheScope)).catch(() => { });
     }).catch(() => { });
     return p;
   },
   clearNoteVersions: (noteId: string) =>
     request<{ success: boolean; count: number }>(`/shares/note/${noteId}/versions`, { method: "DELETE" }),
 
+  // 评论中心复用现有评论资源，不进入笔记离线写队列。
+  getManagedNoteComments: (status = "all", q = "", offset = 0, limit = 30) =>
+    request<NoteCommentListResponse>(`/shares/comments?${new URLSearchParams({ status, q, offset: String(offset), limit: String(limit) })}`),
+
   // 评论批注
   getNoteComments: (noteId: string) => request<ShareComment[]>(`/shares/note/${noteId}/comments`),
   addNoteComment: (noteId: string, data: { content: string; parentId?: string; anchorData?: string }) =>
-    request<ShareComment>(`/shares/note/${noteId}/comments`, { method: "POST", body: JSON.stringify(data) }),
+    request<ShareComment>(`/shares/note/${noteId}/comments`, { method: "POST", body: JSON.stringify(data), _skipOfflineQueue: true }),
   deleteNoteComment: (noteId: string, commentId: string) =>
-    request(`/shares/note/${noteId}/comments/${commentId}`, { method: "DELETE" }),
+    request(`/shares/note/${noteId}/comments/${commentId}`, { method: "DELETE", _skipOfflineQueue: true }),
   toggleCommentResolved: (noteId: string, commentId: string) =>
-    request<ShareComment>(`/shares/note/${noteId}/comments/${commentId}/resolve`, { method: "PATCH" }),
+    request<ShareComment>(`/shares/note/${noteId}/comments/${commentId}/resolve`, { method: "PATCH", _skipOfflineQueue: true }),
 
   // Shared (公开访问，无需 JWT)
   getShareInfo: async (token: string): Promise<ShareInfo> => {
@@ -3389,7 +3597,10 @@ export const api = {
       body: JSON.stringify(data),
     }),
   testAIConnection: () =>
-    request<{ success: boolean; message?: string; error?: string }>("/ai/test", { method: "POST" }),
+    request<{ success: boolean; message?: string; error?: string }>("/ai/test", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
   getAIModels: () =>
     request<{ models: { id: string; name: string }[] }>("/ai/models"),
   aiChat: async (action: string, text: string, context?: string, onChunk?: (chunk: string) => void, customPrompt?: string): Promise<string> => {
@@ -3862,6 +4073,22 @@ export const api = {
     return res.json();
   },
 
+  issues: {
+    list: (workspaceId: string, status = "all", offset = 0) => request<IssueListResponse>(`/workspace-issues?${new URLSearchParams({ workspaceId, status, offset: String(offset) })}`),
+    get: (id: string) => request<WorkspaceIssueDetail>(`/workspace-issues/${encodeURIComponent(id)}`),
+    create: (data: { workspaceId: string; title: string; content: string; relatedNoteId?: string | null }) => request<WorkspaceIssue>("/workspace-issues", { method: "POST", body: JSON.stringify(data), _skipOfflineQueue: true }),
+    update: (id: string, data: { title?: string; content?: string; status?: "open" | "closed"; relatedNoteId?: string | null }) => request<WorkspaceIssue>(`/workspace-issues/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(data), _skipOfflineQueue: true }),
+    activity: (id: string, offset = 0) => request<{ items: IssueActivity[]; total: number }>(`/workspace-issues/${encodeURIComponent(id)}/activity?offset=${offset}`),
+    comment: (id: string, content: string, parentId?: string) => request<{ id: string }>(`/workspace-issues/${encodeURIComponent(id)}/comments`, { method: "POST", body: JSON.stringify({ content, parentId }), _skipOfflineQueue: true }),
+    editComment: (id: string, commentId: string, content: string) => request<{ success: boolean }>(`/workspace-issues/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`, { method: "PATCH", body: JSON.stringify({ content }), _skipOfflineQueue: true }),
+    deleteComment: (id: string, commentId: string) => request<{ success: boolean }>(`/workspace-issues/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`, { method: "DELETE", _skipOfflineQueue: true }),
+  },
+  notifications: {
+    list: (unread = false, offset = 0, limit = 30) => request<NotificationListResponse>(`/notifications?unread=${unread}&offset=${offset}&limit=${limit}`),
+    read: (id: string) => request<{ success: boolean }>(`/notifications/${encodeURIComponent(id)}/read`, { method: "POST", _skipOfflineQueue: true }),
+    readAll: () => request<{ success: boolean }>("/notifications/read-all", { method: "POST", _skipOfflineQueue: true }),
+  },
+
   // ========== Workspaces (Phase 1 多用户协作) ==========
   getWorkspaces: () => request<Workspace[]>("/workspaces"),
   /**
@@ -4264,6 +4491,18 @@ export const api = {
           tables: { name: string; willClear: number; willInsert: number }[];
           files: { attachments: number; fonts: number; plugins: number };
           schemaVersion: number;
+          backupType?: "full" | "db-only" | "legacy";
+          attachmentAudit?: {
+            metaCount: number | null;
+            metaBytes: number | null;
+            archiveCount: number;
+            stagedCount?: number;
+            stagedBytes?: number;
+            dbRows: number;
+            dbDistinctPaths: number;
+            missingDbPaths: string[];
+            objectStorageEnabled: boolean;
+          };
         };
       }>(`/backups/${encodeURIComponent(filename)}/restore?dryRun=${dryRun ? 1 : 0}`, {
         method: "POST",
@@ -4672,6 +4911,12 @@ export const api = {
         method: "DELETE",
       }),
 
+    /** DELETE /api/tokens/:id/permanent — 永久删除已吊销令牌及其授权、使用统计。 */
+    remove: (id: string) =>
+      request<{ success: boolean }>(`/tokens/${encodeURIComponent(id)}/permanent`, {
+        method: "DELETE",
+      }),
+
     /**
      * GET /api/tokens/usage?days=N — 个人 token 使用统计
      *
@@ -4731,34 +4976,173 @@ export async function withSudo<T>(
   return { result, sudoToken };
 }
 
-// 测试服务器连接（不需要 token）
-export async function testServerConnection(serverUrl: string): Promise<{ ok: boolean; error?: string }> {
-  const base = _normalizeBase(serverUrl);
-  if (!base) return { ok: false, error: "服务器地址格式无效" };
-  const url = `${base}/api/health`;
+export interface ServerProbeResult {
+  ok: boolean;
+  error?: string;
+  serverBaseUrl?: string;
+  apiBaseUrl?: string;
+  websocketUrl?: string;
+  apiPath?: string;
+  websocketPath?: string;
+  proxyCompatibilityMode?: ProxyCompatibilityMode;
+  proxyRewrittenApiPath?: string;
+  proxyRewrittenWebsocketPath?: string;
+  apiOk?: boolean;
+  websocketOk?: boolean;
+}
+
+interface HealthProbeAttempt {
+  ok: boolean;
+  error?: string;
+  htmlResponse?: boolean;
+  proxyRewrittenApiPath?: string;
+}
+
+async function probeHealthCandidate(candidate: ServerPathCandidate): Promise<HealthProbeAttempt> {
+  const url = `${candidate.apiBaseUrl}/health`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timeout);
+    const res = await globalThis.fetch(url, { signal: controller.signal, redirect: "manual" });
     const contentType = res.headers.get("content-type") || "";
     const text = await res.text();
     if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
     if (contentType.includes("text/html") || /^\s*</.test(text)) {
-      return {
-        ok: false,
-        error: "该地址返回的是 NAS 门户页面，不是可供客户端直连的 Nowen Note API",
-      };
+      return { ok: false, htmlResponse: true, error: "返回了网页 HTML，而不是 Nowen Note API" };
     }
-    const data = JSON.parse(text);
-    if (data.status === "ok") return { ok: true };
-    return { ok: false, error: "Invalid response" };
-  } catch (e: any) {
-    const message = e?.message || String(e || "连接失败");
-    console.error("[api] testServerConnection failed", { url, error: message });
-    if (e?.name === "AbortError") return { ok: false, error: `连接超时：${url}` };
-    return { ok: false, error: `${message}（请求：${url}；请检查服务器地址、CORS/CSP、证书或 /api 反代）` };
+    let data: unknown;
+    try { data = JSON.parse(text); } catch { return { ok: false, error: "返回内容不是有效 JSON" }; }
+    const payload = data as { status?: unknown; service?: unknown; version?: unknown } | null;
+    if (
+      !payload
+      || payload.status !== "ok"
+      || (payload.service !== "nowen-note" && typeof payload.version !== "string")
+    ) {
+      return { ok: false, error: "JSON 响应不符合 Nowen Note 健康检查格式" };
+    }
+    return {
+      ok: true,
+      proxyRewrittenApiPath: res.headers.get("x-nowen-proxy-compatibility-path") || undefined,
+    };
+  } catch (caughtError: unknown) {
+      const error = caughtError as Error & { code?: string };
+    if (error?.name === "AbortError") return { ok: false, error: "连接超时" };
+    return { ok: false, error: error?.message || "连接失败" };
+  } finally {
+    clearTimeout(timeout);
   }
+}
+
+async function probeWebSocketCandidate(websocketUrl: string): Promise<string | null> {
+  if (typeof WebSocket === "undefined") return null;
+  return new Promise<string | null>((resolve) => {
+    let settled = false;
+    let socket: WebSocket | null = null;
+    const finish = (acceptedPath: string | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try { socket?.close(); } catch { /* ignore */ }
+      resolve(acceptedPath);
+    };
+    const timeout = setTimeout(() => finish(null), 2500);
+    try {
+      socket = new WebSocket(`${websocketUrl}?probe=1`);
+      socket.addEventListener("message", (event) => {
+        try {
+          const payload = JSON.parse(typeof event.data === "string" ? event.data : "");
+          const acceptedPath = typeof payload?.path === "string" ? payload.path : "";
+          finish(
+            payload?.type === "probe"
+              && payload?.status === "ok"
+              && payload?.service === "nowen-note"
+              && ["/ws", "/public/ws", "/publicws"].includes(acceptedPath)
+              ? acceptedPath
+              : null,
+          );
+        } catch {
+          finish(null);
+        }
+      });
+      socket.addEventListener("error", () => finish(null));
+      socket.addEventListener("close", () => finish(null));
+    } catch {
+      finish(null);
+    }
+  });
+}
+
+// 测试服务器连接（不需要 token），标准路径失败后才进入反向代理兼容探测。
+export async function testServerConnection(serverUrl: string): Promise<ServerProbeResult> {
+  const base = _normalizeBase(serverUrl);
+  if (!base) return { ok: false, error: "服务器地址格式无效" };
+
+  const candidates = _buildServerPathCandidates(base);
+  const errors: string[] = [];
+  let sawHtml = false;
+  let resolved: ServerPathCandidate | null = null;
+  let proxyRewrittenApiPath: string | undefined;
+  for (const candidate of candidates) {
+    const attempt = await probeHealthCandidate(candidate);
+    if (attempt.ok) {
+      resolved = candidate;
+      proxyRewrittenApiPath = attempt.proxyRewrittenApiPath;
+      break;
+    }
+    sawHtml ||= attempt.htmlResponse === true;
+    errors.push(`${candidate.apiPath}: ${attempt.error || "不可用"}`);
+  }
+
+  if (!resolved) {
+    const error = sawHtml
+      ? "检测到可访问的网页，但标准及兼容 API 路径均不可用。请检查反向代理是否转发 API 请求。"
+      : `未检测到 Nowen Note API（${errors.join("；")}）`;
+    console.error("[api] server probe failed", { serverUrl: base, errors });
+    return { ok: false, apiOk: false, websocketOk: false, error };
+  }
+
+  const websocketCandidates = [
+    resolved,
+    ...candidates.filter((candidate) => candidate.mode !== resolved?.mode),
+  ];
+  let resolvedWebSocket = resolved;
+  let proxyRewrittenWebsocketPath: string | undefined;
+  let websocketOk = false;
+  for (const candidate of websocketCandidates) {
+    const acceptedPath = await probeWebSocketCandidate(candidate.websocketUrl);
+    if (acceptedPath) {
+      resolvedWebSocket = candidate;
+      proxyRewrittenWebsocketPath = acceptedPath;
+      websocketOk = true;
+      break;
+    }
+  }
+
+  _cacheResolvedServerConnection({
+    ...resolved,
+    websocketUrl: resolvedWebSocket.websocketUrl,
+    websocketPath: resolvedWebSocket.websocketPath,
+  });
+
+  const detectedCompatibilityMode: ProxyCompatibilityMode = proxyRewrittenApiPath === "/public/api"
+    ? "public-prefix"
+    : proxyRewrittenApiPath === "/publicapi"
+      ? "public-concat"
+      : resolved.mode;
+
+  return {
+    ok: true,
+    serverBaseUrl: resolved.serverBaseUrl,
+    apiBaseUrl: resolved.apiBaseUrl,
+    websocketUrl: resolvedWebSocket.websocketUrl,
+    apiPath: resolved.apiPath,
+    websocketPath: resolvedWebSocket.websocketPath,
+    proxyCompatibilityMode: detectedCompatibilityMode,
+    proxyRewrittenApiPath,
+    proxyRewrittenWebsocketPath,
+    apiOk: true,
+    websocketOk,
+  };
 }
 
 /** 诊断结果 */
@@ -4791,7 +5175,28 @@ export async function diagnoseConnection(serverUrl: string): Promise<DiagnosisRe
   }
   results.push({ step: "url_format", ok: true, detail: base });
 
-  const baseUrl = `${base}/api`;
+  const probe = await testServerConnection(base);
+  if (!probe.ok) {
+    results.push({ step: "api_health", ok: false, detail: probe.error || "API 不可用" });
+    return results;
+  }
+  results.push({ step: "api_health", ok: true, detail: `API 正常：${probe.apiPath}` });
+  results.push({
+    step: "websocket",
+    ok: probe.websocketOk === true,
+    detail: probe.websocketOk
+      ? `WebSocket 正常：${probe.proxyRewrittenWebsocketPath || probe.websocketPath}`
+      : "API 正常，但 WebSocket Upgrade 不可用；登录可继续，实时同步将受影响",
+  });
+  if (probe.proxyCompatibilityMode && probe.proxyCompatibilityMode !== "standard") {
+    results.push({
+      step: "proxy_compatibility",
+      ok: true,
+      detail: `检测到反向代理路径重写，已启用兼容模式：${probe.proxyRewrittenApiPath || probe.apiPath} / ${probe.proxyRewrittenWebsocketPath || probe.websocketPath}`,
+    });
+  }
+
+  const baseUrl = probe.apiBaseUrl || _getResolvedApiBaseUrl(base);
   const timeout = 8000;
 
   async function tryFetch(path: string, label: string): Promise<void> {
@@ -4827,9 +5232,6 @@ export async function diagnoseConnection(serverUrl: string): Promise<DiagnosisRe
     }
   }
 
-  // Step 2: health
-  await tryFetch("/health", "api_health");
-
   // Step 3: version
   await tryFetch("/version", "api_version");
 
@@ -4847,14 +5249,14 @@ export async function registerAccount(
   data: { username: string; password: string; email?: string; displayName?: string },
   baseUrlOverride?: string,
 ): Promise<{ token: string; refreshToken: string; user: User }> {
-  const base = baseUrlOverride ? `${baseUrlOverride.replace(/\/+$/, "")}/api` : getBaseUrl();
+  const base = baseUrlOverride ? _getResolvedApiBaseUrl(baseUrlOverride) : getBaseUrl();
   const res = await fetch(`${base}/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(data),
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(json.error || `注册失败: ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(json.error || `注册失败: ${res.status}`), { status: res.status });
   return json;
 }
 
@@ -4862,12 +5264,9 @@ export async function registerAccount(
  * 登录页使用：查询注册开关（无需 token）。
  */
 export async function fetchRegisterConfig(baseUrlOverride?: string): Promise<{ allowRegistration: boolean }> {
-  const base = baseUrlOverride ? `${baseUrlOverride.replace(/\/+$/, "")}/api` : getBaseUrl();
-  try {
-    const res = await fetch(`${base}/auth/register/config`);
-    if (!res.ok) return { allowRegistration: true };
-    return await res.json();
-  } catch {
-    return { allowRegistration: true };
-  }
+  const base = baseUrlOverride ? _getResolvedApiBaseUrl(baseUrlOverride) : getBaseUrl();
+  const res = await fetch(`${base}/auth/register/config`);
+  if (res.status >= 500) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) return { allowRegistration: true };
+  return await res.json();
 }

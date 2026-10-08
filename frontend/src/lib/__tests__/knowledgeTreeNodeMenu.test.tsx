@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { buildKnowledgeTreeNodeMenuItems } from "@/components/KnowledgeTreeNodeMenu";
+import i18n from "@/i18n";
 import type { KnowledgeTreeNode } from "@/lib/knowledgeTreeApi";
 
 const menuSource = readFileSync(path.resolve(__dirname, "../../components/KnowledgeTreeNodeMenu.tsx"), "utf8");
@@ -50,11 +51,36 @@ function ids(items: ReturnType<typeof buildKnowledgeTreeNodeMenuItems>): string[
 }
 
 describe("knowledge tree node menu", () => {
+  it.each([
+    { language: "zh-CN", labels: ["打开", "分屏打开", "创建副本", "新建", "取消置顶", "取消收藏", "重命名", "移动", "分享", "更多", "移入回收站"] },
+    { language: "en", labels: ["Open", "Open in split view", "Create a copy", "New", "Unpin", "Unfavorite", "Rename", "Move", "Share", "More", "Move to Trash"] },
+  ])("translates document actions and their submenus in $language", ({ language, labels }) => {
+    const items = buildKnowledgeTreeNodeMenuItems(node({
+      id: "note:n1",
+      nodeType: "note",
+      resourceType: "note",
+      resourceId: "n1",
+    }), {
+      id: "n1", isPinned: 1, isFavorite: 1, isLocked: 1, contentFormat: "markdown",
+    } as import("@/types").Note, null, i18n.getFixedT(language));
+    expect(items.filter((item) => !item.separator).map((item) => item.label)).toEqual(labels);
+
+    const flatten = (entries: typeof items): typeof items => entries.flatMap((item) => [item, ...flatten(item.children || [])]);
+    const allItems = flatten(items);
+    expect(allItems.find((item) => item.id === "split_right")?.label).toBe(language === "en" ? "Open in right split" : "在右侧分屏打开");
+    expect(allItems.find((item) => item.id === "new_note")?.label).toBe(language === "en" ? "Document" : "文档");
+    expect(allItems.find((item) => item.id === "convert_format")?.label).toBe(language === "en" ? "Convert to rich text" : "转换为富文本");
+    expect(allItems.find((item) => item.id === "toggle_lock")?.label).toBe(language === "en" ? "Unlock Note" : "解锁笔记");
+    expect(allItems.some((item) => item.label.startsWith("note."))).toBe(false);
+    if (language === "en") expect(allItems.some((item) => /[\u3400-\u9fff]/u.test(item.label))).toBe(false);
+  });
+
   it("restores the former folder actions", () => {
     const actions = ids(buildKnowledgeTreeNodeMenuItems(node(), null));
     expect(actions).toEqual(expect.arrayContaining([
       "new_note",
       "new_markdown",
+      "new_mindmap",
       "import_markdown",
       "import_word",
       "import_url",
@@ -67,6 +93,16 @@ describe("knowledge tree node menu", () => {
       "export_folder",
       "delete",
     ]));
+  });
+
+  it("uses the unified open, rename, move and delete lifecycle for mindmaps", () => {
+    const actions = ids(buildKnowledgeTreeNodeMenuItems(node({
+      id: "mindmap:m1",
+      nodeType: "mindmap",
+      resourceType: "mindmap",
+      resourceId: "m1",
+    }), null));
+    expect(actions).toEqual(["open", "rename", "move", "delete"]);
   });
 
   it("restores personal document flags and export formats", () => {

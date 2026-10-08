@@ -14,8 +14,9 @@ import {
   Trash2,
   Zap,
 } from "lucide-react";
-import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import PluginPromptPackSettingsSection from "@/components/settings/PluginPromptPackSettingsSection";
+import SpeechSettingsPanel from "@/components/SpeechSettingsPanel";
 import {
   aiProfiles,
   emitAIProfilesChanged,
@@ -252,7 +253,7 @@ export default function AISettingsPanel() {
         const activated = await aiProfiles.activate(saved.profile.id);
         nextActiveId = activated.activeProfileId;
       }
-      const result = await api.testAIConnection();
+      const result = await aiProfiles.test(saved.profile.id);
       await loadProfiles(saved.profile.id);
       emitAIProfilesChanged(nextActiveId);
       setMessage({
@@ -464,6 +465,8 @@ export default function AISettingsPanel() {
           </div>
         </section>
       </div>
+      <PluginPromptPackSettingsSection />
+      <SpeechSettingsPanel />
     </div>
   );
 }

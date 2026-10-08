@@ -10,6 +10,15 @@ import {
   getDbPath,
 } from "../db/schema.js";
 import { BackupManager, type RestoreResult } from "../services/backup.js";
+import { quarantineRestoredPlugins } from "../plugins/pluginService.js";
+import { quarantineRestoredAutomations } from "../automation/recovery.js";
+import {
+  auditAttachmentBackup,
+  replaceDirectoriesFromStagingSafe,
+  verifyStagedAttachmentStats,
+  type AttachmentRestoreAudit,
+} from "../services/backup-restore-integrity.js";
+import { probeAttachmentStorage } from "../services/attachment-storage.js";
 
 const unzipper = require("unzipper");
 
@@ -84,6 +93,23 @@ function findZipEntry(directory: StreamingZipDirectory, target: string): Streami
   return directory.files.find((entry) => (
     !isDirectoryEntry(entry) && normalizeZipPath(entry.path) === normalizedTarget
   )) || null;
+}
+
+function listArchiveDirectoryRelativePaths(
+  directory: StreamingZipDirectory,
+  zipFolder: string,
+): string[] {
+  const prefix = normalizeZipPath(zipFolder).replace(/\/+$/, "") + "/";
+  const paths: string[] = [];
+  for (const entry of directory.files) {
+    if (isDirectoryEntry(entry)) continue;
+    const archivePath = normalizeZipPath(entry.path);
+    if (!archivePath.startsWith(prefix)) continue;
+    const relative = archivePath.slice(prefix.length);
+    if (!relative || relative === ".keep") continue;
+    paths.push(relative);
+  }
+  return paths;
 }
 
 async function openZipFile(filePath: string): Promise<StreamingZipDirectory> {
@@ -217,6 +243,25 @@ function verifyCurrentDbUsable(curDbPath: string): void {
   if (integrity !== "ok") {
     throw new Error(`恢复后完整性检查失败: ${integrity}`);
   }
+
+  // A readable SQLite file is not enough: attachment upload also needs a writable DB.
+  // Use a SAVEPOINT-backed write probe so permissions/read-only mounts fail before restore
+  // is committed, while the probe leaves no persistent row behind.
+  try {
+    current.exec("SAVEPOINT nowen_restore_write_probe");
+    current.prepare(
+      `INSERT OR REPLACE INTO system_settings (key, value) VALUES (?, ?)`,
+    ).run("backup:restore-write-probe", String(Date.now()));
+    current.exec("ROLLBACK TO nowen_restore_write_probe");
+    current.exec("RELEASE nowen_restore_write_probe");
+  } catch (error) {
+    try { current.exec("ROLLBACK TO nowen_restore_write_probe"); } catch { /* ignore */ }
+    try { current.exec("RELEASE nowen_restore_write_probe"); } catch { /* ignore */ }
+    throw new Error(
+      "恢复后数据库写入检查失败: " + (error instanceof Error ? error.message : String(error)),
+    );
+  }
+
   closeDb();
   cleanupWalShm(curDbPath);
 }
@@ -249,69 +294,6 @@ function rollbackDb(curDbPath: string, safetyBak: string, reason: unknown): neve
     );
   }
   throw new Error(`恢复失败，已自动回滚到恢复前数据库: ${formatError(reason)}`);
-}
-
-function restoreDirectoryReplacement(replacement: DirectoryReplacement): void {
-  if (fs.existsSync(replacement.destDir)) {
-    fs.rmSync(replacement.destDir, { recursive: true, force: true });
-  }
-  if (replacement.backupDirPath && fs.existsSync(replacement.backupDirPath)) {
-    fs.renameSync(replacement.backupDirPath, replacement.destDir);
-  }
-}
-
-function moveDirectoryFromStaging(
-  stagedDir: string,
-  destDir: string,
-  restoreId: string,
-): DirectoryReplacement {
-  const backupDirPath = `${destDir}.before-restore.${restoreId}`;
-  let movedOld = false;
-  let movedNew = false;
-
-  try {
-    if (fs.existsSync(destDir)) {
-      fs.renameSync(destDir, backupDirPath);
-      movedOld = true;
-    }
-    fs.renameSync(stagedDir, destDir);
-    movedNew = true;
-    return { destDir, backupDirPath: movedOld ? backupDirPath : null };
-  } catch (error) {
-    try {
-      if (movedNew && fs.existsSync(destDir)) {
-        fs.rmSync(destDir, { recursive: true, force: true });
-      }
-      if (movedOld && fs.existsSync(backupDirPath) && !fs.existsSync(destDir)) {
-        fs.renameSync(backupDirPath, destDir);
-      }
-    } catch {
-      // The DB rollback path will still preserve the primary restore error.
-    }
-    throw error;
-  }
-}
-
-function replaceDirectoriesFromStaging(
-  entries: { stagedDir: string; destDir: string }[],
-  restoreId: string,
-): void {
-  const replacements: DirectoryReplacement[] = [];
-  try {
-    for (const entry of entries) {
-      replacements.push(moveDirectoryFromStaging(entry.stagedDir, entry.destDir, restoreId));
-    }
-    for (const replacement of replacements) {
-      if (replacement.backupDirPath && fs.existsSync(replacement.backupDirPath)) {
-        fs.rmSync(replacement.backupDirPath, { recursive: true, force: true });
-      }
-    }
-  } catch (error) {
-    for (const replacement of replacements.reverse()) {
-      try { restoreDirectoryReplacement(replacement); } catch { /* keep primary error */ }
-    }
-    throw new Error(`文件目录恢复失败: ${formatError(error)}`);
-  }
 }
 
 async function readAndValidateMeta(directory: StreamingZipDirectory): Promise<FullBackupMeta> {
@@ -366,6 +348,12 @@ async function buildDryRun(
     await streamEntryToFile(dbEntry, tmpDb);
     checkSqliteIntegrity(tmpDb, "备份文件");
 
+    const attachmentAudit = auditAttachmentBackup(
+      tmpDb,
+      listArchiveDirectoryRelativePaths(directory, "attachments"),
+      meta.files?.attachments,
+    );
+
     const backupDb = new Database(tmpDb, { readonly: true, fileMustExist: true });
     try {
       const currentDb = getDb() as unknown as Database.Database;
@@ -390,6 +378,8 @@ async function buildDryRun(
             plugins: meta.files?.plugins?.count ?? 0,
           },
           schemaVersion: meta.schemaVersion ?? 1,
+          backupType: "full",
+          attachmentAudit,
         },
       };
     } finally {
@@ -419,22 +409,33 @@ async function restoreZipStreaming(
   const stagingRoot = path.join(manager.dataDir, `.nowen-restore-staging-${restoreId}`);
   const stagedAttachments = path.join(stagingRoot, "attachments");
   const stagedFonts = path.join(stagingRoot, "fonts");
-  const stagedPlugins = path.join(stagingRoot, "plugins");
+  const hasInstalledLayout = directory.files.some((entry) => normalizeZipPath(entry.path).startsWith("plugins/installed/"));
+  const stagedPlugins = path.join(stagingRoot, hasInstalledLayout ? "plugins-installed" : "plugins-legacy");
   const stagedSecret = path.join(stagingRoot, ".jwt_secret");
+  const stagedPluginSecretKey = path.join(stagingRoot, ".plugin_secret_key");
 
   try {
     // All archive IO happens before the current database or live file directories are touched.
     await streamEntryToFile(dbEntry, tmpDb);
     checkSqliteIntegrity(tmpDb, "备份文件");
 
+    let attachmentAudit: AttachmentRestoreAudit = auditAttachmentBackup(
+      tmpDb,
+      listArchiveDirectoryRelativePaths(directory, "attachments"),
+      meta.files?.attachments,
+    );
+
     const attachmentCount = await extractDirectoryStreaming(directory, "attachments", stagedAttachments);
     const fontCount = await extractDirectoryStreaming(directory, "fonts", stagedFonts);
-    const pluginCount = await extractDirectoryStreaming(directory, "plugins", stagedPlugins);
+    const pluginCount = await extractDirectoryStreaming(directory, hasInstalledLayout ? "plugins/installed" : "plugins", stagedPlugins);
+    attachmentAudit = verifyStagedAttachmentStats(stagedAttachments, attachmentAudit);
 
     const secretEntry = findZipEntry(directory, ".jwt_secret");
     if (secretEntry) {
       await streamEntryToFile(secretEntry, stagedSecret);
     }
+    const pluginSecretKeyEntry = findZipEntry(directory, ".plugin_secret_key");
+    if (pluginSecretKeyEntry) await streamEntryToFile(pluginSecretKeyEntry, stagedPluginSecretKey);
 
     const curDbPath = getDbPath();
     const safetyBak = curDbPath + `.before-restore.${Date.now()}.bak`;
@@ -450,11 +451,19 @@ async function restoreZipStreaming(
     try {
       replaceDbFile(tmpDb, curDbPath);
       verifyCurrentDbUsable(curDbPath);
-      replaceDirectoriesFromStaging([
+      await replaceDirectoriesFromStagingSafe([
         { stagedDir: stagedAttachments, destDir: path.join(manager.dataDir, "attachments") },
         { stagedDir: stagedFonts, destDir: path.join(manager.dataDir, "fonts") },
-        { stagedDir: stagedPlugins, destDir: path.join(manager.dataDir, "plugins") },
-      ], restoreId);
+        { stagedDir: stagedPlugins, destDir: hasInstalledLayout ? path.join(manager.dataDir, "plugins", "installed") : path.join(manager.dataDir, "plugins") },
+      ], restoreId, async () => {
+        const health = await probeAttachmentStorage();
+        if (!health.ok) {
+          throw new Error(
+            "附件存储健康检查失败 [" + (health.code || "ATTACHMENT_STORAGE_NOT_WRITABLE") + "]: "
+            + (health.error || "unknown storage error"),
+          );
+        }
+      });
     } catch (error) {
       rollbackDb(curDbPath, safetyBak, error);
     }
@@ -473,11 +482,26 @@ async function restoreZipStreaming(
       }
     }
 
+    if (pluginSecretKeyEntry && fs.existsSync(stagedPluginSecretKey)) {
+      const target = path.join(manager.dataDir, ".plugin_secret_key");
+      fs.copyFileSync(stagedPluginSecretKey, target);
+      try { fs.chmodSync(target, 0o600); } catch { /* Windows */ }
+    } else {
+      try { getDb().prepare("DELETE FROM plugin_secrets").run(); } catch { /* old backup */ }
+    }
+
+    // 流式大备份与普通恢复遵守同一供应链边界：恢复代码进入 quarantine，授权清零。
+    quarantineRestoredPlugins();
+    quarantineRestoredAutomations();
+
     const stats: Record<string, number> = {
       attachments: attachmentCount,
       fonts: fontCount,
       plugins: pluginCount,
     };
+    stats.attachmentDbRows = attachmentAudit.dbRows;
+    stats.attachmentDistinctPaths = attachmentAudit.dbDistinctPaths;
+    stats.attachmentBytes = attachmentAudit.stagedBytes ?? 0;
     for (const [table, count] of Object.entries(meta.tables ?? {})) {
       stats[table] = typeof count === "number" ? count : -1;
     }

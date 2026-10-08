@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import {
+  BrainCircuit,
   ArrowLeft,
   ArrowUpDown,
   Check,
@@ -14,6 +15,7 @@ import {
   Loader2,
   LockKeyhole,
   MoreHorizontal,
+  Paperclip,
   Pin,
   Plus,
   RefreshCw,
@@ -21,8 +23,10 @@ import {
   Star,
   TreePine,
   X,
+  Table2,
 } from "lucide-react";
 
+import AttachmentDetailDrawer from "@/components/attachmentDetail/AttachmentDetailDrawer";
 import FolderPasswordDialog from "@/components/FolderPasswordDialog";
 import NoteTemplatePickerDialog from "@/components/NoteTemplatePickerDialog";
 import {
@@ -46,7 +50,13 @@ import {
 } from "@/components/knowledgeTreeImport";
 import { choose, confirm, prompt } from "@/components/ui/confirm";
 import { useContextMenu } from "@/hooks/useContextMenu";
-import { api } from "@/lib/api";
+import { useMobileSidebarControlsCollapsed } from "@/hooks/useMobileSidebarControlsCollapsed";
+import { useSidebarTextStyle } from "@/hooks/useSidebarTextStyle";
+import { api, getCurrentWorkspace } from "@/lib/api";
+import { getCurrentMindMapAppId, pushMindMapAppPath, subscribeMindMapAppPath } from "@/lib/mindMapDeepLink";
+import { pushSheetAppPath } from "@/lib/sheetDeepLink";
+import { markNewNoteForImmediateEdit } from "@/lib/newNoteImmediateEdit";
+import { pluginApi } from "@/lib/pluginApi";
 import { noteTemplatesApi } from "@/lib/noteTemplatesApi";
 import { affectedKnowledgeNoteIds } from "@/lib/knowledgeTreeDeleteReconcile";
 import {
@@ -63,6 +73,12 @@ import {
   knowledgeTreeApi,
   type KnowledgeTreeNode,
 } from "@/lib/knowledgeTreeApi";
+import { loadKnowledgeTreeOnEntry } from "@/lib/knowledgeTreeInitialLoad";
+import {
+  KNOWLEDGE_TREE_CLEAR_SEARCH_EVENT,
+  type KnowledgeTreeClearSearchDetail,
+} from "@/lib/knowledgeTreeCreateVisibility";
+import { isActiveKnowledgeTreeDocument } from "@/lib/knowledgeTreeModel";
 import {
   forgetUnlockedFolder,
   hideLockedFolderDescendants,
@@ -73,7 +89,6 @@ import {
 } from "@/lib/knowledgeTreePassword";
 import {
   buildFirstLevelNoteCounts,
-  countOwnedNotes,
 } from "@/lib/knowledgeTreeStats";
 import {
   buildMobileKnowledgeTreePath,
@@ -82,24 +97,29 @@ import {
   getMobileKnowledgeTreeAncestors,
   getMobileKnowledgeTreeChildren,
   loadMobileKnowledgeTreeRecentEntries,
+  loadMobileKnowledgeTreeRecentMode,
   loadMobileKnowledgeTreeSortMode,
   saveMobileKnowledgeTreeRecentEntries,
+  saveMobileKnowledgeTreeRecentMode,
   saveMobileKnowledgeTreeSortMode,
   sortMobileKnowledgeTreeNodes,
   upsertMobileKnowledgeTreeRecentEntry,
   type MobileKnowledgeTreeRecentEntry,
+  type MobileKnowledgeTreeRecentMode,
   type MobileKnowledgeTreeSortMode,
 } from "@/lib/mobileKnowledgeTree";
 import { detectNoteWorkspaceSurface } from "@/lib/noteWorkspaceLayout";
 import { isSharedRoot } from "@/lib/sharedKnowledgeTree";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+import NoteColorMarkDot from "@/components/NoteColorMarkDot";
 import { useApp, useAppActions } from "@/store/AppContext";
 
 const FOCUS_KNOWLEDGE_TREE_EVENT = "nowen:focus-knowledge-tree";
 const KNOWLEDGE_TREE_CHANGED_EVENT = "nowen:knowledge-tree-changed";
 
 type MobileView = "recent" | "browse";
+type QuickTreeVisibleDepth = 1 | 2 | 3 | "all";
 
 const SORT_LABELS: Record<MobileKnowledgeTreeSortMode, string> = {
   "updated-desc": "最近更新",
@@ -120,6 +140,9 @@ function nodeIcon(node: KnowledgeTreeNode) {
       : <Folder size={18} className="shrink-0 text-amber-500" />;
   }
   if (node.nodeType === "markdown") return <FileCode size={18} className="shrink-0 text-emerald-500" />;
+  if (node.nodeType === "mindmap") return <BrainCircuit size={18} className="shrink-0 text-accent-primary" />;
+  if (node.resourceType === "file") return <Paperclip size={18} className="shrink-0 text-amber-500" />;
+  if (node.noteType === "sheet") return <Table2 size={18} className="shrink-0 text-sky-500" />;
   return <FileText size={18} className="shrink-0 text-accent-primary" />;
 }
 
@@ -242,6 +265,11 @@ export default function MobileKnowledgeTreePanel({
 } = {}) {
   const { state } = useApp();
   const actions = useAppActions();
+  const activeMindMapId = useSyncExternalStore(subscribeMindMapAppPath, getCurrentMindMapAppId, () => null);
+  const [mobileControlsCollapsed] = useMobileSidebarControlsCollapsed();
+  const [sidebarTextStyle] = useSidebarTextStyle();
+  const classicText = sidebarTextStyle === "classic";
+  const controlsCollapsed = variant === "mobile" && mobileControlsCollapsed;
   const [workspaceSurface] = useState(() => detectNoteWorkspaceSurface());
   const rootRef = useRef<HTMLElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
@@ -255,13 +283,17 @@ export default function MobileKnowledgeTreePanel({
   const [query, setQuery] = useState(() => state.viewMode === "search" ? state.searchQuery : "");
   const [view, setView] = useState<MobileView>("browse");
   const [parentId, setParentId] = useState<string | null>(null);
-  const [allExpanded, setAllExpanded] = useState(false);
+  const [visibleDepth, setVisibleDepth] = useState<QuickTreeVisibleDepth>(1);
+  const allExpanded = visibleDepth === "all";
   const [sortMode, setSortMode] = useState<MobileKnowledgeTreeSortMode>(() => loadMobileKnowledgeTreeSortMode());
   const [recentEntries, setRecentEntries] = useState<MobileKnowledgeTreeRecentEntry[]>(() => loadMobileKnowledgeTreeRecentEntries());
+  const [recentMode, setRecentMode] = useState<MobileKnowledgeTreeRecentMode>(() => loadMobileKnowledgeTreeRecentMode());
   const [permissionsNode, setPermissionsNode] = useState<KnowledgeTreeNode | null>(null);
+  const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const [movingNode, setMovingNode] = useState<KnowledgeTreeNode | null>(null);
   const [batchMoving, setBatchMoving] = useState(false);
   const [selectedNodeIds, setSelectedNodeIds] = useState<Set<string>>(() => new Set());
+  const [pendingCreatedNodeId, setPendingCreatedNodeId] = useState<string | null>(null);
   const [multiSelectMode, setMultiSelectMode] = useState(false);
   const [unlockedFolderIds, setUnlockedFolderIds] = useState<Set<string>>(() => loadUnlockedFolderIds());
   const [passwordDialog, setPasswordDialog] = useState<{ node: KnowledgeTreeNode; mode: "unlock" | "manage" } | null>(null);
@@ -310,15 +342,21 @@ export default function MobileKnowledgeTreePanel({
     });
   }, [draft?.parentId, draft?.kind]);
 
-  const reload = useCallback(async () => {
+  const reload = useCallback(async (onEntry = false) => {
     setLoading(true);
     setError(null);
     try {
-      const [ownedResult, sharedResult] = await Promise.allSettled([
-        knowledgeTreeApi.list(),
-        knowledgeTreeApi.listShared(),
-      ]);
-      if (ownedResult.status === "rejected") throw ownedResult.reason;
+      const load = async () => {
+        const results = await Promise.allSettled([
+          knowledgeTreeApi.list(),
+          knowledgeTreeApi.listShared(),
+        ]);
+        if (results[0].status === "rejected") throw results[0].reason;
+        return [results[0].value, results[1]] as const;
+      };
+      const [owned, sharedResult] = onEntry
+        ? await loadKnowledgeTreeOnEntry(load)
+        : await load();
       const shared = sharedResult.status === "fulfilled" ? sharedResult.value.nodes : [];
       setSharedLoadError(
         sharedResult.status === "rejected"
@@ -326,7 +364,7 @@ export default function MobileKnowledgeTreePanel({
           : null,
       );
       const merged = Array.from(
-        new Map([...ownedResult.value.nodes, ...shared].map((node) => [node.id, node])).values(),
+        new Map([...owned.nodes, ...shared].map((node) => [node.id, node])).values(),
       );
       setNodes(merged);
       setParentId((current) => {
@@ -342,7 +380,7 @@ export default function MobileKnowledgeTreePanel({
     }
   }, []);
 
-  useEffect(() => { void reload(); }, [reload]);
+  useEffect(() => { void reload(true); }, [reload]);
 
   useEffect(() => {
     const syncUnlockedFolders = () => setUnlockedFolderIds(loadUnlockedFolderIds());
@@ -359,6 +397,23 @@ export default function MobileKnowledgeTreePanel({
       window.removeEventListener(KNOWLEDGE_TREE_CHANGED_EVENT, refresh);
     };
   }, [reload]);
+
+  useEffect(() => {
+    const revealCreatedNote = (event: Event) => {
+      const { parentId, nodeId } = (event as CustomEvent<KnowledgeTreeClearSearchDetail>).detail || {};
+      if (!nodeId) return;
+      setQuery("");
+      setView("browse");
+      setParentId(parentId || null);
+      if (state.viewMode === "search") {
+        actions.setSearchQuery("");
+        actions.setViewMode(state.selectedNotebookId ? "notebook" : "all");
+      }
+      setPendingCreatedNodeId(nodeId);
+    };
+    window.addEventListener(KNOWLEDGE_TREE_CLEAR_SEARCH_EVENT, revealCreatedNote);
+    return () => window.removeEventListener(KNOWLEDGE_TREE_CLEAR_SEARCH_EVENT, revealCreatedNote);
+  }, [actions, state.selectedNotebookId, state.viewMode]);
 
   useEffect(() => {
     const focus = (event: Event) => {
@@ -421,6 +476,18 @@ export default function MobileKnowledgeTreePanel({
     () => hideLockedFolderDescendants(nodes, unlockedFolderIds),
     [nodes, unlockedFolderIds],
   );
+  useEffect(() => {
+    if (!pendingCreatedNodeId || !visibleNodes.some((node) => node.id === pendingCreatedNodeId)) return;
+    setSelectedNodeIds(new Set([pendingCreatedNodeId]));
+    selectionAnchorRef.current = pendingCreatedNodeId;
+    const frame = requestAnimationFrame(() => {
+      Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-knowledge-tree-select-id]") || [])
+        .find((element) => element.dataset.knowledgeTreeSelectId === pendingCreatedNodeId)
+        ?.scrollIntoView({ block: "nearest" });
+      setPendingCreatedNodeId(null);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [pendingCreatedNodeId, visibleNodes]);
   const selectedNodes = useMemo(
     () => visibleNodes.filter((node) => selectedNodeIds.has(node.id)),
     [selectedNodeIds, visibleNodes],
@@ -436,7 +503,7 @@ export default function MobileKnowledgeTreePanel({
     && (node.sharedRootId || null) === (selectedNodes[0].sharedRootId || null)
   ));
   const byId = useMemo(() => new Map(visibleNodes.map((node) => [node.id, node])), [visibleNodes]);
-  const firstLevelNoteCounts = useMemo(() => buildFirstLevelNoteCounts(visibleNodes), [visibleNodes]);
+  const firstLevelNoteCounts = useMemo(() => buildFirstLevelNoteCounts(nodes), [nodes]);
 
   const clearSelection = useCallback(() => {
     selectionAnchorRef.current = null;
@@ -485,8 +552,8 @@ export default function MobileKnowledgeTreePanel({
   }, [sortMode, visibleNodes]);
   const hasExpandableContent = currentChildren.some((node) => (childrenByParent.get(node.id)?.length || 0) > 0);
   const recentNodes = useMemo(
-    () => buildMobileKnowledgeTreeRecentNodes(visibleNodes, recentEntries),
-    [visibleNodes, recentEntries],
+    () => buildMobileKnowledgeTreeRecentNodes(visibleNodes, recentEntries, undefined, recentMode),
+    [visibleNodes, recentEntries, recentMode],
   );
   const searchResults = useMemo(
     () => filterMobileKnowledgeTreeNodes(visibleNodes, query, sortMode),
@@ -494,12 +561,14 @@ export default function MobileKnowledgeTreePanel({
   );
   const rootOwned = useMemo(() => currentChildren.filter((node) => !node.sharedRootId), [currentChildren]);
   const rootShared = useMemo(() => currentChildren.filter((node) => Boolean(node.sharedRootId)), [currentChildren]);
-  const ownedNoteCount = useMemo(() => countOwnedNotes(nodes), [nodes]);
+  const ownedNotebookCount = useMemo(() => nodes.filter((node) => node.nodeType === "folder" && !node.sharedRootId).length, [nodes]);
 
   const activateNote = useCallback((
     note: Awaited<ReturnType<typeof api.getNote>>,
     treeParentId?: string | null,
+    newlyCreated = false,
   ) => {
+    if (newlyCreated) markNewNoteForImmediateEdit(note.id);
     actions.setActiveNote(note);
     actions.setSelectedNotebook(note.notebookId);
     actions.setSelectedKnowledgeTreeParent(treeParentId);
@@ -533,14 +602,31 @@ export default function MobileKnowledgeTreePanel({
       setQuery("");
       return;
     }
+    if (node.resourceType === "mindmap") {
+      rememberOpened(node.id);
+      pushMindMapAppPath(node.resourceId);
+      if (variant === "mobile") actions.setMobileSidebar(false);
+      return;
+    }
+    if (node.resourceType === "file") {
+      rememberOpened(node.id);
+      setPreviewFileId(node.resourceId);
+      if (variant === "mobile") actions.setMobileSidebar(false);
+      return;
+    }
     if (node.resourceType !== "note") return;
     rememberOpened(node.id);
+    if (node.noteType === "sheet") {
+      pushSheetAppPath(node.resourceId);
+      if (variant === "mobile") actions.setMobileSidebar(false);
+      return;
+    }
     try {
       activateNote(await api.getNote(node.resourceId), node.parentId);
     } catch (requestError: any) {
       toast.error(requestError?.message || "打开文档失败");
     }
-  }, [activateNote, closeMenu, rememberOpened, unlockedFolderIds]);
+  }, [actions, activateNote, closeMenu, rememberOpened, unlockedFolderIds, variant]);
 
   const handleNodeSelection = (event: React.MouseEvent, node: KnowledgeTreeNode) => {
     if (multiSelectMode || event.ctrlKey || event.metaKey) {
@@ -631,14 +717,28 @@ export default function MobileKnowledgeTreePanel({
         toast.success("已创建文件夹");
         return;
       }
+      if (snapshot.kind === "mindmap") {
+        rememberOpened(created.id);
+        pushMindMapAppPath(created.resourceId);
+        if (variant === "mobile") actions.setMobileSidebar(false);
+        return;
+      }
+      if (snapshot.kind === "sheet") {
+        rememberOpened(created.id);
+        pushSheetAppPath(created.resourceId);
+        if (variant === "mobile") actions.setMobileSidebar(false);
+        return;
+      }
       rememberOpened(created.id);
-      activateNote(await api.getNote(created.resourceId), snapshot.parentId);
+      activateNote(await api.getNote(created.resourceId), snapshot.parentId, true);
     } catch (requestError: any) {
+      const message = requestError?.message || "创建失败，请重试";
       setDraft((current) => current ? {
         ...current,
         saving: false,
-        error: requestError?.message || "创建失败，请重试",
+        error: message,
       } : null);
+      toast.error(message);
       requestAnimationFrame(() => draftInputRef.current?.focus());
     }
   };
@@ -707,12 +807,22 @@ export default function MobileKnowledgeTreePanel({
     actions.refreshNotes();
     rememberOpened(result.node.id);
     try {
-      activateNote(await api.getNote(result.noteId), targetParentId);
+      activateNote(await api.getNote(result.noteId), targetParentId, true);
     } catch (openError: any) {
       toast.error(openError?.message || "文档已创建，但自动打开失败");
     }
     toast.success("已从模板创建笔记");
   }, [actions, activateNote, nodes, reload, rememberOpened, templatePicker?.parentId, unlockedFolderIds]);
+
+  const createFromPluginTemplate = useCallback(async (pluginId: string, templateId: string, values: Record<string, unknown>) => {
+    const targetParentId = templatePicker?.parentId ?? null;
+    const result = await pluginApi.createNoteFromTemplate(pluginId, templateId, { workspaceId: getCurrentWorkspace(), parentId: targetParentId, values });
+    emitTreeChanged("plugin-template-created-quick-browse"); await reload(); actions.refreshNotebooks(); actions.refreshNotes();
+    const node = result.node as KnowledgeTreeNode; rememberOpened(node.id);
+    try { activateNote(await api.getNote(result.noteId), targetParentId, true); } catch (caughtError: unknown) {
+      const openError = caughtError as Error & { code?: string }; toast.error(openError?.message || "文档已创建，但自动打开失败"); }
+    toast.success("已从插件模板创建笔记");
+  }, [actions, activateNote, reload, rememberOpened, templatePicker?.parentId]);
 
   const rename = async (node: KnowledgeTreeNode) => {
     closeMenu();
@@ -823,7 +933,10 @@ export default function MobileKnowledgeTreePanel({
       setSortMode(mode);
       saveMobileKnowledgeTreeSortMode(mode);
     } else if (value === "toggle") {
-      setAllExpanded((current) => !current);
+      setVisibleDepth((current) => current === "all" ? 1 : "all");
+    } else if (value.startsWith("depth:")) {
+      const rawDepth = value.slice("depth:".length);
+      setVisibleDepth(rawDepth === "all" ? "all" : rawDepth === "2" ? 2 : rawDepth === "3" ? 3 : 1);
     } else if (value === "refresh") {
       void reload();
     } else if (value === "multi-select") {
@@ -872,7 +985,15 @@ export default function MobileKnowledgeTreePanel({
 
   const renderDraft = () => {
     if (!draft) return null;
-    const DraftIcon = draft.kind === "folder" ? Folder : draft.kind === "markdown" ? FileCode : FileText;
+    const DraftIcon = draft.kind === "folder"
+      ? Folder
+      : draft.kind === "markdown"
+        ? FileCode
+        : draft.kind === "mindmap"
+          ? BrainCircuit
+          : draft.kind === "sheet"
+            ? Table2
+            : FileText;
     return (
       <div
         className={cn(
@@ -938,12 +1059,13 @@ export default function MobileKnowledgeTreePanel({
   };
 
   const renderNode = (node: KnowledgeTreeNode, showPath = false, depth = 0) => {
-    const active = node.resourceType === "note" && state.activeNote?.id === node.resourceId;
+    const active = isActiveKnowledgeTreeDocument(node, state.viewMode, state.activeNote?.id, activeMindMapId);
     const selected = selectedNodeIds.has(node.id);
     const hasChildren = node.childCount > 0 || nodes.some((candidate) => candidate.parentId === node.id);
     const path = showPath ? buildMobileKnowledgeTreePath(node, nodes) : "";
     const updatedAt = formatUpdatedAt(node.updatedAt);
-    const actionVisibility = multiSelectMode ? "hidden" : variant === "mobile" ? "flex" : "hidden group-hover:flex";
+    const actionVisibility = variant === "mobile" ? "flex" : "hidden group-hover:flex";
+    const effectiveActionVisibility = multiSelectMode ? "hidden" : actionVisibility;
     const desktopHoverHidden = variant === "desktop" ? "[@media(hover:hover)]:group-hover:hidden" : "";
     const firstLevelNoteCount = parentId === null && depth === 0 && !showPath && node.nodeType === "folder" && !node.sharedRootId && isFolderUnlocked(node, unlockedFolderIds)
       ? firstLevelNoteCounts.get(node.id) ?? 0
@@ -952,7 +1074,8 @@ export default function MobileKnowledgeTreePanel({
       <div
         key={node.id}
         className={cn(
-          "group relative mx-1 flex min-w-0 items-center text-tx-secondary active:bg-app-active/80",
+          "group relative mx-1 flex min-w-0 items-center active:bg-app-active/80",
+          variant === "mobile" || classicText ? "text-tx-secondary" : "text-tx-primary",
           variant === "mobile" ? "mb-0.5 min-h-12 rounded-xl" : "mb-px min-h-9 rounded-md",
           active ? "bg-app-active text-tx-primary" : "hover:bg-app-hover hover:text-tx-primary",
           selected && "bg-accent-primary/10 text-tx-primary ring-1 ring-inset ring-accent-primary/25",
@@ -986,13 +1109,23 @@ export default function MobileKnowledgeTreePanel({
             </span>
           )}
           {nodeIcon(node)}
+          {node.resourceType === "note" && <NoteColorMarkDot value={node.colorMark} className="h-2.5 w-2.5" />}
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className={cn("min-w-0 flex-1 truncate", variant === "mobile" ? "text-sm" : "text-xs")}>{node.title}</span>
+              <span className={cn("min-w-0 truncate", variant === "mobile" ? "text-[15px]" : classicText ? "text-xs" : "text-sm font-medium")}>{node.title}</span>
+              {variant === "mobile" && firstLevelNoteCount !== null && (
+                <span
+                  className="shrink-0 text-[10px] tabular-nums text-tx-tertiary"
+                  aria-label={`“${node.title}”下共 ${firstLevelNoteCount} 条笔记`}
+                  data-mobile-knowledge-tree-first-level-note-count=""
+                >
+                  {firstLevelNoteCount}
+                </span>
+              )}
               {node.nodeType === "folder" && node.isPasswordProtected === 1 && (
                 <LockKeyhole size={12} className="shrink-0 text-tx-tertiary" aria-label="密码保护" />
               )}
-              {firstLevelNoteCount !== null && (
+              {variant !== "mobile" && firstLevelNoteCount !== null && (
                 <span
                   className="min-w-4 shrink-0 rounded-full bg-app-hover px-1.5 text-center text-[10px] leading-4 tabular-nums text-tx-tertiary transition-opacity [@media(hover:hover)]:group-hover:opacity-0"
                   aria-label={`“${node.title}”下共 ${firstLevelNoteCount} 条笔记`}
@@ -1012,7 +1145,7 @@ export default function MobileKnowledgeTreePanel({
               )}
             </span>
             {(showPath || updatedAt) && (
-              <span className="mt-0.5 flex min-w-0 items-center gap-1 text-[10px] text-tx-tertiary">
+              <span className={cn("mt-0.5 flex min-w-0 items-center gap-1", variant === "mobile" || classicText ? "text-[10px] text-tx-tertiary" : "text-xs text-tx-secondary")}>
                 {showPath && <span className="min-w-0 truncate">{path}</span>}
                 {showPath && updatedAt && <span className="shrink-0">·</span>}
                 {updatedAt && <span className="shrink-0">{updatedAt}</span>}
@@ -1049,7 +1182,7 @@ export default function MobileKnowledgeTreePanel({
             className={cn(
               "shrink-0 items-center justify-center text-tx-tertiary hover:bg-app-active hover:text-tx-primary",
               variant === "mobile" ? "h-9 w-9 rounded-lg" : "h-7 w-7 rounded-md",
-              actionVisibility,
+              effectiveActionVisibility,
             )}
             aria-label={`在“${node.title}”下新建内容`}
             aria-haspopup="menu"
@@ -1067,7 +1200,7 @@ export default function MobileKnowledgeTreePanel({
           className={cn(
             "mr-1 shrink-0 items-center justify-center text-tx-tertiary hover:bg-app-active hover:text-tx-primary",
             variant === "mobile" ? "h-9 w-9 rounded-lg" : "h-7 w-7 rounded-md",
-            actionVisibility,
+            effectiveActionVisibility,
           )}
           aria-label={`更多：${node.title}`}
         >
@@ -1077,12 +1210,17 @@ export default function MobileKnowledgeTreePanel({
     );
   };
 
-  const renderExpandedBranch = (node: KnowledgeTreeNode, depth = 0): React.ReactNode => (
-    <React.Fragment key={`expanded-${node.id}`}>
-      {renderNode(node, false, depth)}
-      {(childrenByParent.get(node.id) || []).map((child) => renderExpandedBranch(child, depth + 1))}
-    </React.Fragment>
-  );
+  const renderExpandedBranch = (node: KnowledgeTreeNode, depth = 0): React.ReactNode => {
+    const canRenderChildren = visibleDepth === "all" || depth + 1 < visibleDepth;
+    return (
+      <React.Fragment key={`expanded-${node.id}`}>
+        {renderNode(node, false, depth)}
+        {canRenderChildren
+          ? (childrenByParent.get(node.id) || []).map((child) => renderExpandedBranch(child, depth + 1))
+          : null}
+      </React.Fragment>
+    );
+  };
 
   const renderEmpty = (title: string, description?: string) => (
     <div className="flex flex-col items-center px-6 py-14 text-center">
@@ -1096,7 +1234,7 @@ export default function MobileKnowledgeTreePanel({
     if (parentId !== null) {
       if (currentChildren.length === 0 && !draft) return renderEmpty("当前目录为空", "点击右上角加号创建文档或子目录。");
       return <>{draft && renderDraft()}{currentChildren.map((node) => (
-        variant === "desktop" && allExpanded ? renderExpandedBranch(node) : renderNode(node)
+        variant === "desktop" && visibleDepth !== 1 ? renderExpandedBranch(node) : renderNode(node)
       ))}</>;
     }
     if (rootOwned.length === 0 && rootShared.length === 0 && !draft) return renderEmpty("暂无内容", "点击右上角加号创建第一个根目录。");
@@ -1104,29 +1242,36 @@ export default function MobileKnowledgeTreePanel({
       <>
         {(draft || rootOwned.length > 0) && (
           <section data-mobile-knowledge-tree-section="owned">
-            <div className="flex items-center justify-between px-3 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-wider text-tx-tertiary">
+            <div
+              className={cn(
+                "flex items-center justify-between px-3 pb-1 pt-2 font-semibold uppercase tracking-wider",
+                classicText ? "text-[10px] text-tx-tertiary" : variant === "mobile" ? "text-[10px] text-tx-secondary" : "text-xs text-tx-secondary",
+                controlsCollapsed && "hidden",
+              )}
+              data-mobile-knowledge-tree-section-heading=""
+            >
               <span>当前空间</span>
               {variant !== "mobile" && (
                 <span
                   className="min-w-4 rounded-full bg-app-hover px-1.5 text-center leading-4"
-                  aria-label={`当前空间共 ${ownedNoteCount} 条笔记`}
+                  aria-label={`当前空间共 ${ownedNotebookCount} 个笔记本`}
                   data-mobile-knowledge-tree-notebook-count=""
                 >
-                  {ownedNoteCount}
+                  {ownedNotebookCount}
                 </span>
               )}
             </div>
             {draft && renderDraft()}
             {rootOwned.map((node) => (
-              variant === "desktop" && allExpanded ? renderExpandedBranch(node) : renderNode(node)
+              variant === "desktop" && visibleDepth !== 1 ? renderExpandedBranch(node) : renderNode(node)
             ))}
           </section>
         )}
         {rootShared.length > 0 && (
           <section className={cn("mt-2 border-t border-app-border pt-2", rootOwned.length === 0 && "mt-0 border-t-0 pt-0")} data-mobile-knowledge-tree-section="shared">
-            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-tx-tertiary">共享给我</div>
+            <div className={cn("px-3 pb-1 font-semibold uppercase tracking-wider", classicText ? "text-[10px] text-tx-tertiary" : variant === "mobile" ? "text-[10px] text-tx-secondary" : "text-xs text-tx-secondary")}>共享给我</div>
             {rootShared.map((node) => (
-              variant === "desktop" && allExpanded ? renderExpandedBranch(node) : renderNode(node)
+              variant === "desktop" && visibleDepth !== 1 ? renderExpandedBranch(node) : renderNode(node)
             ))}
           </section>
         )}
@@ -1142,7 +1287,7 @@ export default function MobileKnowledgeTreePanel({
       data-nowen-desktop-knowledge-tree={variant === "desktop" ? "quick-navigation" : undefined}
       data-knowledge-tree-compact-toolbar={compactToolbar ? "true" : "false"}
     >
-      <div className={cn("px-2 pb-2", variant === "mobile" && "pt-2")}>
+      <div className={cn("px-2 pb-2", variant === "mobile" && "pt-2", controlsCollapsed && "hidden")}>
         <div className={cn("grid grid-cols-2 bg-app-hover/70", variant === "mobile" ? "rounded-xl p-1" : "rounded-lg p-0.5")} role="tablist" aria-label="内容浏览方式">
           <button
             type="button"
@@ -1175,6 +1320,7 @@ export default function MobileKnowledgeTreePanel({
 
       <div className={cn(
         "flex",
+        controlsCollapsed && "hidden",
         variant === "mobile"
           ? "items-center gap-1 px-3 pb-1.5"
           : compactToolbar
@@ -1211,7 +1357,8 @@ export default function MobileKnowledgeTreePanel({
               data-mobile-knowledge-tree-search=""
               data-search-scope={searchScope}
             />
-            {variant === "desktop" && !compactToolbar && (
+            {variant === "desktop" && (
+              !compactToolbar && (
               !query ? (
                 <kbd
                   aria-label="快捷键 Ctrl+K"
@@ -1220,6 +1367,7 @@ export default function MobileKnowledgeTreePanel({
                   Ctrl K
                 </kbd>
               ) : null
+              )
             )}
             {query && (
               <button
@@ -1282,7 +1430,7 @@ export default function MobileKnowledgeTreePanel({
           {view === "browse" && (
             <button
               type="button"
-              onClick={() => setAllExpanded((current) => !current)}
+              onClick={() => setVisibleDepth((current) => current === "all" ? 1 : "all")}
               disabled={Boolean(query.trim()) || (!allExpanded && !hasExpandableContent)}
               className="flex h-7 w-6 shrink-0 items-center justify-center rounded-md text-tx-tertiary hover:bg-app-hover hover:text-tx-primary disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-tx-tertiary"
               title={query.trim() ? "清除搜索后可批量展开或收起" : allExpanded ? "全部收起" : "全部展开"}
@@ -1313,7 +1461,7 @@ export default function MobileKnowledgeTreePanel({
         )}
       </div>
 
-      {compactToolbar && (
+      {!controlsCollapsed && compactToolbar && (
         <KnowledgeTreeDropdownMenu
           open={mobileActionsOpen}
           anchor={mobileActionsButtonRef.current}
@@ -1328,12 +1476,25 @@ export default function MobileKnowledgeTreePanel({
               }))
               : []),
             ...(variant === "desktop" && view === "browse"
-              ? [{
-                value: "toggle",
-                label: allExpanded ? "全部收起" : "全部展开",
-                disabled: Boolean(query.trim()) || (!allExpanded && !hasExpandableContent),
-                separatorBefore: true,
-              }]
+              ? [
+                {
+                  value: "depth:1",
+                  label: "仅显示第 1 层",
+                  checked: visibleDepth === 1,
+                  disabled: Boolean(query.trim()),
+                  separatorBefore: true,
+                  sectionLabel: "展示层级",
+                },
+                { value: "depth:2", label: "展开到第 2 层", checked: visibleDepth === 2, disabled: Boolean(query.trim()) },
+                { value: "depth:3", label: "展开到第 3 层", checked: visibleDepth === 3, disabled: Boolean(query.trim()) },
+                { value: "depth:all", label: "展开全部层级", checked: visibleDepth === "all", disabled: Boolean(query.trim()) },
+                {
+                  value: "toggle",
+                  label: allExpanded ? "全部收起" : "全部展开",
+                  disabled: Boolean(query.trim()) || (!allExpanded && !hasExpandableContent),
+                  separatorBefore: true,
+                },
+              ]
               : []),
             {
               value: "refresh",
@@ -1358,7 +1519,7 @@ export default function MobileKnowledgeTreePanel({
         />
       )}
 
-      {view === "browse" && !query && (
+      {view === "browse" && !query && (!controlsCollapsed || currentFolder) && (
         <div className="flex min-h-10 items-center gap-1 border-y border-app-border/60 px-2 py-1.5" data-mobile-knowledge-tree-breadcrumb="">
           {currentFolder ? (
             <button type="button" onClick={goBack} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-tx-secondary hover:bg-app-hover" aria-label="返回上一级">
@@ -1386,7 +1547,10 @@ export default function MobileKnowledgeTreePanel({
       )}
 
       <div
-        className="relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-1 pb-3"
+        className={cn(
+          "relative min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain px-1 pb-3",
+          controlsCollapsed && "pt-1.5",
+        )}
         data-swipe-blocker="knowledge-tree-scroll"
         onClick={(event) => {
           const target = event.target as HTMLElement;
@@ -1396,23 +1560,23 @@ export default function MobileKnowledgeTreePanel({
         {loading && nodes.length === 0 ? (
           <div className="flex justify-center py-16"><Loader2 size={22} className="animate-spin text-tx-tertiary" /></div>
         ) : error ? (
-          <div role="status" className="mx-2 mt-4 rounded-2xl border border-app-border bg-app-surface/70 px-5 py-6 text-center shadow-sm">
-            <span className="mx-auto flex h-10 w-10 items-center justify-center rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400">
-              <CircleAlert size={20} aria-hidden="true" />
+          <div role="status" className="flex flex-col items-center px-5 py-14 text-center">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-app-hover text-tx-tertiary">
+              <CircleAlert size={18} aria-hidden="true" />
             </span>
-            <p className="mt-3 text-sm font-medium text-tx-primary">内容暂时未加载</p>
+            <p className="mt-2.5 text-sm font-medium text-tx-secondary">内容暂时未加载</p>
             <p className="mx-auto mt-1 max-w-[280px] text-xs leading-relaxed text-tx-tertiary">
-              可能是网络波动或服务暂时不可用，本次加载失败不会修改你的笔记数据。
+              连接可能还没准备好，不会影响你的笔记数据。
             </p>
             <button
               type="button"
               onClick={() => void reload()}
-              className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-accent-primary px-3.5 py-2 text-xs font-medium text-white transition-colors hover:bg-accent-primary/90"
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium text-accent-primary hover:bg-app-hover"
             >
               <RefreshCw size={13} aria-hidden="true" />
               重新加载
             </button>
-            <details className="mx-auto mt-3 max-w-[280px] text-left text-[10px] text-tx-tertiary">
+            <details className="mx-auto mt-2 max-w-[280px] text-left text-[10px] text-tx-tertiary">
               <summary className="cursor-pointer select-none text-center hover:text-tx-secondary">查看错误详情</summary>
               <p className="mt-1.5 break-words rounded-md bg-app-bg px-2 py-1.5 leading-relaxed">{error}</p>
             </details>
@@ -1428,8 +1592,44 @@ export default function MobileKnowledgeTreePanel({
           recentNodes.length > 0 ? (
             <section data-mobile-knowledge-tree-view="recent">
               <div className="px-3 pb-1 pt-2">
-                <div className="text-[10px] font-semibold uppercase tracking-wider text-tx-tertiary">最近使用</div>
-                <div className="mt-0.5 text-[10px] text-tx-tertiary">最近打开优先，其他文档按最近更新时间补充</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-[10px] font-semibold uppercase tracking-wider text-tx-tertiary">最近使用</div>
+                  <div
+                    className="grid grid-cols-2 rounded-md bg-app-hover/70 p-0.5"
+                    role="radiogroup"
+                    aria-label="最近列表排序方式"
+                    data-recent-mode-switch=""
+                  >
+                    {([
+                      ["opened", "最近打开"],
+                      ["edited", "最近编辑"],
+                    ] as const).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        role="radio"
+                        aria-checked={recentMode === mode}
+                        onClick={() => {
+                          setRecentMode(mode);
+                          saveMobileKnowledgeTreeRecentMode(mode);
+                        }}
+                        className={cn(
+                          "rounded px-2 py-1 text-[10px] font-medium transition-colors",
+                          recentMode === mode
+                            ? "bg-app-bg text-tx-primary shadow-sm"
+                            : "text-tx-tertiary hover:text-tx-secondary",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-1 text-[10px] text-tx-tertiary">
+                  {recentMode === "opened"
+                    ? "按实际打开时间优先，未打开文档按最近更新时间补充"
+                    : "按笔记最近编辑时间排序"}
+                </div>
               </div>
               {recentNodes.map((node) => renderNode(node, true))}
             </section>
@@ -1443,6 +1643,12 @@ export default function MobileKnowledgeTreePanel({
           </div>
         )}
 
+        {previewFileId && (
+          <AttachmentDetailDrawer
+            attachmentId={previewFileId}
+            onClose={() => setPreviewFileId(null)}
+          />
+        )}
         {permissionsNode && (
           <KnowledgeTreePermissionsDialog
             node={permissionsNode}
@@ -1539,6 +1745,7 @@ export default function MobileKnowledgeTreePanel({
         open={Boolean(templatePicker)}
         onClose={() => setTemplatePicker(null)}
         onCreate={createFromTemplate}
+        onCreatePlugin={createFromPluginTemplate}
       />
     </section>
   );

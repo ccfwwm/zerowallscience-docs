@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Palette, Shield, Database, X, Settings, Camera, Save, Loader2, Trash2, Upload, Type, Check, ChevronDown, Globe, Users, Info, Keyboard, ToggleLeft, FolderSync, Bot } from "lucide-react";
+import { Palette, Shield, Database, X, Settings, Camera, Save, Loader2, Trash2, Upload, Type, Check, ChevronDown, Globe, Users, Info, Keyboard, ToggleLeft, FolderSync, Bot, Puzzle, Workflow, RefreshCw, GripVertical, ArrowUp, ArrowDown } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import ThemeToggle from "@/components/ThemeToggle";
 import SkinSwitcher from "@/components/SkinSwitcher";
@@ -10,20 +10,33 @@ import TokenManagement from "@/components/TokenManagement";
 import DataManager from "@/components/DataManager";
 import OfficialDocsSettings from "@/components/OfficialDocsSettings";
 import FolderSyncSettings from "@/components/settings/FolderSyncSettings";
-import OfflineSyncSettings from "@/components/settings/OfflineSyncSettings";
+import SyncSettingsTab from "@/components/settings/SyncSettingsTab";
 import ShortcutSettingsPanel from "@/components/settings/ShortcutSettingsPanel";
+import PluginSettingsTab from "@/components/settings/plugins/PluginSettingsTab";
+import AutomationCenter from "@/components/automation/AutomationCenter";
 import AISettingsPanel from "@/components/AISettingsPanel";
 import AIModelSettingsPanel from "@/components/AIModelSettingsPanel";
 import UserManagement from "@/components/UserManagement";
 import WorkspaceManagement from "@/components/WorkspaceManagement";
 import DownloadPanel from "@/components/DownloadPanel";
+import JournalPrivacySettingsCard from "@/components/settings/JournalPrivacySettingsCard";
 import { useSiteSettings, BUILTIN_FONTS, getBuiltinFontName } from "@/hooks/useSiteSettings";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
+import { useApp, useAppActions } from "@/store/AppContext";
+import { useMobileRailHidden } from "@/hooks/useMobileRailHidden";
+import { useSidebarTextStyle } from "@/hooks/useSidebarTextStyle";
 import { api } from "@/lib/api";
 import { isDesktop, getAppInfo, setDesktopHideMenuBar as setDesktopHideMenuBarPreference } from "@/lib/desktopBridge";
 import { CustomFont } from "@/types";
 import { cn } from "@/lib/utils";
 import { detectShortcutSurface } from "@/lib/shortcutRegistry";
+import {
+  moveNavigationModule,
+  moveNavigationModuleByOffset,
+  normalizeNavigationModuleOrder,
+  type NavigationModuleId,
+  type TaskCenterOptionalModuleId,
+} from "@/lib/navigationVisibility";
 import {
   DESKTOP_KNOWLEDGE_TREE_VIEW_MODE_CHANGED_EVENT,
   DESKTOP_KNOWLEDGE_TREE_VIEW_MODE_STORAGE_KEY,
@@ -41,7 +54,7 @@ import {
   type MobileKnowledgeTreeViewMode,
 } from "@/lib/mobileKnowledgeTreeViewMode";
 
-type TabId = "docs" | "appearance" | "switches" | "shortcuts" | "ai" | "aiModels" | "security" | "tokens" | "data" | "offlineSync" | "folderSync" | "users" | "workspaces" | "download" | "about";
+type TabId = "docs" | "appearance" | "switches" | "shortcuts" | "ai" | "aiModels" | "plugins" | "automations" | "security" | "tokens" | "data" | "sync" | "offlineSync" | "folderSync" | "users" | "workspaces" | "download" | "about";
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -102,18 +115,22 @@ function AboutPanel() {
 
 function SwitchesPanel() {
   const { t } = useTranslation();
+  const { state } = useApp();
+  const actions = useAppActions();
   const { prefs: userPrefs, setPref: setUserPref } = useUserPreferences();
   const [isAdmin, setIsAdmin] = useState(false);
   const [webUiEnabled, setWebUiEnabled] = useState(false);
   const [desktopHideMenuBar, setDesktopHideMenuBar] = useState(true);
   const [desktopPlatform, setDesktopPlatform] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [draggedNavigationModule, setDraggedNavigationModule] = useState<NavigationModuleId | null>(null);
   const [mobileKnowledgeTreeMode, setMobileKnowledgeTreeMode] = useState<MobileKnowledgeTreeViewMode>(
     () => loadMobileKnowledgeTreeViewMode(),
   );
   const [mobileKnowledgeTreeCompact, setMobileKnowledgeTreeCompact] = useState(
     () => loadMobileKnowledgeTreeCompact(),
   );
+  const [mobileRailHidden, setMobileRailHidden] = useMobileRailHidden();
   const [desktopKnowledgeTreeMode, setDesktopKnowledgeTreeMode] = useState<DesktopKnowledgeTreeViewMode>(
     () => loadDesktopKnowledgeTreeViewMode(),
   );
@@ -124,6 +141,70 @@ function SwitchesPanel() {
     { value: "preview" as const, label: t("markdown.view.preview") },
     { value: "split" as const, label: t("markdown.view.split") },
   ];
+  const navigationVisibilityItems: Array<{ id: NavigationModuleId; label: string }> = [
+    { id: "notifications", label: t("sidebar.notifications") },
+    { id: "favorites", label: t("sidebar.favorites") },
+    { id: "files", label: t("sidebar.fileManager") },
+    { id: "diary", label: t("sidebar.dailyRecords", { defaultValue: "每日记录" }) },
+    { id: "tasks", label: t("sidebar.tasks") },
+    { id: "mindmaps", label: t("sidebar.mindMaps") },
+    { id: "ai-chat", label: t("sidebar.aiChat") },
+    { id: "shares", label: t("sidebar.shareManagement") },
+  ];
+  const navigationItemById = new Map(navigationVisibilityItems.map((item) => [item.id, item]));
+  const orderedNavigationVisibilityItems = normalizeNavigationModuleOrder(userPrefs.navigationModuleOrder)
+    .map((id) => navigationItemById.get(id))
+    .filter((item): item is { id: NavigationModuleId; label: string } => !!item);
+  const taskCenterVisibilityItems: Array<{ id: TaskCenterOptionalModuleId; label: string }> = [
+    { id: "inbox", label: t("tasks.inbox", { defaultValue: "收集箱" }) },
+    { id: "my-day", label: t("tasks.myDay", { defaultValue: "我的一天" }) },
+    { id: "planner", label: t("tasks.timePlanning", { defaultValue: "时间规划" }) },
+    { id: "habits", label: t("habits.title") },
+    { id: "stats", label: t("stats.title") },
+  ];
+
+  const setNavigationModuleVisible = (id: NavigationModuleId, visible: boolean) => {
+    const hidden = userPrefs.hiddenNavigationModules;
+    setUserPref(
+      "hiddenNavigationModules",
+      visible
+        ? hidden.filter((item) => item !== id)
+        : Array.from(new Set([...hidden, id])),
+    );
+
+    // Hiding is a presentation preference, not an access-control rule. Only
+    // leave the currently open module when the user explicitly hides that
+    // exact entry here; later deep links can still open hidden modules.
+    if (!visible && state.viewMode === id) {
+      actions.setViewMode("all");
+    }
+  };
+
+  const moveNavigationEntry = (id: NavigationModuleId, offset: -1 | 1) => {
+    setUserPref(
+      "navigationModuleOrder",
+      moveNavigationModuleByOffset(userPrefs.navigationModuleOrder, id, offset),
+    );
+  };
+
+  const dropNavigationEntry = (targetId: NavigationModuleId) => {
+    if (!draggedNavigationModule) return;
+    setUserPref(
+      "navigationModuleOrder",
+      moveNavigationModule(userPrefs.navigationModuleOrder, draggedNavigationModule, targetId),
+    );
+    setDraggedNavigationModule(null);
+  };
+
+  const setTaskCenterModuleVisible = (id: TaskCenterOptionalModuleId, visible: boolean) => {
+    const hidden = userPrefs.hiddenTaskCenterModules;
+    setUserPref(
+      "hiddenTaskCenterModules",
+      visible
+        ? hidden.filter((item) => item !== id)
+        : Array.from(new Set([...hidden, id])),
+    );
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -250,6 +331,11 @@ function SwitchesPanel() {
       label: t('settings.enableNoteTabs'),
       hint: t('settings.enableNoteTabsDesc'),
     },
+    {
+      key: "showNoteListDividers" as const,
+      label: t('settings.showNoteListDividers'),
+      hint: t('settings.showNoteListDividersDesc'),
+    },
   ];
 
   return (
@@ -263,8 +349,127 @@ function SwitchesPanel() {
         </p>
       </div>
 
+      <div className="space-y-3">
+        <div>
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            {t("settings.navigationVisibilityTitle")}
+          </div>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            {t("settings.navigationVisibilityDesc")}
+          </p>
+        </div>
+        <div className="space-y-1.5" data-navigation-module-order-list="">
+          {orderedNavigationVisibilityItems.map((item, index) => (
+            <div
+              key={item.id}
+              draggable
+              data-navigation-module-order-item={item.id}
+              onDragStart={() => setDraggedNavigationModule(item.id)}
+              onDragEnd={() => setDraggedNavigationModule(null)}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                dropNavigationEntry(item.id);
+              }}
+              className={cn(
+                "flex items-center gap-2 rounded-lg border border-zinc-200 bg-white/70 px-2.5 py-2 text-xs text-zinc-700 transition-colors dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-300",
+                draggedNavigationModule === item.id && "opacity-50 ring-1 ring-accent-primary/40",
+              )}
+            >
+              <GripVertical size={14} className="shrink-0 cursor-grab text-zinc-400 active:cursor-grabbing" aria-hidden />
+              <input
+                type="checkbox"
+                checked={!userPrefs.hiddenNavigationModules.includes(item.id)}
+                onChange={(event) => setNavigationModuleVisible(item.id, event.target.checked)}
+                className="h-3.5 w-3.5 shrink-0 accent-indigo-600"
+                aria-label={item.label}
+              />
+              <span className="min-w-0 flex-1 truncate">{item.label}</span>
+              <button
+                type="button"
+                disabled={index === 0}
+                onClick={() => moveNavigationEntry(item.id, -1)}
+                className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-25 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                title={t("settings.navigationMoveUp", { defaultValue: "上移" })}
+                aria-label={t("settings.navigationMoveUp", { defaultValue: "上移" })}
+              >
+                <ArrowUp size={13} />
+              </button>
+              <button
+                type="button"
+                disabled={index === orderedNavigationVisibilityItems.length - 1}
+                onClick={() => moveNavigationEntry(item.id, 1)}
+                className="flex h-6 w-6 items-center justify-center rounded text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-25 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
+                title={t("settings.navigationMoveDown", { defaultValue: "下移" })}
+                aria-label={t("settings.navigationMoveDown", { defaultValue: "下移" })}
+              >
+                <ArrowDown size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <div className="text-sm font-semibold text-zinc-800 dark:text-zinc-200">
+            {t("settings.taskCenterVisibilityTitle")}
+          </div>
+          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+            {t("settings.taskCenterVisibilityDesc")}
+          </p>
+        </div>
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+          {taskCenterVisibilityItems.map((item) => (
+            <label key={item.id} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white/70 px-3 py-2 text-xs text-zinc-700 transition-colors hover:border-accent-primary/40 dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-300">
+              <input
+                type="checkbox"
+                checked={!userPrefs.hiddenTaskCenterModules.includes(item.id)}
+                onChange={(event) => setTaskCenterModuleVisible(item.id, event.target.checked)}
+                className="h-3.5 w-3.5 accent-indigo-600"
+              />
+              <span className="truncate">{item.label}</span>
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <JournalPrivacySettingsCard />
+
       <div className="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 divide-y divide-zinc-200 dark:divide-zinc-800 overflow-hidden">
-        <div className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-white/60 dark:hover:bg-zinc-900/25 transition-colors max-sm:flex-col max-sm:items-stretch">
+        <div data-settings-choice="remote-image-paste" className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-white/60 dark:hover:bg-zinc-900/25 transition-colors max-sm:flex-col max-sm:items-stretch">
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 leading-none">
+              {t("settings.remoteImagePasteMode")}
+            </div>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
+              {t("settings.remoteImagePasteModeDesc")}
+            </p>
+          </div>
+          <div role="group" aria-label={t("settings.remoteImagePasteMode")} className="flex items-center gap-1 p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex-shrink-0 max-sm:w-full">
+            {(["localize", "ask", "keep-remote"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={userPrefs.remoteImagePasteMode === mode}
+                onClick={() => setUserPref("remoteImagePasteMode", mode)}
+                className={cn(
+                  "px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap max-sm:flex-1",
+                  userPrefs.remoteImagePasteMode === mode
+                    ? "bg-white dark:bg-zinc-700 text-accent-primary shadow-sm"
+                    : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300",
+                )}
+              >
+                {t(`settings.remoteImagePasteMode_${mode}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div data-settings-choice="markdown-default-view" className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-white/60 dark:hover:bg-zinc-900/25 transition-colors max-sm:flex-col max-sm:items-stretch">
           <div className="flex-1 min-w-0">
             <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 leading-none">
               {t("settings.markdownDefaultViewMode")}
@@ -292,6 +497,40 @@ function SwitchesPanel() {
           </div>
         </div>
 
+        <div
+          data-settings-choice="code-block-collapse"
+          data-settings-code-block-collapse=""
+          className="flex items-center justify-between gap-3 px-3 py-2.5 hover:bg-white/60 dark:hover:bg-zinc-900/25 transition-colors max-sm:flex-col max-sm:items-stretch"
+        >
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 leading-none">
+              {t("settings.codeBlockCollapseMode")}
+            </div>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
+              {t("settings.codeBlockCollapseModeDesc")}
+            </p>
+          </div>
+          <div role="group" aria-label={t("settings.codeBlockCollapseMode")} className="flex items-center gap-1 p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex-shrink-0 max-sm:w-full">
+            {(["expanded", "long", "collapsed"] as const).map((mode) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={userPrefs.codeBlockCollapseMode === mode}
+                onClick={() => setUserPref("codeBlockCollapseMode", mode)}
+                className={cn(
+                  "px-2.5 py-1 rounded-md text-xs font-medium transition-colors whitespace-nowrap max-sm:flex-1",
+                  userPrefs.codeBlockCollapseMode === mode
+                    ? "bg-white dark:bg-zinc-700 text-accent-primary shadow-sm"
+                    : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300",
+                )}
+              >
+                {t(`settings.codeBlockCollapseMode_${mode}`)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+
         {switches.map((item) => (
           <label key={item.key} className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-white/60 dark:hover:bg-zinc-900/25 transition-colors">
             <input
@@ -310,6 +549,26 @@ function SwitchesPanel() {
             </div>
           </label>
         ))}
+
+        <label
+          data-settings-switch="mobile-rail-hidden"
+          className="flex items-start gap-2.5 px-3 py-2.5 cursor-pointer hover:bg-white/60 dark:hover:bg-zinc-900/25 transition-colors"
+        >
+          <input
+            type="checkbox"
+            checked={mobileRailHidden}
+            onChange={(event) => setMobileRailHidden(event.target.checked)}
+            className="mt-0.5 w-3.5 h-3.5 accent-indigo-600 cursor-pointer"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 leading-none">
+              {t("settings.mobileRailHidden")}
+            </div>
+            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 mt-1 leading-snug">
+              {t("settings.mobileRailHiddenDesc")}
+            </p>
+          </div>
+        </label>
 
         <label
           data-settings-switch="mobile-knowledge-tree"
@@ -421,6 +680,7 @@ function AppearancePanel() {
   const { t, i18n } = useTranslation();
   const { siteConfig, updateSiteConfig, updateEditorFont } = useSiteSettings();
   const { prefs: userPrefs, setPref: setUserPref } = useUserPreferences();
+  const [sidebarTextStyle, setSidebarTextStyle] = useSidebarTextStyle();
   const [title, setTitle] = useState(siteConfig.title);
   const [previewIcon, setPreviewIcon] = useState(siteConfig.favicon);
   const [isSaving, setIsSaving] = useState(false);
@@ -688,6 +948,31 @@ function AppearancePanel() {
           <ThemeToggle />
         </div>
 
+        <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 max-sm:flex-col max-sm:items-stretch">
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{t('settings.sidebarTextStyle')}</span>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings.sidebarTextStyleDesc')}</p>
+          </div>
+          <div role="group" aria-label={t('settings.sidebarTextStyle')} className="flex shrink-0 gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
+            {(["readable", "classic"] as const).map((style) => (
+              <button
+                key={style}
+                type="button"
+                aria-pressed={sidebarTextStyle === style}
+                onClick={() => setSidebarTextStyle(style)}
+                className={cn(
+                  "rounded-md px-3 py-1 text-xs font-medium transition-colors",
+                  sidebarTextStyle === style
+                    ? "bg-white text-accent-primary shadow-sm dark:bg-zinc-700"
+                    : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200",
+                )}
+              >
+                {t(style === "readable" ? 'settings.sidebarTextReadable' : 'settings.sidebarTextClassic')}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* 编辑器字体 - 可交互 */}
         <div className="p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 space-y-4">
           <div className="flex items-center justify-between">
@@ -872,6 +1157,43 @@ function AppearancePanel() {
           </div>
         </div>
 
+        {/* 编辑器字号：账号级显示偏好，不改写笔记内容中的字号格式 */}
+        <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 max-sm:flex-col max-sm:items-stretch">
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              {t('settings.editorFontSize', { defaultValue: '编辑器默认字号' })}
+            </span>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">
+              {t('settings.editorFontSizeDesc', { defaultValue: '影响富文本正文、Markdown 源码和预览，仅改变显示，不修改笔记内容。' })}
+            </p>
+          </div>
+          <div
+            role="group"
+            aria-label={t('settings.editorFontSize', { defaultValue: '编辑器默认字号' })}
+            className="grid grid-cols-4 gap-1 p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex-shrink-0 sm:grid-cols-7"
+          >
+            {([
+              { value: 0 as const, label: t('settings.fontSizeDefault', { defaultValue: '默认' }) },
+              ...([14, 16, 18, 20, 22, 24] as const).map(value => ({ value, label: String(value) })),
+            ]).map(option => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={userPrefs.editorFontSize === option.value}
+                onClick={() => setUserPref("editorFontSize", option.value)}
+                className={cn(
+                  "min-w-8 rounded-md px-2 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-primary/50 max-sm:min-h-10",
+                  userPrefs.editorFontSize === option.value
+                    ? "bg-white dark:bg-zinc-700 text-accent-primary shadow-sm"
+                    : "text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300"
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/*
          * 个人空间导入/导出的功能开关已下沉为 per-user 字段
          * （users.personalExportEnabled / personalImportEnabled，schema v6 起）。
@@ -925,6 +1247,9 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
     { id: "appearance" as const, label: t('settings.appearance'), icon: Palette },
     { id: "switches" as const, label: t('settings.switches'), icon: ToggleLeft },
     ...(shortcutSurface !== "android" ? [{ id: "shortcuts" as const, label: "快捷键", icon: Keyboard }] : []),
+    { id: "ai" as const, label: t('settings.ai'), icon: Bot },
+    { id: "plugins" as const, label: "插件", icon: Puzzle },
+    { id: "automations" as const, label: "自动化", icon: Workflow },
     { id: "security" as const, label: t('settings.security'), icon: Shield },
     // 【个人访问令牌】任意登录用户都可管理自己的 token；与 security 同为"账号安全"类别，
     // 不需要 isAdmin 判定。
@@ -937,6 +1262,10 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
     //     （personalExport/Import Enabled），由管理员集中控制。
     //   组件内部也做了一层防御性闸门，防止用户从深链绕过这里直达 admin-only 区域。
     { id: "data" as const, label: t('settings.dataManagement'), icon: Database },
+    // 「同步」：Local-first 多设备同步（Sync V2）。产品层只呈现
+    // 「不同步，仅此设备」/「我的 Nowen Server」，不暴露 Full/Lite/SQLite 概念。
+    // Flag 关闭时组件内部会自行降级为一句说明，不需要在这里做条件渲染。
+    { id: "sync" as const, label: "同步", icon: RefreshCw },
     // 「文件夹同步」：桌面端专属，Phase B 只做配置 CRUD
     ...((window as any).nowenDesktop?.isDesktop ? [{ id: "folderSync" as const, label: t('folderSync.title'), icon: FolderSync }] : []),
     // 「下载客户端」面板：面向所有用户（含未登录、本地、云端）。需求背景：
@@ -1118,6 +1447,8 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
             {activeTab === "shortcuts" && shortcutSurface !== "android" && <ShortcutSettingsPanel />}
             {activeTab === "ai" && <AISettingsPanel />}
             {activeTab === "aiModels" && isAdmin && <AIModelSettingsPanel />}
+            {activeTab === "plugins" && <PluginSettingsTab isAdmin={isAdmin} />}
+            {activeTab === "automations" && <AutomationCenter />}
             {activeTab === "security" && <SecuritySettings />}
             {activeTab === "tokens" && <TokenManagement />}
                   {activeTab === "users" && isAdmin && <UserManagement currentUserId={currentUser?.id ?? null} />}
@@ -1125,7 +1456,7 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
                   {/* data tab 对所有用户可见：DataManager 内部会按 isAdmin 自动分流
                        —— 管理员看到完整三 scope；普通用户只看"个人空间"的导出/导入。 */}
                   {activeTab === "data" && <DataManager />}
-                  {activeTab === "offlineSync" && <OfflineSyncSettings />}
+                  {activeTab === "sync" && <SyncSettingsTab />}
                   {activeTab === "folderSync" && <FolderSyncSettings />}
                   {activeTab === "download" && <DownloadPanel />}
                   {activeTab === "about" && <AboutPanel />}

@@ -2,6 +2,7 @@ import archiver from "archiver";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import Database from "better-sqlite3";
 
 export interface BackupDirectoryStats {
   count: number;
@@ -12,6 +13,29 @@ export interface FullBackupFileStats {
   attachments: BackupDirectoryStats;
   fonts: BackupDirectoryStats;
   plugins: BackupDirectoryStats;
+}
+
+/**
+ * Studio source trees are exported explicitly, never through an ordinary app backup.
+ * The SQLite snapshot still needs its Studio inventory removed so restore cannot create
+ * dangling projects whose files were intentionally excluded from the archive.
+ */
+export function scrubPluginStudioProjectsFromBackup(dbPath: string): void {
+  const db = new Database(dbPath);
+  try {
+    const tables = new Set((db.prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'plugin_studio_%'",
+    ).all() as Array<{ name: string }>).map((row) => row.name));
+    const transaction = db.transaction(() => {
+      if (tables.has("plugin_studio_artifacts")) db.prepare("DELETE FROM plugin_studio_artifacts").run();
+      if (tables.has("plugin_studio_generations")) db.prepare("DELETE FROM plugin_studio_generations").run();
+      if (tables.has("plugin_studio_projects")) db.prepare("DELETE FROM plugin_studio_projects").run();
+    });
+    transaction();
+    if (tables.size > 0) db.exec("VACUUM");
+  } finally {
+    db.close();
+  }
 }
 
 interface FullBackupArchiveOptions {
@@ -69,7 +93,9 @@ export async function createFullBackupArchive(options: FullBackupArchiveOptions)
   const files: FullBackupFileStats = {
     attachments: addDirectory(archive, path.join(options.dataDir, "attachments"), "attachments"),
     fonts: addDirectory(archive, path.join(options.dataDir, "fonts"), "fonts"),
-    plugins: addDirectory(archive, path.join(options.dataDir, "plugins"), "plugins"),
+    // 只备份正式安装包；runtime、quarantine、plugins-dev 和 plugin-projects
+    // 都是临时/未信任状态。Studio 项目必须走显式项目导出。
+    plugins: addDirectory(archive, path.join(options.dataDir, "plugins", "installed"), "plugins/installed"),
   };
 
   const secretPath = path.join(options.dataDir, ".jwt_secret");
@@ -80,6 +106,13 @@ export async function createFullBackupArchive(options: FullBackupArchiveOptions)
     hasSecret = true;
   } catch {
     // 密钥不存在或不可读时保持旧行为：跳过该文件，并在 meta.json 中明确标记。
+  }
+  const pluginSecretKeyPath = path.join(options.dataDir, ".plugin_secret_key");
+  try {
+    fs.accessSync(pluginSecretKeyPath, fs.constants.R_OK);
+    archive.file(pluginSecretKeyPath, { name: ".plugin_secret_key" });
+  } catch {
+    // 尚未配置任何插件连接时该密钥可能不存在。
   }
   archive.append(JSON.stringify(options.buildMeta(files, hasSecret), null, 2), { name: "meta.json" });
 
