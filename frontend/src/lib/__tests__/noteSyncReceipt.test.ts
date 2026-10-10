@@ -44,12 +44,12 @@ describe("per-note sync receipt (browser)", () => {
   });
   it("does not treat an Electron local SQLite response as a cloud ACK", () => {
     const revision = beginNoteReceiptWrite("desktop-note");
-    (window as any).nowenDesktop = { isDesktop: true };
+    Object.assign(window, { nowenDesktop: { isDesktop: true } });
     try {
       expect(acknowledgeRestNoteReceipt("desktop-note", revision, 12, true)).toBe(false);
       expect(resolveNoteReceiptPhase(getNoteSyncReceipt("desktop-note"), [])).toBe("unverified");
     } finally {
-      delete (window as any).nowenDesktop;
+      Reflect.deleteProperty(window, "nowenDesktop");
     }
   });
   it("isolates receipt data across account and server scopes", () => {
