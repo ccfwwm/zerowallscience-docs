@@ -10,7 +10,7 @@ vi.mock("@/lib/useNoteSyncReceipt", () => ({ useNoteSyncReceipt: mocks.receipt }
 vi.mock("@/lib/mobileLocalMode", () => ({ isAndroidNativeRuntime: () => false }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
 import SyncStatusBadge from "@/components/SyncStatusBadge";
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let host: HTMLDivElement, root: Root;
 beforeEach(() => {
   mocks.receipt.mockReset().mockReturnValue("unverified");
