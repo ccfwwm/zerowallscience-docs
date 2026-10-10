@@ -229,7 +229,7 @@ export default function ShareModal({ noteId, noteTitle, initialShareId, onClose 
 
   const mutate = async (action: () => Promise<unknown>, success: string): Promise<boolean> => {
     try { await action(); toast.success(success); await loadShares(); return true; }
-    catch (error: any) { toast.error(error?.message || t("shareUi.operationFailed")); return false; }
+    catch (error: unknown) { toast.error(error instanceof Error ? error.message : t("shareUi.operationFailed")); return false; }
   };
 
   const rotate = async (share: Share) => {
