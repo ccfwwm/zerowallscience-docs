@@ -3,7 +3,7 @@ import { readNativeNoteSyncReceipt, nativeReceiptKey } from "@/lib/mobileNoteSyn
 import type { NativeDatabase } from "@/lib/nativeDatabase";
 
 function dbStub(input: { conflicts?: unknown[]; outbox?: unknown[]; receipt?: { mutationId: string; serverVersion?: number } } = {}) {
-  const query = vi.fn(async (sql: string, _params: unknown[]) => {
+  const query = vi.fn(async (sql: string) => {
     if (sql.includes("sync_conflicts")) return input.conflicts ?? [];
     if (sql.includes("sync_outbox")) return input.outbox ?? [];
     if (sql.includes("native_runtime_meta")) return input.receipt ? [{ value: JSON.stringify(input.receipt) }] : [];
