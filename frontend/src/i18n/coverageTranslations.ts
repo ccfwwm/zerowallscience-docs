@@ -179,6 +179,13 @@ export const zhCNCoverageTranslations = {
     "automaticHint": "常用地址不可达时，仅在 Wi-Fi 下尝试经过服务器身份验证的局域网地址。",
     "verifyFirst": "请先通过已保存地址连接一次，确认服务器身份后即可自动切换。",
   },
+  cjkTypography: {
+    "title": "中文排版",
+    "spacing": "中英文 / 数字间加空格",
+    "punctuation": "智能标点规范化",
+    "cornerQuotes": "转换为直角引号",
+    "noChanges": "没有可调整的内容，或当前编辑模式不支持此操作",
+  },
   syncBadge: {
     "receiptHint": "当前笔记的同步收据。确认仅代表服务器收到笔记修改，不代表附件和其他设备已更新。",
     "receipt": {
@@ -779,6 +786,13 @@ export const enCoverageTranslations = {
     "automatic": "Automatically choose the best connection",
     "automaticHint": "If the preferred address is unreachable, try a verified local network address only when connected to Wi-Fi.",
     "verifyFirst": "Connect through the saved address once to verify the server identity before automatic switching.",
+  },
+  cjkTypography: {
+    "title": "Chinese typography",
+    "spacing": "Space between CJK and English / numbers",
+    "punctuation": "Normalize punctuation",
+    "cornerQuotes": "Convert to corner quotation marks",
+    "noChanges": "Nothing to change, or this editor mode does not support the operation",
   },
   syncBadge: {
     "receiptHint": "Receipt for this note only. Confirmation does not guarantee attachment uploads or delivery to other devices.",
