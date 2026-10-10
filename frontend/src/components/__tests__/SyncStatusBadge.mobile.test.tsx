@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({ settings: vi.fn(), diagnostics: vi.fn() }));
 vi.mock("@/lib/syncLocalApi", () => ({
   fetchSyncSettings: mocks.settings, fetchSyncDiagnostics: mocks.diagnostics, SyncV2DisabledError: class extends Error {},
 }));
-(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
+(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root, host: HTMLElement;
 let pending = 0, attachments = 0;
 const render = async (saving = false) => { await act(async () => root.render(<SyncStatusBadge saving={saving} />)); };
