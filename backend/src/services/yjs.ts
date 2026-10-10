@@ -629,6 +629,15 @@ export function yDestroyDoc(noteId: string) {
 }
 
 /** 调试：当前房间状态 */
+export function canRetireRoomForEncryption(noteId: string, version: number, content: string, format: string): boolean {
+  const room = rooms.get(noteId);
+  if (!room) return true;
+  // Only a settled Markdown room whose complete text matches the stored source.
+  // Never flush, cancel a pending write, or infer rich-text content from Y.Text.
+  return room.refCount === 0 && !room.persistTimer && room.baseVersion === version
+    && format === "markdown" && room.doc.share.get("content")?.toString() === content;
+}
+
 export function getYjsStats() {
   return {
     rooms: rooms.size,

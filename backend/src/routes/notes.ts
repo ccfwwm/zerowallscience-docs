@@ -1,4 +1,5 @@
 import { permanentlyDeleteNote } from "../services/trash/noteTrashAdapter.js";
+import encryptedNoteConversionRoutes from "./encrypted-note-conversion.js";
 import { inspectEncryptedNoteConversion } from "../services/encryptedNoteConversionPreflight.js";
 import { withEncryptedBlockWrite } from "../lib/encryptedBlockWrites.js";
 import { Hono } from "hono";
@@ -65,6 +66,7 @@ import { duplicateNote, DuplicateNoteError } from "../services/noteDuplicates";
 import { isValidNoteColorMarkInput, normalizeNoteColorMark } from "../lib/noteColorMark";
 
 const app = new Hono();
+app.route("/:id/encryption", encryptedNoteConversionRoutes);
 const reportedInvalidTiptapNotes = new Set<string>();
 function reportInvalidTiptapNoteOnce(noteId: string, version: number, reason: string): void {
   const key = `${noteId}:${version}:${reason}`;

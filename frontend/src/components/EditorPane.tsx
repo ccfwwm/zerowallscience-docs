@@ -1,7 +1,11 @@
 import React, { useCallback, useRef, useState, useEffect, useMemo } from "react";
 import EncryptedConversionEditorGuard from "./EncryptedConversionEditorGuard";
 import EncryptedNotePane from "./EncryptedNotePane";
-import { isEncryptedNoteFormat } from "@/lib/encryptedNotes/noteDocument";
+import EncryptedNoteConversionDialog from "./EncryptedNoteConversionDialog";
+import { firstPendingConversion, CONVERSION_PENDING_EVENT } from "@/lib/encryptedNotes/conversionPending";
+import { getOfflineQueueStorageKey } from "@/lib/offlineScope";
+import { Capacitor } from "@capacitor/core";
+import { isEncryptedNoteFormat, sameConversionContent } from "@/lib/encryptedNotes/noteDocument";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Star, Pin, Trash2, Cloud, RefreshCw, Check, Loader2, ChevronLeft, FolderInput, ChevronRight, ChevronDown, X, ListTree, Lock, Unlock, Tag as TagIcon, Type, MoreHorizontal, Share2, History, MessageCircle, FileCode, FileText, Eye, Pencil, Paperclip, Search, Sparkles, Network, Minimize2, Image, Link2, Printer, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -139,16 +143,36 @@ interface EditorPaneProps {
 }
 
 export default function EditorPane(props: EditorPaneProps) {
+  return <ConversionAwareEditorPane key={getOfflineQueueStorageKey()} {...props} />;
+}
+
+function ConversionAwareEditorPane(props: EditorPaneProps) {
   const { state } = useApp();
+  const { t } = useTranslation();
+  const [conversion, setConversion] = useState<{ id: string; note?: Note; storageFailed?: boolean } | null>(() => {
+    try { const pending = firstPendingConversion(); return pending ? { id: pending.noteId } : null; }
+    catch { return { id: "", storageFailed: true }; }
+  });
+  useEffect(() => {
+    const resume = () => {
+      try { const pending = firstPendingConversion(); if (pending) setConversion((current) => current?.id === pending.noteId ? { id: pending.noteId } : current ?? { id: pending.noteId }); }
+      catch { setConversion({ id: "", storageFailed: true }); }
+    };
+    window.addEventListener(CONVERSION_PENDING_EVENT, resume);
+    return () => window.removeEventListener(CONVERSION_PENDING_EVENT, resume);
+  }, []);
+  if (conversion?.storageFailed) return <p role="alert" className="p-6 text-sm text-red-500">{t("encryptedConversion.errors.storage_failed")}</p>;
+  if (conversion) return <EncryptedNoteConversionDialog key={conversion.id} noteId={conversion.id} note={conversion.note} onClose={() => setConversion(null)} />;
   return state.activeNote && isEncryptedNoteFormat(state.activeNote.contentFormat)
     ? <EncryptedNotePane key={state.activeNote.id} note={state.activeNote} />
-    : <EncryptedConversionEditorGuard noteId={state.activeNote?.id ?? null}><OrdinaryEditorPane {...props} /></EncryptedConversionEditorGuard>;
+    : <EncryptedConversionEditorGuard key={state.activeNote ? `${state.activeNote.id}:${state.activeNote.contentFormat}` : "empty"} noteId={state.activeNote?.id ?? null}><OrdinaryEditorPane {...props} onEncryptNote={(note) => setConversion({ id: note.id, note })} /></EncryptedConversionEditorGuard>;
 }
 
 function OrdinaryEditorPane({
   canSplitDocument = false,
   onSplitDocument,
-}: EditorPaneProps) {
+  onEncryptNote,
+}: EditorPaneProps & { onEncryptNote: (note: Note) => void }) {
   const { state } = useApp();
   const actions = useAppActions();
   useEffect(() => {
@@ -1997,6 +2021,18 @@ function OrdinaryEditorPane({
     actions.updateNoteInList({ id: updated.id, isFavorite: updated.isFavorite });
   }, [activeNote, actions]);
 
+  const beginEncryption = () => {
+    const currentNote = activeNoteRef.current;
+    if (!currentNote || effectiveLocked || !canEditActiveNote || Capacitor.isNativePlatform() || saveInflightRef.current) return;
+    const snapshot = editorHandleRef.current?.getSnapshot?.();
+    const source = { ...currentNote, content: snapshot?.content ?? currentNote.content, contentText: snapshot?.contentText ?? currentNote.contentText, title: snapshot?.title ?? currentNote.title };
+    if (!sameConversionContent(source.content, currentNote.content, currentNote.contentFormat) || source.title !== currentNote.title) {
+      saveDraft({ noteId: source.id, editorMode: editorModeRef.current, content: source.content, contentText: source.contentText, title: source.title, baseVersion: source.version, savedAt: Date.now() });
+    }
+    setShowMobileMenu(false); setShowDesktopMoreMenu(false);
+    onEncryptNote(source);
+  };
+
   const togglePin = useCallback(async () => {
     if (!activeNote || activeNote.isTrashed) return;
     haptic.light();
@@ -2781,6 +2817,10 @@ const moveToTrash = useCallback(async () => {
                   }}
                 >
                   {/* �ö� / ȡ���ö� */}
+                  {!Capacitor.isNativePlatform() && <button onClick={beginEncryption} disabled={effectiveLocked || !canEditActiveNote || syncStatus === "saving"}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-tx-secondary active:bg-app-hover transition-colors disabled:opacity-40">
+                    <Lock size={15} className="text-tx-tertiary" /><span>{t("encryptedConversion.title")}</span>
+                  </button>}
                   <button
                     onClick={() => {
                       window.dispatchEvent(new CustomEvent('nowen:open-search'));
@@ -3472,6 +3512,10 @@ const moveToTrash = useCallback(async () => {
                     <FolderInput size={15} className="text-tx-tertiary" />
                     <span>{t('editor.moveToNotebook')}</span>
                   </button>
+                  {!Capacitor.isNativePlatform() && <button onClick={beginEncryption} disabled={effectiveLocked || !canEditActiveNote || syncStatus === "saving"}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-tx-secondary hover:bg-app-hover transition-colors disabled:opacity-40">
+                    <Lock size={15} className="text-tx-tertiary" /><span>{t("encryptedConversion.title")}</span>
+                  </button>}
                   <button
                     onClick={() => { setShowAttachmentsPanel(true); setShowDesktopMoreMenu(false); }}
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-tx-secondary hover:bg-app-hover transition-colors"
