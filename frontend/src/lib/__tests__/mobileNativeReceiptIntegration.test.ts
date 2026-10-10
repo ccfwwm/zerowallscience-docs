@@ -27,7 +27,7 @@ describe("PR #821 Android receipt ACK and in-flight pull regressions", () => {
       if (sql.includes("SELECT value FROM native_runtime_meta")) return config.lastAck ? [{ value: config.lastAck }] : [];
       return [];
     });
-    const run = vi.fn(async (_sql: string, _params?: unknown[]) => ({ changes: 1 }));
+    const run = vi.fn(async () => ({ changes: 1 }));
     const db: NativeDatabase = {
       query: query as NativeDatabase["query"],
       run,
