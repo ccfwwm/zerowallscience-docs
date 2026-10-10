@@ -196,8 +196,8 @@ describe("offlineQueue reliability", () => {
 
   it("does not discard a newer queued edit after a stale in-flight HTTP 200", async () => {
     enqueueUpdate("inflight-race", 2);
-    let resolveRequest: ((value: { ok: boolean; status: number; data: any }) => void) | undefined;
-    const fetchFn = vi.fn(() => new Promise<{ ok: boolean; status: number; data: any }>((resolve) => {
+    let resolveRequest: ((value: { ok: boolean; status: number; data: { id: string; version: number } }) => void) | undefined;
+    const fetchFn = vi.fn(() => new Promise<{ ok: boolean; status: number; data: { id: string; version: number } }>((resolve) => {
       resolveRequest = resolve;
     }));
     const replay = flushQueue(fetchFn);
@@ -213,8 +213,8 @@ describe("offlineQueue reliability", () => {
   });
   it("makes concurrent manual and automatic flush callers await the same in-flight work", async () => {
     enqueueUpdate("note-race", 1);
-    let resolveRequest: ((value: { ok: boolean; status: number; data: any }) => void) | undefined;
-    const fetchFn = vi.fn(() => new Promise<{ ok: boolean; status: number; data: any }>((resolve) => {
+    let resolveRequest: ((value: { ok: boolean; status: number; data: { id: string; version: number } }) => void) | undefined;
+    const fetchFn = vi.fn(() => new Promise<{ ok: boolean; status: number; data: { id: string; version: number } }>((resolve) => {
       resolveRequest = resolve;
     }));
 
