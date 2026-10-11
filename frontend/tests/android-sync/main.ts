@@ -66,6 +66,14 @@ async function initializeOnce(config: Config) {
       return (await db.query("SELECT id,parentId,sortOrder,isDeleted FROM native_knowledge_tree_nodes WHERE scopeKey='personal' AND id=?", [id]))[0] || null;
     },
     async schema() { return db.query("PRAGMA user_version"); },
+    async treeList() { return knowledgeTreeApi.listForWorkspace("personal"); },
+    async treeMove(id: string, parentId: string | null, sortOrder: number) { return knowledgeTreeApi.move(id,{parentId,sortOrder}); },
+    async pendingTree() { return db.query("SELECT mutationId,status FROM sync_outbox WHERE profileId=? AND entityType='knowledge_tree_node'",[profileId]); },
+    async treeConflicts() {
+      const rows = await db.query<{id:string;localPayload:string;remotePayload:string}>("SELECT id,localPayload,remotePayload FROM sync_conflicts WHERE profileId=? AND entityType='knowledge_tree_node' AND status='unresolved'",[profileId]);
+      return rows.map((row) => ({id:row.id,local:JSON.parse(row.localPayload),remote:JSON.parse(row.remotePayload)}));
+    },
+    async resolveTreeConflict(id: string) { await engine.resolveLocalConflict(id,"keep-local"); },
   };
   Object.assign(window, { acceptance, acceptanceRealtime: realtime });
   document.getElementById("status")!.textContent = "Native SQLite ready. Test account only.";

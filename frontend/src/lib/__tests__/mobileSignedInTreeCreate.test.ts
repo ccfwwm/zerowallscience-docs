@@ -22,6 +22,7 @@ function setup(parent?: KnowledgeTreeNode) {
       : metadata.has(String(values[0])) ? [{ value: metadata.get(String(values[0])) }] : []),
   } as unknown as NativeDatabase;
   const repository = {
+    listPersonalTreeOverrides: vi.fn(async () => []),
     listLocalTreeDrafts: vi.fn(async () => drafts),
     createPersonalTreeNote: vi.fn(async (input: Note, notebookId: string | null) => {
       drafts.push({ ...input, userId: "user", workspaceId: null, notebookId: notebookId || "hidden-root",

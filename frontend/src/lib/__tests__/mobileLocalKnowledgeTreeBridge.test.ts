@@ -69,6 +69,7 @@ function createRepository() {
   ];
 
   const repository = {
+    listPersonalTreeOverrides: vi.fn(async () => []),
     listLocalTreeDrafts: vi.fn(async () => []),
     listNotebooksForWorkspace: vi.fn(async () => notebooks),
     listNotesForWorkspace: vi.fn(async (_workspaceId?: string, query?: { includeTrashed?: boolean }) => (

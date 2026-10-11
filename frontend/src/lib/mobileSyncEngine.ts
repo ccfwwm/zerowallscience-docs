@@ -8,7 +8,8 @@ import { forgetUnsentLocalNotes } from "./nativeLocalNoteOrigin";
 import { notifyMobileSyncStatusChanged, type MobileSyncAppliedDetail } from "./mobileSyncStatus";
 import { nativeReceiptKey } from "./mobileNoteSyncReceipt";
 import { validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
-import { applyNativePersonalTree, NATIVE_TREE_ENTITY_SET, NATIVE_TREE_PENDING_SUBSCRIPTION, nativeTreeSubscriptionKey, type NativeTreeEntry } from "./nativeKnowledgeTreeSync";
+import { applyNativePersonalTree, assertNativePersonalTreeEntry, NATIVE_TREE_ENTITY_SET, NATIVE_TREE_PENDING_SUBSCRIPTION, nativeTreeSubscriptionKey, type NativeTreeEntry } from "./nativeKnowledgeTreeSync";
+import { nativeTreeMutationPayload, readNativePersonalTreeNode, sameNativeTreePosition, syncNativeNotebookMoveParents, writeNativePersonalTreeMoves } from "./nativePersonalTreeWrites";
 
 type ScopeStatus = "active" | "replan_required" | "access_revoked";
 type EntityType = "notebook" | "note" | "tag" | "note_tag" | "favorite" | "attachment"
@@ -195,6 +196,7 @@ export class MobileSyncEngine {
           ))[0]?.value === NATIVE_TREE_ENTITY_SET;
           if (!state || state.lastSequence === 0 || state.accessStatus === "replan_required" || !treeBinding) {
             await this.bootstrap(scope);
+            if (this.hasTreeSubscription(scope)) await this.push(scope);
           }
           if (this.stopped) return;
           await this.pull(scope);
@@ -250,6 +252,34 @@ export class MobileSyncEngine {
       localVersion:number|null;remoteVersion:number|null;localPayload:string|null;remotePayload:string|null;status:string;
     }>("SELECT * FROM sync_conflicts WHERE id=? AND profileId=?",[conflictId,this.options.profileId]))[0];
     if(!row||row.status==="resolved")return;
+    if (row.entityType === "knowledge_tree_node") {
+      if (row.scopeKey !== "personal" || resolution === "manual") throw new Error("个人知识树冲突请选择本机或服务器位置");
+      await this.options.db.transaction(async (tx) => {
+        const remote = row.remotePayload ? JSON.parse(row.remotePayload) as Record<string,unknown> : null;
+        const local = await readNativePersonalTreeNode(tx,row.entityId);
+        if (!remote || !local || (remote.__delete && resolution !== "keep-remote")) throw new Error("知识树业务资源缺失，无法安全采用该位置");
+        assertNativePersonalTreeEntry(row.entityId,remote,this.options.userId);
+        if (resolution === "keep-local") {
+          // Recheck cached owner/password ancestry, including the latest move
+          // made while the conflict was waiting for the user's choice.
+          await writeNativePersonalTreeMoves(tx,[{id:row.entityId}],{profileId:this.options.profileId,deviceId:this.options.deviceId,userId:this.options.userId});
+        }
+        const payload = resolution === "keep-remote" ? remote : local;
+        await applyNativePersonalTree(tx,[{entityId:row.entityId,payload}],this.options.userId,false);
+        await syncNativeNotebookMoveParents(tx,[row.entityId]);
+        await tx.run(`DELETE FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
+          AND entityType='knowledge_tree_node' AND entityId=?`, [this.options.profileId,row.entityId]);
+        if (resolution === "keep-local") await tx.run(`INSERT INTO sync_outbox
+          (id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,payload,status,retryCount,createdAt)
+          VALUES (?,?,?,?,'personal','knowledge_tree_node',?,'upsert',?,'pending',0,?)`,
+        [newLocalId(),newLocalId(),this.options.profileId,this.options.deviceId,row.entityId,JSON.stringify(nativeTreeMutationPayload(local,remote)),now()]);
+        await tx.run("UPDATE sync_conflicts SET status='resolved',resolvedAt=? WHERE id=?",[now(),conflictId]);
+      });
+      notifyMobileSyncStatusChanged();
+      this.options.onApplied?.({scopeKey:"personal",noteIds:[],deletedNoteIds:[]});
+      this.requestSync(0);
+      return;
+    }
     if(!isCoreEntityType(row.entityType))throw new Error("该冲突类型暂不支持在移动端合并");
     const entityType = row.entityType;
     const parse=(value:string|null)=>value?JSON.parse(value) as Record<string,unknown>:null;
@@ -474,7 +504,20 @@ export class MobileSyncEngine {
     } while (cursor);
     await this.restoreNotebookParents(scope,notebookParents);
     if (this.hasTreeSubscription(scope)) await this.options.db.transaction(async (tx) => {
+      const protectedTree = (await tx.query(`SELECT entityId FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
+        AND entityType='knowledge_tree_node' UNION SELECT entityId FROM sync_conflicts WHERE profileId=? AND scopeKey='personal'
+        AND entityType='knowledge_tree_node' AND status='unresolved' LIMIT 1`, [this.options.profileId,this.options.profileId])).length;
+      const local = protectedTree ? await tx.query<Record<string,unknown>>(`SELECT id,userId,workspaceId,parentId,nodeType,resourceType,
+        resourceId,sortOrder,isDeleted,deletedAt,createdAt,updatedAt FROM native_knowledge_tree_nodes WHERE scopeKey='personal'`) : [];
+      // Validate the complete remote graph before reconciling pending local
+      // intentions. All three Apply passes belong to this same transaction.
       await applyNativePersonalTree(tx,tree,this.options.userId,true);
+      if (protectedTree) {
+        await applyNativePersonalTree(tx,local.map((payload) => ({entityId:String(payload.id),payload})),this.options.userId,true);
+        const seen = new Set(tree.map((entry) => entry.entityId));
+        await this.applyTreeEntries(tx,[...tree,...local.filter((row) => !seen.has(String(row.id)))
+          .map((row) => ({entityId:String(row.id),payload:{__delete:true}}))]);
+      }
       // Persist the negotiated graph and subscription intent together. A crash
       // after the server's ACK must not allow a silent legacy downgrade.
       await tx.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,?,?)
@@ -590,7 +633,7 @@ export class MobileSyncEngine {
 
   private async push(scope: ScopeDescriptor): Promise<void> {
     const rows = await this.options.db.query<{
-      mutationId:string;entityType:EntityType;entityId:string;operation:"upsert"|"delete";
+      mutationId:string;entityType:RemoteEntityType;entityId:string;operation:"upsert"|"delete";
       baseVersion:number|null;payload:string|null;
     }>(`SELECT mutationId,entityType,entityId,operation,baseVersion,payload FROM sync_outbox
       WHERE profileId=? AND scopeKey=? AND status IN ('pending','failed')
@@ -601,9 +644,18 @@ export class MobileSyncEngine {
     [this.options.profileId,scope.scopeKey]);
     if (!rows.length || !scope.canWrite && scope.workspaceId) return;
     for(const row of rows){
-      if(!isCoreEntityType(row.entityType)||row.operation!=="upsert"&&row.operation!=="delete")
+      if((!isCoreEntityType(row.entityType) && !(this.hasTreeSubscription(scope) && row.entityType === "knowledge_tree_node"))||row.operation!=="upsert"&&row.operation!=="delete")
         throw syncFailure("SERVER_ERROR","本地存在当前客户端不支持的同步实体或操作");
     }
+    // The server binds the complete subscription only after Snapshot ACK.
+    // Business creates can replay first; structural intentions wait for it.
+    const binding = this.hasTreeSubscription(scope) && (await this.options.db.query<{value:string}>(
+      "SELECT value FROM native_runtime_meta WHERE key=?", [nativeTreeSubscriptionKey(this.options.profileId)],
+    ))[0]?.value === NATIVE_TREE_ENTITY_SET;
+    if (!binding) {
+      for (let i=rows.length-1;i>=0;i--) if (rows[i].entityType === "knowledge_tree_node") rows.splice(i,1);
+    }
+    if (!rows.length) return;
     const mutations = rows.map((row) => ({ ...row,
       baseVersion:row.baseVersion??undefined,payload:row.payload?JSON.parse(row.payload):undefined }));
     // Acknowledgements rebase all unsent descendants to the confirmed version.
@@ -668,6 +720,15 @@ export class MobileSyncEngine {
           }
         } else if (result.code === "VERSION_CONFLICT" && source) {
           const local = await this.readEntity(tx, scope.scopeKey, source.entityType, source.entityId);
+          const existing = (await tx.query<{id:string}>(`SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey=?
+            AND entityType=? AND entityId=? AND status='unresolved' LIMIT 1`,
+          [this.options.profileId,scope.scopeKey,source.entityType,source.entityId]))[0];
+          if (existing) {
+            await tx.run("UPDATE sync_conflicts SET localPayload=?,remotePayload=? WHERE id=?",
+              [local ? JSON.stringify(local) : source.payload,JSON.stringify(result.serverPayload||{version:result.serverVersion}),existing.id]);
+            await tx.run("DELETE FROM sync_outbox WHERE mutationId=?",[result.mutationId]);
+            continue;
+          }
           await tx.run(`INSERT INTO sync_conflicts (
             id,profileId,scopeKey,entityType,entityId,localVersion,remoteVersion,
             localPayload,remotePayload,status,createdAt
@@ -792,7 +853,7 @@ export class MobileSyncEngine {
       }
       const tree = entries.filter((entry) => entry.entityType === "knowledge_tree_node");
       if (tree.length) {
-        await applyNativePersonalTree(tx,tree,this.options.userId,false);
+        await this.applyTreeEntries(tx,tree);
         applied.push(...tree);
       }
       for(const [id,parentId] of notebookParents){
@@ -807,7 +868,36 @@ export class MobileSyncEngine {
     });
   }
 
-  private async readEntity(db:NativeDatabase,scopeKey:string,type:EntityType,id:string):Promise<Record<string,unknown>|null>{
+  private async applyTreeEntries(tx: NativeDatabase, entries: NativeTreeEntry[]): Promise<void> {
+    const applicable: NativeTreeEntry[] = [];
+    for (const entry of entries) {
+      assertNativePersonalTreeEntry(entry.entityId,entry.payload,this.options.userId);
+      const conflict = (await tx.query<{id:string}>(`SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey='personal'
+        AND entityType='knowledge_tree_node' AND entityId=? AND status='unresolved' LIMIT 1`, [this.options.profileId,entry.entityId]))[0];
+      if (conflict) {
+        await tx.run("UPDATE sync_conflicts SET remotePayload=? WHERE id=?",[JSON.stringify(entry.payload),conflict.id]);
+        continue;
+      }
+      const queuedRows = await tx.query<{payload:string}>(`SELECT payload FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
+        AND entityType='knowledge_tree_node' AND entityId=? ORDER BY createdAt,rowid`, [this.options.profileId,entry.entityId]);
+      const pending = queuedRows[0];
+      if (pending) {
+        const local = await readNativePersonalTreeNode(tx,entry.entityId), queued = JSON.parse(pending.payload) as Record<string,unknown>;
+        const base = {parentId:queued.baseParentId,sortOrder:queued.baseSortOrder,isDeleted:queued.baseIsDeleted};
+        if (!entry.payload.__delete && (sameNativeTreePosition(base,entry.payload) || (local && sameNativeTreePosition(local,entry.payload))
+          || queuedRows.some((row) => sameNativeTreePosition(JSON.parse(row.payload) as Record<string,unknown>,entry.payload)))) continue;
+        await tx.run(`INSERT INTO sync_conflicts (id,profileId,scopeKey,entityType,entityId,localPayload,remotePayload,status,createdAt)
+          VALUES (?,?,'personal','knowledge_tree_node',?,?,?,'unresolved',?)`,
+        [newLocalId(),this.options.profileId,entry.entityId,JSON.stringify(local),JSON.stringify(entry.payload),now()]);
+        continue;
+      }
+      applicable.push(entry);
+    }
+    await applyNativePersonalTree(tx,applicable,this.options.userId,false);
+  }
+
+  private async readEntity(db:NativeDatabase,scopeKey:string,type:RemoteEntityType,id:string):Promise<Record<string,unknown>|null>{
+    if (type === "knowledge_tree_node") return scopeKey === "personal" ? readNativePersonalTreeNode(db,id) : null;
     const table=type==="notebook"?"notebooks":type==="note"?"notes":type==="tag"?"tags":type==="attachment"?"attachments"
       :type==="task"?"tasks":type==="task_reminder"?"task_reminders":type==="diary"?"diaries":type==="mindmap"?"mindmaps":null;
     if(!table)return null;

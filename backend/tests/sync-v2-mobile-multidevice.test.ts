@@ -95,6 +95,117 @@ async function client(name: string): Promise<Client> {
 async function pending(c: Client) { return c.db.query<{ mutationId: string; baseVersion: number; payload: string }>("SELECT mutationId,baseVersion,payload FROM sync_outbox WHERE profileId=? ORDER BY createdAt,rowid", [c.profileId]); }
 async function conflicts(c: Client) { return c.db.query<{ localPayload: string; remotePayload: string }>("SELECT localPayload,remotePayload FROM sync_conflicts WHERE profileId=? AND status='unresolved'", [c.profileId]); }
 
+async function cachePersonalTree(c: Client): Promise<void> {
+  const response = await fetch(`${serverUrl}/api/knowledge-tree/?workspaceId=personal`, { headers: { Authorization: `Bearer ${USER}` } });
+  assert.equal(response.status, 200);
+  const { nodes } = await response.json() as { nodes: unknown[] };
+  await c.db.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES ('knowledgeTreeSnapshot:v1:personal:0',?,'now')
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`, [JSON.stringify(nodes)]);
+}
+
+async function movableTree(name: string) {
+  const c = await client(name), ids = [randomUUID(), randomUUID(), randomUUID()];
+  for (const id of ids) await c.repository.notebooks.create({ id, name: "Move fixture" });
+  const document = randomUUID();
+  await c.repository.createPersonalTreeNote({ id: document, contentFormat: "markdown", content: "Preserved body" }, null);
+  await c.sync(); await cachePersonalTree(c);
+  return { c, node: `notebook:${ids[0]}`, left: `notebook:${ids[1]}`, right: `notebook:${ids[2]}`, document: `note:${document}` };
+}
+
+test("native personal moves and sorting are atomic, survive reopen and push only structural fields", async () => {
+  const { c, node, left, document } = await movableTree("active-offline");
+  await c.repository.movePersonalTreeNodes([{ id: node, parentId: document, sortOrder: 23 }, { id: left, sortOrder: 24 }]);
+  const outbox = await pending(c); assert.equal(outbox.length, 2);
+  const mutation = JSON.parse(outbox[0].payload);
+  assert.equal(mutation.parentId, document); assert.equal(mutation.baseParentId, null);
+  assert.equal(mutation.content, undefined); assert.equal(mutation.title, undefined);
+  await c.db.close();
+  const reopened = await client("active-offline");
+  assert.deepEqual((await reopened.db.query("SELECT parentId,sortOrder FROM native_knowledge_tree_nodes WHERE id=?", [node]))[0], { parentId: document, sortOrder: 23 });
+  await reopened.sync();
+  assert.equal((await pending(reopened)).length, 0);
+  assert.deepEqual(serverDb.prepare("SELECT parentId,sortOrder FROM knowledge_tree_nodes WHERE id=?").get(node), { parentId: document, sortOrder: 23 });
+  assert.equal(serverDb.prepare("SELECT sortOrder FROM knowledge_tree_nodes WHERE id=?").get(left).sortOrder, 24);
+  assert.equal((await reopened.repository.notes.get(document.slice(5)))?.content, "Preserved body");
+  await reopened.repository.notebooks.update(node.slice(9),{name:"Rename after move"}); await reopened.sync();
+  assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(node).parentId,document);
+  assert.equal(serverDb.prepare("SELECT sortOrder FROM knowledge_tree_nodes WHERE id=?").get(node).sortOrder,23);
+  assert.equal(serverDb.prepare("SELECT parentId FROM notebooks WHERE id=?").get(node.slice(9)).parentId,
+    (await reopened.repository.notebooks.get(node.slice(9)))?.parentId);
+});
+
+for (const resolution of ["keep-local", "keep-remote"] as const) test(`concurrent native tree moves recover with ${resolution} and preserve latest local position`, async () => {
+  const { c: a, node, left, right } = await movableTree(`active-${resolution}`), b = await client(`active-peer-${resolution}`);
+  await b.sync(); await cachePersonalTree(b);
+  await a.repository.movePersonalTreeNodes([{ id: node, parentId: left, sortOrder: 11 }]);
+  await b.repository.movePersonalTreeNodes([{ id: node, parentId: right, sortOrder: 12 }]);
+  await a.sync(); await b.sync();
+  const rows = await b.db.query<{id:string;remotePayload:string}>("SELECT id,remotePayload FROM sync_conflicts WHERE profileId=? AND entityId=? AND status='unresolved'", [b.profileId,node]);
+  assert.equal(rows.length, 1); assert.equal(JSON.parse(rows[0].remotePayload).parentId, left);
+  assert.equal((await b.db.query<{parentId:string}>("SELECT parentId FROM native_knowledge_tree_nodes WHERE id=?", [node]))[0].parentId, right);
+  await b.repository.movePersonalTreeNodes([{ id: node, parentId: right, sortOrder: 33 }]);
+  await b.engine.resolveLocalConflict(rows[0].id, resolution); await b.sync(); await a.sync();
+  assert.equal((await conflicts(b)).length, 0); assert.equal((await pending(b)).length, 0);
+  const expected = { parentId: resolution === "keep-local" ? right : left, sortOrder: resolution === "keep-local" ? 33 : 11 };
+  assert.deepEqual(serverDb.prepare("SELECT parentId,sortOrder FROM knowledge_tree_nodes WHERE id=?").get(node), expected);
+  assert.deepEqual((await a.db.query("SELECT parentId,sortOrder FROM native_knowledge_tree_nodes WHERE id=?", [node]))[0], expected);
+});
+
+test("lost tree Push ACK and a newer move during Push retain stable mutation identities", async () => {
+  const { c, node, left, right } = await movableTree("active-lost-ack");
+  await c.repository.movePersonalTreeNodes([{ id: node, parentId: left, sortOrder: 3 }]);
+  const first = (await pending(c))[0].mutationId;
+  afterPush = async () => {
+    await c.repository.movePersonalTreeNodes([{ id: node, parentId: right, sortOrder: 4 }]);
+    return Response.json({code:"SERVER_ERROR"}, {status:503});
+  };
+  try { await c.sync(); } finally { afterPush = undefined; }
+  assert.equal((await pending(c))[0].mutationId, first);
+  await c.db.close(); const reopened = await client("active-lost-ack"); await reopened.sync();
+  assert.equal((await pending(reopened)).length, 0); assert.equal((await conflicts(reopened)).length, 0);
+  assert.deepEqual(serverDb.prepare("SELECT parentId,sortOrder FROM knowledge_tree_nodes WHERE id=?").get(node), { parentId: right, sortOrder: 4 });
+});
+
+test("native tree writes reject missing subscription, protected ancestry and cycles without partial commits", async () => {
+  const { c, node, left } = await movableTree("active-guards");
+  await assert.rejects(c.repository.movePersonalTreeNodes([{ id: node, parentId: left }, { id: left, parentId: node }]), /循环/);
+  assert.equal((await pending(c)).length, 0);
+  const cached = (await c.db.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key='knowledgeTreeSnapshot:v1:personal:0'"))[0];
+  const nodes = JSON.parse(cached.value) as Array<{id:string;isPasswordProtected?:number}>;
+  nodes.find((n) => n.id === left)!.isPasswordProtected = 1;
+  await c.db.run("UPDATE native_runtime_meta SET value=? WHERE key='knowledgeTreeSnapshot:v1:personal:0'", [JSON.stringify(nodes)]);
+  await assert.rejects(c.repository.movePersonalTreeNodes([{ id: node, parentId: left }]), /权限|密码/);
+  await c.db.run("DELETE FROM native_runtime_meta WHERE key=?", [`nativeTreeSubscription:${c.profileId}:personal`]);
+  await assert.rejects(c.repository.movePersonalTreeNodes([{ id: node, parentId: null }]), /订阅/);
+  assert.equal((await pending(c)).length, 0);
+  assert.equal((await c.db.query<{parentId:string|null}>("SELECT parentId FROM native_knowledge_tree_nodes WHERE id=?", [node]))[0].parentId, null);
+});
+
+test("a structural Outbox insert failure rolls back every move in the local batch", async () => {
+  const { c,node,left,right } = await movableTree("active-write-failure");
+  await c.db.run(`CREATE TRIGGER reject_fixture_tree BEFORE INSERT ON sync_outbox
+    WHEN NEW.entityType='knowledge_tree_node' AND NEW.entityId='${left}' BEGIN SELECT RAISE(ABORT,'Outbox fixture failure'); END`);
+  await assert.rejects(c.repository.movePersonalTreeNodes([{id:node,parentId:right},{id:left,parentId:right}]), /Outbox fixture failure/);
+  assert.equal((await pending(c)).length,0);
+  assert.equal((await c.db.query<{parentId:string|null}>("SELECT parentId FROM native_knowledge_tree_nodes WHERE id=?",[node]))[0].parentId,null);
+});
+
+test("full tree rebuild preserves newer pending moves and recognizes an intermediate lost ACK echo", async () => {
+  const { c,node,left,right } = await movableTree("active-snapshot-pending");
+  await c.repository.movePersonalTreeNodes([{id:node,parentId:left,sortOrder:1}]);
+  await c.db.run("UPDATE sync_state SET lastSequence=0 WHERE profileId=?",[c.profileId]);
+  afterPush = async (response) => {
+    const body = await response.json() as {serverSequence:number;results:Array<{mutationId:string}>};
+    await c.repository.movePersonalTreeNodes([{id:node,parentId:right,sortOrder:2}]);
+    return Response.json({...body,results:body.results.map((r)=>({...r,status:"failed",code:"NETWORK_UNAVAILABLE"}))});
+  };
+  try { await c.sync(); } finally { afterPush=undefined; }
+  assert.equal((await conflicts(c)).length,0);
+  assert.equal((await c.db.query<{parentId:string}>("SELECT parentId FROM native_knowledge_tree_nodes WHERE id=?",[node]))[0].parentId,right);
+  await c.sync(); assert.equal((await pending(c)).length,0); assert.equal((await conflicts(c)).length,0);
+  assert.deepEqual(serverDb.prepare("SELECT parentId,sortOrder FROM knowledge_tree_nodes WHERE id=?").get(node),{parentId:right,sortOrder:2});
+});
+
 test.before(async () => {
   const schema = await import("../src/db/schema");
   const routes = await import("../src/routes/sync-v2");

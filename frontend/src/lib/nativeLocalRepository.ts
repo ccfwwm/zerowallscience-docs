@@ -13,6 +13,7 @@ import { unsentLocalNoteKey } from "./nativeLocalNoteOrigin";
 import { notifyMobileSyncStatusChanged } from "./mobileSyncStatus";
 import { isEncryptedNoteFormat, validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
 import { ROOT_DOCUMENT_NOTEBOOK_PREFIX } from "./rootDocumentCreatePolicy";
+import { listNativePersonalTreeOverrides, writeNativePersonalTreeMoves, type NativeTreeMove } from "./nativePersonalTreeWrites";
 
 type EntityType = "notebook" | "note" | "tag" | "note_tag" | "favorite" | "attachment";
 
@@ -287,6 +288,22 @@ export class NativeLocalRepository implements LocalRepository {
       operation, baseVersion ?? null, payload ? JSON.stringify(payload) : null, now(),
     ]);
     this.requestSyncCallback?.();
+  }
+
+  async movePersonalTreeNodes(items: NativeTreeMove[]) {
+    const nodes = await this.db.transaction(async (tx) => {
+      const sync = await this.syncContext(tx);
+      if (!sync) throw Object.assign(new Error("个人目录同步订阅尚未确认"), { code: "NATIVE_TREE_WRITE_UNAVAILABLE" });
+      return writeNativePersonalTreeMoves(tx,items,{ ...sync,userId:this.userId });
+    });
+    this.requestSyncCallback?.();
+    notifyMobileSyncStatusChanged();
+    return nodes;
+  }
+
+  async listPersonalTreeOverrides() {
+    const sync = await this.syncContext(this.db);
+    return sync ? listNativePersonalTreeOverrides(this.db,sync.profileId) : [];
   }
 
   async exportWorkspaceScope(scopeKey:string):Promise<Record<string,unknown>> {

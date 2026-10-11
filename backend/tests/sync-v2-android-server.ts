@@ -35,6 +35,7 @@ async function main() {
   // Match index.ts's trailing-slash mount for the list entry point.
   app.route("/api/knowledge-tree/", treeRoutes);
   app.get("/acceptance/note/:id", (c) => c.json(db.prepare("SELECT * FROM notes WHERE id=? AND userId=?").get(c.req.param("id"), userId) || null));
+  app.get("/acceptance/tree/:id", (c) => c.json(db.prepare("SELECT id,parentId,sortOrder,isDeleted FROM knowledge_tree_nodes WHERE id=? AND userId=?").get(c.req.param("id"),userId) || null));
   app.post("/acceptance/tree-folder", async (c) => {
     const {parentId} = await c.req.json<{parentId:string}>();
     return app.request("http://localhost/api/knowledge-tree/nodes?workspaceId=personal", {method:"POST",

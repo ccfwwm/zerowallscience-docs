@@ -22,6 +22,27 @@ const nodeTypes: Record<string, readonly string[]> = {
   notebook: ["folder"], note: ["note", "markdown", "word"], mindmap: ["mindmap"], file: ["file"],
 };
 
+export function assertNativePersonalTreeEntry(entityId: string, p: Record<string,unknown>, userId: string): void {
+  const type = p.resourceType;
+  if (p.__delete === true) return;
+  if (typeof type !== "string" || !Object.hasOwn(nodeTypes,type)
+    || typeof p.resourceId !== "string" || !p.resourceId
+    || entityId !== `${type}:${p.resourceId}` || p.id !== entityId
+    || p.userId !== userId || p.workspaceId !== null
+    || (p.scopeKey !== undefined && p.scopeKey !== `personal:${userId}`)
+    || typeof p.nodeType !== "string" || !nodeTypes[type].includes(p.nodeType)
+    || (p.parentId !== null && (typeof p.parentId !== "string" || !p.parentId))
+    || p.parentId === entityId
+    || !Number.isSafeInteger(p.sortOrder) || (p.sortOrder as number) < 0
+    || (p.isDeleted !== 0 && p.isDeleted !== 1)
+    || (p.deletedAt !== null && typeof p.deletedAt !== "string")
+    || typeof p.createdAt !== "string" || !p.createdAt
+    || typeof p.updatedAt !== "string" || !p.updatedAt
+    || entityId.startsWith("notebook:__nowen_root_documents__:")) {
+    invalid("知识树资源身份、作用域或结构字段无效");
+  }
+}
+
 /** Caller owns the Apply transaction. Never writes business rows, Outbox or access proofs. */
 export async function applyNativePersonalTree(
   tx: NativeDatabase, entries: NativeTreeEntry[], userId: string, snapshot: boolean,
@@ -36,22 +57,8 @@ export async function applyNativePersonalTree(
       await tx.run("DELETE FROM native_knowledge_tree_nodes WHERE scopeKey='personal' AND id=?", [entityId]);
       continue;
     }
-    const type = p.resourceType;
-    if (typeof type !== "string" || !Object.hasOwn(nodeTypes,type)
-      || typeof p.resourceId !== "string" || !p.resourceId
-      || entityId !== `${type}:${p.resourceId}` || p.id !== entityId
-      || p.userId !== userId || p.workspaceId !== null
-      || (p.scopeKey !== undefined && p.scopeKey !== `personal:${userId}`)
-      || typeof p.nodeType !== "string" || !nodeTypes[type].includes(p.nodeType)
-      || (p.parentId !== null && (typeof p.parentId !== "string" || !p.parentId))
-      || !Number.isSafeInteger(p.sortOrder) || (p.sortOrder as number) < 0
-      || (p.isDeleted !== 0 && p.isDeleted !== 1)
-      || (p.deletedAt !== null && typeof p.deletedAt !== "string")
-      || typeof p.createdAt !== "string" || !p.createdAt
-      || typeof p.updatedAt !== "string" || !p.updatedAt
-      || entityId.startsWith("notebook:__nowen_root_documents__:")) {
-      invalid("知识树资源身份、作用域或结构字段无效");
-    }
+    assertNativePersonalTreeEntry(entityId,p,userId);
+    const type = p.resourceType as string;
     const tables: Record<string,string> = { notebook: "notebooks", note: "notes", mindmap: "mindmaps", file: "attachments" };
     const table = tables[type];
     const resource = await tx.query(`SELECT id FROM ${table} WHERE scopeKey='personal' AND id=?`, [p.resourceId]);

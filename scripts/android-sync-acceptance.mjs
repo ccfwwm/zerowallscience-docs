@@ -104,24 +104,48 @@ try {
   const movedWithoutNotice = await fetch(`${base}/acceptance/tree-move/${encodeURIComponent(folder.id)}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({parentId:`note:${ids[0]}`,sortOrder:19})});
   assert.ok(movedWithoutNotice.ok);
   await wait(async () => {const row=await native("structure",folder.id);return row?.parentId === `note:${ids[0]}` && row.sortOrder === 19;}, "poll did not compensate for a missing tree notification",40_000);
+  await native("treeList");
+  await native("stop");
   adb("reverse", "--remove", "tcp:47831");
+  await native("treeMove",folder.id,`note:${ids[1]}`,29);
+  assert.equal((await native("pendingTree")).length,1);
+  const offlineTree = await native("treeList");
+  assert.equal(offlineTree.nodes.find((node)=>node.id===folder.id)?.parentId,`note:${ids[1]}`);
   await browser.close();
   adb("shell", "am", "force-stop", "com.nowen.note.syncacceptance");
   adb("shell", "am", "start", "-n", "com.nowen.note.syncacceptance/com.nowen.note.MainActivity");
   await attach();
   const restoredStructure = await native("structure",folder.id);
-  assert.equal(restoredStructure.parentId,`note:${ids[0]}`); assert.equal(restoredStructure.sortOrder,19);
-  assert.equal((await native("schema"))[0].user_version,6);
+  assert.equal(restoredStructure.parentId,`note:${ids[1]}`); assert.equal(restoredStructure.sortOrder,29);
+  assert.equal((await native("pendingTree")).length,1);
+  assert.equal((await native("schema"))[0].user_version,7);
+  const serverTree = async () => (await fetch(`${base}/acceptance/tree/${encodeURIComponent(folder.id)}`)).json();
+  adb("reverse","tcp:47831","tcp:47831");
+  await native("start");
+  await wait(async () => (await serverTree()).parentId===`note:${ids[1]}` && (await native("pendingTree")).length===0,"offline structure not automatically pushed");
+  await native("treeList"); await native("stop");
+  adb("reverse","--remove","tcp:47831");
+  await native("treeMove",folder.id,`note:${ids[0]}`,30);
+  const concurrent = await fetch(`${base}/acceptance/tree-move/${encodeURIComponent(folder.id)}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({parentId:null,sortOrder:31})});
+  assert.ok(concurrent.ok);
+  adb("reverse","tcp:47831","tcp:47831"); await native("start");
+  await wait(async () => (await native("treeConflicts")).length===1,"concurrent move not retained in conflict center");
+  const [conflict] = await native("treeConflicts");
+  assert.equal(conflict.local.parentId,`note:${ids[0]}`); assert.equal(conflict.remote.parentId,null);
+  await native("resolveTreeConflict",conflict.id);
+  await wait(async () => (await serverTree()).parentId===`note:${ids[0]}` && (await native("pendingTree")).length===0,"keep-local structure did not converge");
+  assert.equal((await native("treeConflicts")).length,0);
   const report = { device: serial, package: "com.nowen.note.syncacceptance", offlineImmediateRead: true, forceStopRecovery: true,
     knowledgeTreeRootCreate: true, readWriteThroughProductionApiBridge: true,
-    negotiatedPersonalTreePull:true,remoteFolderUnderDocument:true,remoteTreeMove:true,structureForceStopRecovery:true,nativeSchemaVersion:6,
+    negotiatedPersonalTreePull:true,remoteFolderUnderDocument:true,remoteTreeMove:true,structureForceStopRecovery:true,nativeSchemaVersion:7,
+    nativeOfflineTreeMoveAndSort:true,pendingTreeForceStopRecovery:true,automaticStructurePush:true,nativeConcurrentMoveKeepLocal:true,
     missingTreeNoticePoll:true,remoteFolderCreateMs,remoteTreeMoveMs,
     offlineNetworkIsolation: "adb reverse removed; HTTP server unreachable from Android",
     markdownAndRichText: true, missingNoticePoll: true, reconnect: true,
     httpPushToNativePull: stats(download), nativeCommitToServerAndAck: stats(upload), errors: await native("errors"),
-    boundary: "Loopback adb reverse; real Android Native SQLite, personal tree create/read/update and negotiated structural Pull. Remote folder creation and movement use the production knowledge tree routes. Native structural writes/conflict UI, full EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
+    boundary: "Loopback adb reverse; actual Android Native SQLite, production API Bridge personal tree move/sort, Outbox restart recovery, automatic Push and concurrent move keep-local via the Native conflict service. Full ConflictCenter GUI, EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
   fs.mkdirSync(new URL("../docs/test-results/", import.meta.url), { recursive: true });
-  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-tree-pull-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
+  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-tree-writes-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally {
   if (page) await native("stop").catch(() => undefined);

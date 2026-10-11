@@ -23,6 +23,22 @@
       "status": "covered",
       "checks": [
         {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native personal moves and sorting are atomic, survive reopen and push only structural fields"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "a structural Outbox insert failure rolls back every move in the local batch"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/nativeTreeSchemaMigration.test.ts",
+          "case": "migrates schema 6 queues without losing mutation identity, retries, versions or resolved history"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/nativeTreeSchemaMigration.test.ts",
+          "case": "rolls back both queue rebuilds and schema version when the second rebuild fails"
+        },
+        {
           "file": "backend/tests/sync-v2-outbox-capture.test.ts",
           "case": "创建笔记进入 Outbox，且 upsert 顺序在其笔记本之后"
         },

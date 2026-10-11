@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { hasKnowledgeCapability, resolveKnowledgeNodeAccess } from "../services/knowledgeCapabilities.js";
 import { SyncError } from "./errors.js";
 import { resolveAuthorizedScope } from "./scope.js";
+import { moveKnowledgeNode } from "../services/knowledgeTreeRootDocuments.js";
 
 interface TreeRow {
   id: string;
@@ -146,6 +147,13 @@ export function applyKnowledgeTreeStructureMutation(
     throw new SyncError("INVALID_PAYLOAD", "知识树不能形成循环");
   }
 
+  if (node.resourceType === "notebook" && !node.isDeleted
+    && (desired.parentId !== current.parentId || desired.sortOrder !== current.sortOrder)) {
+    // Keep the legacy notebook container in the same server transaction. The
+    // existing move service also handles root-document hidden containers.
+    moveKnowledgeNode({db,actorUserId:input.userId,nodeId:node.id,parentId:desired.parentId,sortOrder:desired.sortOrder});
+    db.prepare("UPDATE notebooks SET sortOrder=? WHERE id=?").run(desired.sortOrder,node.resourceId);
+  }
   db.prepare(`
     UPDATE knowledge_tree_nodes
     SET parentId = ?, sortOrder = ?, isDeleted = ?, deletedAt = ?, updatedAt = datetime('now')

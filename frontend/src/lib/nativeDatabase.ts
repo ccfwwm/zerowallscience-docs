@@ -33,12 +33,12 @@ type NativeDatabaseGlobal = typeof globalThis & {
   __nowenNoteNativeDatabaseState?: NativeDatabaseGlobalState;
 };
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const DATABASE_PREFIX = "nowen_local_";
 
 const ENTITY_TYPE_CHECK = `
   'notebook', 'note', 'tag', 'note_tag', 'favorite', 'attachment',
-  'task', 'task_reminder', 'diary', 'mindmap'
+  'task', 'task_reminder', 'diary', 'mindmap', 'knowledge_tree_node'
 `;
 
 const SCOPE_CHECK = `
@@ -762,6 +762,12 @@ class NativeDatabaseImpl implements NativeDatabase {
         }
         if (version < 6) {
           await executeSchemaStatements(this.raw, KNOWLEDGE_TREE_SCHEMA_STATEMENTS);
+        }
+        if (version < 7) {
+          // Preserve mutation IDs, payloads, retries and conflict history while
+          // widening the entity CHECK. Both rebuilds share the migration TX.
+          await executeSchemaStatements(this.raw, SYNC_OUTBOX_V2_STATEMENTS);
+          await executeSchemaStatements(this.raw, SYNC_CONFLICTS_V2_STATEMENTS);
           await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
         }
       });

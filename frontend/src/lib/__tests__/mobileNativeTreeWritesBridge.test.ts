@@ -1,0 +1,60 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { knowledgeTreeApi, type KnowledgeTreeNode } from "../knowledgeTreeApi";
+import { installMobileLocalKnowledgeTreeBridge } from "../mobileLocalKnowledgeTreeBridge";
+import type { NativeLocalRepository } from "../nativeLocalRepository";
+import type { NativeDatabase } from "../nativeDatabase";
+
+let restore: (() => void) | undefined;
+afterEach(() => { restore?.(); vi.restoreAllMocks(); localStorage.removeItem("nowen-current-workspace"); });
+function node(id: string, parentId: string | null = null): KnowledgeTreeNode {
+  return { id,resourceId:id.slice(9),resourceType:"notebook",nodeType:"folder",parentId,userId:"u",workspaceId:null,
+    scopeKey:"personal:u",isDeleted:0,isPasswordProtected:0,sortOrder:0,childCount:0,isExpanded:1,createdAt:"now",updatedAt:"now",title:id,
+    access:{nodeId:id,source:"owner",rolePreset:"admin",sourceNodeId:null,capabilities:{canView:true,canMove:true,canCreate:true} as never} };
+}
+function setup() {
+  localStorage.setItem("nowen-current-workspace","personal");
+  const a = node("notebook:a"), b = node("notebook:b");
+  const remoteMove = vi.spyOn(knowledgeTreeApi,"move").mockResolvedValue(a);
+  const remoteReorder = vi.spyOn(knowledgeTreeApi,"reorder").mockResolvedValue({success:true,updated:1});
+  const remoteList = vi.spyOn(knowledgeTreeApi,"listForWorkspace").mockResolvedValue({nodes:[a,b]});
+  const moves = vi.fn(async () => [{...a,parentId:b.id,sortOrder:7}]);
+  const overrides = vi.fn(async () => [] as Array<Record<string,unknown>>);
+  const repository = {movePersonalTreeNodes:moves,listPersonalTreeOverrides:overrides,listLocalTreeDrafts:async()=>[]} as unknown as NativeLocalRepository;
+  const metadata = new Map<string,string>();
+  const db = {run:async(_sql:string,values:unknown[])=>{metadata.set(String(values[0]),String(values[1]));return {changes:1};},
+    query:async(_sql:string,values:unknown[])=>metadata.has(String(values[0]))?[{value:metadata.get(String(values[0]))}]:[]} as unknown as NativeDatabase;
+  restore = installMobileLocalKnowledgeTreeBridge(repository,{deviceOnly:false},db);
+  return {a,b,moves,overrides,remoteMove,remoteReorder,remoteList};
+}
+it("routes personal folder move, batch move and reorder through the durable transaction without HTTP", async () => {
+  const f=setup();
+  expect(await knowledgeTreeApi.move(f.a.id,{parentId:f.b.id,sortOrder:7})).toMatchObject({parentId:f.b.id,sortOrder:7});
+  await knowledgeTreeApi.batchMove([f.a.id],{parentId:f.b.id});
+  await knowledgeTreeApi.reorder([{id:f.a.id,sortOrder:7}]);
+  expect(f.moves.mock.calls).toEqual([[[{id:f.a.id,parentId:f.b.id,sortOrder:7}]],[[{id:f.a.id,parentId:f.b.id}]],[[{id:f.a.id,sortOrder:7}]]]);
+  expect(f.remoteMove).not.toHaveBeenCalled(); expect(f.remoteReorder).not.toHaveBeenCalled();
+});
+it("shows only pending folder intentions over a complete cached owner tree after HTTP becomes unavailable", async () => {
+  const f=setup(); await knowledgeTreeApi.listForWorkspace("personal");
+  f.overrides.mockResolvedValue([{id:f.a.id,parentId:f.b.id,sortOrder:7}]);
+  f.remoteList.mockRejectedValue(new TypeError("Failed to fetch"));
+  const tree=await knowledgeTreeApi.listForWorkspace("personal");
+  expect(tree.nodes.find((n)=>n.id===f.a.id)).toMatchObject({parentId:f.b.id,sortOrder:7});
+  expect(tree.nodes.find((n)=>n.id===f.b.id)?.childCount).toBe(1);
+});
+it("retains current password metadata instead of moving protected descendants into an unprotected navigation path", async () => {
+  const f=setup();
+  f.remoteList.mockResolvedValue({nodes:[{...f.a,parentId:f.b.id},{...f.b,isPasswordProtected:1}]});
+  f.overrides.mockResolvedValue([{id:f.a.id,parentId:null,sortOrder:7}]);
+  expect((await knowledgeTreeApi.listForWorkspace("personal")).nodes.find((n)=>n.id===f.a.id)?.parentId).toBe(f.b.id);
+});
+it("falls back for unavailable authorization but propagates a failed local commit without issuing another write", async () => {
+  const f=setup();
+  f.moves.mockRejectedValueOnce(Object.assign(new Error("Online authorization required"),{code:"NATIVE_TREE_WRITE_UNAVAILABLE"}));
+  await knowledgeTreeApi.move(f.a.id,{parentId:null}); expect(f.remoteMove).toHaveBeenCalledOnce();
+  f.moves.mockRejectedValueOnce(new Error("Outbox storage failed"));
+  await expect(knowledgeTreeApi.move(f.a.id,{parentId:null})).rejects.toThrow("Outbox storage failed");
+  expect(f.remoteMove).toHaveBeenCalledOnce();
+  localStorage.setItem("nowen-current-workspace","workspace-a");
+  await knowledgeTreeApi.move(f.a.id,{parentId:null}); expect(f.moves).toHaveBeenCalledTimes(2);
+});

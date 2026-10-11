@@ -164,7 +164,7 @@ function localOnlyUnsupported(message: string): Error & { code?: string } {
  *
  * - 纯设备本地模式：列表从 Native Repository 投影，并接管 CRUD / batch / ACL。
  * - 已登录 Local-first：个人根级/普通文件夹的 MD/富文本可本地创建；本机创建记录
- *   补充服务端树或离线快照。结构移动、共享、密码等高级能力仍由服务端处理。
+ *   补充服务端树或离线快照；已订阅的普通个人节点支持事务移动/排序。
  */
 export function installMobileLocalKnowledgeTreeBridge(
   repository: NativeLocalRepository,
@@ -203,8 +203,35 @@ export function installMobileLocalKnowledgeTreeBridge(
   if (!deviceOnly) {
     const withLocalDrafts = async (result: KnowledgeTreeResponse, scope: string, online: boolean): Promise<KnowledgeTreeResponse> => {
       if (!db || scope !== "personal") return result;
+      const overrides = await repository.listPersonalTreeOverrides();
+      if (overrides.length) {
+        const safeChain = (node: KnowledgeTreeNode, nodes: KnowledgeTreeNode[]) => {
+          const byId = new Map(nodes.map((item) => [item.id,item]));
+          const visited = new Set<string>();
+          let current: KnowledgeTreeNode | undefined = node;
+          while (current) {
+            if (visited.has(current.id) || current.isDeleted || current.access?.source !== "owner"
+              || !current.access.capabilities.canView || (current.resourceType === "notebook" && current.isPasswordProtected !== 0)) return false;
+            visited.add(current.id);
+            if (!current.parentId) return true;
+            current = byId.get(current.parentId);
+          }
+          return false;
+        };
+        const nodes = result.nodes.map((node) => {
+          const override = overrides.find((row) => row.id === node.id);
+          return override ? { ...node,parentId:override.parentId as string | null,sortOrder:override.sortOrder as number } : node;
+        });
+        result = { ...result,nodes:nodes.map((node,index) =>
+          safeChain(result.nodes[index],result.nodes) && safeChain(node,nodes) ? node : result.nodes[index]) };
+      }
       const drafts = await repository.listLocalTreeDrafts();
-      if (!drafts.length) return result;
+      if (!drafts.length) {
+        if (!overrides.length) return result;
+        const counts = new Map<string,number>();
+        for (const node of result.nodes) if (node.parentId) counts.set(node.parentId,(counts.get(node.parentId)||0)+1);
+        return {...result,nodes:applyKnowledgeTreeSort(result.nodes.map((node) => ({...node,childCount:counts.get(node.id)||0})))};
+      }
       const nodes = [...result.nodes];
       for (const draft of drafts) {
         const key = `localTreeDraft:personal:${draft.id}`;
@@ -318,6 +345,21 @@ export function installMobileLocalKnowledgeTreeBridge(
     };
     target.create = (input) => createPersonal(getCurrentWorkspace(), input);
     target.createForWorkspace = createPersonal;
+    const localMoves = async (items: Array<{id:string;parentId?:string|null;sortOrder?:number}>) => {
+      if (!db || getCurrentWorkspace() !== "personal") return null;
+      try { return await repository.movePersonalTreeNodes(items); }
+      catch (error) {
+        if ((error as {code?:string})?.code === "NATIVE_TREE_WRITE_UNAVAILABLE") return null;
+        throw error;
+      }
+    };
+    target.move = async (id,input) => (await localMoves([{id,...input}]))?.[0] || originals.move(id,input);
+    target.batchMove = async (nodeIds,input) => {
+      const nodes = await localMoves(nodeIds.map((id) => ({id,...input})));
+      return nodes ? {success:true,nodeIds,nodes} : originals.batchMove(nodeIds,input);
+    };
+    target.reorder = async (items) => await localMoves(items)
+      ? {success:true,updated:items.length} : originals.reorder(items);
     return () => { Object.assign(target, originals); };
   }
 
