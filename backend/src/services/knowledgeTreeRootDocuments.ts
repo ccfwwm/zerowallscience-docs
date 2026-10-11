@@ -199,7 +199,18 @@ export function moveKnowledgeNode(input: {
   sortOrder?: number;
   db?: Database.Database;
 }): KnowledgeTreeNode {
-  if (input.parentId !== null) return moveKnowledgeNodeBase(input);
+  if (input.parentId !== null) {
+    const db = input.db || getDb();
+    const parentContainer = rootDocumentContainerForParent(db,input.parentId);
+    if (!parentContainer) return moveKnowledgeNodeBase(input);
+    // Match creation under a root document: the compatibility notebook must
+    // exist during business-parent validation, then stay hidden after commit.
+    return db.transaction(() => {
+      const container = activateRootContainer(db,parentContainer.ownerUserId,parentContainer.workspaceId);
+      try { return moveKnowledgeNodeBase({...input,db}); }
+      finally { hideRootContainer(db,container.notebookId,container.nodeId); }
+    })();
+  }
 
   const db = input.db || getDb();
   ensureKnowledgeTreeTables(db);
