@@ -116,6 +116,54 @@ test.after(async () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
+test("personal tree creates are readable offline, survive reopen and converge with stable root identities", async () => {
+  const name = "tree-offline", a = await client(name);
+  const ids: string[] = [];
+  for (const contentFormat of ["markdown", "tiptap-json"] as const) {
+    const id = randomUUID(); ids.push(id);
+    await a.repository.createPersonalTreeNote({ id, title: "Offline root", contentFormat, content: "offline body" }, null);
+    assert.equal((await a.repository.notes.get(id))?.content, "offline body");
+  }
+  assert.equal((await a.repository.listLocalTreeDrafts()).length, 2);
+  assert.equal((await a.repository.notebooks.list()).length, 0, "internal root container stays hidden");
+  await a.db.close();
+  const reopened = await client(name), b = await client("tree-reader");
+  assert.equal((await reopened.repository.listLocalTreeDrafts()).length, 2);
+  for (const id of ids) assert.equal((await reopened.repository.notes.get(id))?.content, "offline body");
+  await reopened.sync(); await b.sync();
+  assert.equal((await pending(reopened)).length, 0);
+  for (const id of ids) {
+    assert.equal((await b.repository.notes.get(id))?.content, "offline body");
+    assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`note:${id}`).parentId, null);
+  }
+});
+
+test("tree create rolls back body, root container and provenance when Outbox insertion fails", async () => {
+  const c = await client("tree-rollback"), id = randomUUID();
+  await c.db.run("CREATE TRIGGER reject_tree_outbox BEFORE INSERT ON sync_outbox BEGIN SELECT RAISE(ABORT,'fixture outbox failure'); END");
+  await assert.rejects(c.repository.createPersonalTreeNote({ id, contentFormat: "markdown" }, null), /outbox failure/);
+  assert.equal(await c.repository.notes.get(id), null);
+  assert.equal((await c.db.query("SELECT id FROM notebooks")).length, 0);
+  assert.equal((await c.repository.listLocalTreeDrafts()).length, 0);
+});
+
+test("authorized hydration persists a remote body without creation mutations and preserves newer local writes", async () => {
+  const c = await client("hydrate"), id = randomUUID(), book = randomUUID();
+  const notebook = { id: book, userId: USER, workspaceId: null, name: "Remote folder", parentId: null } as never;
+  const remote = { id, userId: USER, workspaceId: null, notebookId: book, title: "Remote", content: "remote body", contentFormat: "markdown", version: 4 } as never;
+  await c.repository.hydrateAuthorizedNote(remote, notebook);
+  assert.equal((await c.repository.notes.get(id))?.content, "remote body");
+  assert.equal((await pending(c)).length, 0);
+  await c.repository.notes.update(id, { content: "new local body" });
+  await c.repository.hydrateAuthorizedNote(remote, notebook);
+  assert.equal((await c.repository.notes.get(id))?.content, "new local body");
+  assert.equal((await pending(c))[0].baseVersion, 4);
+  await c.repository.notes.remove(id);
+  await assert.rejects(c.repository.hydrateAuthorizedNote(remote, notebook), /本机.*删除/);
+  assert.equal(await c.repository.notes.get(id), null);
+  await assert.rejects(c.repository.hydrateAuthorizedNote({ ...remote, id: randomUUID(), userId: "other-user" }, notebook), /身份|空间/);
+});
+
 test("workspace Snapshot pruning preserves pending descendants, unresolved conflicts and local attachment bytes", async () => {
   const c = await client("prune-native");
   const key = "workspace:prune", book = randomUUID(), pendingNote = randomUUID(), conflictedNote = randomUUID(), attachment = randomUUID();

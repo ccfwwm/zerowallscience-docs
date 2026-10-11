@@ -275,7 +275,14 @@
         { "file": "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts", "case": "rejects a late push ACK when the account changes" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "workspace Snapshot pruning preserves pending descendants" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "create then permanent delete between Pulls" },
-        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "external UI reads wait for an in-progress Apply transaction" }
+        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "external UI reads wait for an in-progress Apply transaction" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "personal tree creates are readable offline, survive reopen" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "tree create rolls back body, root container and provenance" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "authorized hydration persists a remote body without creation mutations" },
+        { "file": "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts", "case": "retains server checks for protected folders and workspaces" },
+        { "file": "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts", "case": "does not project an ACKed note omitted by the live authorization tree" },
+        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "reads a locally created root with live server proofs" },
+        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "does not persist or return a remote body after its native session is disposed" }
       ]
     }
   ]

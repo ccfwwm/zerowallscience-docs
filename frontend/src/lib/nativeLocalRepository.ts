@@ -12,6 +12,7 @@ import { newLocalId } from "./localRepository";
 import { unsentLocalNoteKey } from "./nativeLocalNoteOrigin";
 import { notifyMobileSyncStatusChanged } from "./mobileSyncStatus";
 import { isEncryptedNoteFormat, validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
+import { ROOT_DOCUMENT_NOTEBOOK_PREFIX } from "./rootDocumentCreatePolicy";
 
 type EntityType = "notebook" | "note" | "tag" | "note_tag" | "favorite" | "attachment";
 
@@ -378,10 +379,10 @@ export class NativeLocalRepository implements LocalRepository {
     `, values);
   }
 
-  private async getNote(id: string, db: NativeDatabase = this.db): Promise<Note | null> {
+  private async getNote(id: string, db: NativeDatabase = this.db, requiredScopeKey?: string): Promise<Note | null> {
     const currentScopeKey = this.scope().scopeKey;
-    const rows = await db.query<Note>(`SELECT * FROM notes WHERE id=?
-      ORDER BY CASE WHEN scopeKey=? THEN 0 ELSE 1 END LIMIT 1`, [id,currentScopeKey]);
+    const rows = await db.query<Note>(`SELECT * FROM notes WHERE id=? ${requiredScopeKey ? "AND scopeKey=?" : ""}
+      ORDER BY CASE WHEN scopeKey=? THEN 0 ELSE 1 END LIMIT 1`, [id,...(requiredScopeKey ? [requiredScopeKey] : []),currentScopeKey]);
     if (!rows[0]) return null;
     const scopeKey = this.scopeFromWorkspace(rows[0].workspaceId).scopeKey;
     const tags = await db.query<Tag>(`
@@ -392,12 +393,12 @@ export class NativeLocalRepository implements LocalRepository {
     return { ...rows[0], tags };
   }
 
-  private async createNote(input: Partial<Note> & { id: string }): Promise<WriteResult> {
+  private async insertNote(tx: NativeDatabase, input: Partial<Note> & { id: string }, localCreation: boolean): Promise<WriteResult> {
     validateEncryptedNoteWrite(input as Record<string, unknown>);
     const scope = input.workspaceId !== undefined
       ? this.scopeFromWorkspace(input.workspaceId)
       : this.scope();
-    await this.assertWritable(scope.scopeKey);
+    if (localCreation) await this.assertWritable(scope.scopeKey, tx);
     const savedAt = now();
     const row = {
       id: input.id, scopeKey: scope.scopeKey, workspaceId: scope.workspaceId,
@@ -409,18 +410,93 @@ export class NativeLocalRepository implements LocalRepository {
       trashedAt: input.trashedAt ?? null, version: Math.max(1, input.version || 1),
       sortOrder: input.sortOrder || 0, createdAt: input.createdAt || savedAt, updatedAt: savedAt,
     };
-    await this.db.transaction(async (tx) => {
-      await tx.run(`INSERT INTO notes (
+    await tx.run(`INSERT INTO notes (
         id,scopeKey,workspaceId,userId,notebookId,title,content,contentText,contentFormat,colorMark,
         isPinned,isFavorite,isLocked,isArchived,isTrashed,trashedAt,version,sortOrder,createdAt,updatedAt
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, Object.values(row));
+    if (localCreation) {
       await tx.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,'1',?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value,updatedAt=excluded.updatedAt`, [unsentLocalNoteKey(scope.scopeKey, input.id), savedAt]);
       await this.enqueue(tx, "note", input.id, "upsert", row, undefined, scope.scopeKey);
-    });
+    }
+    return { id: input.id, savedAt };
+  }
+
+  private async createNote(input: Partial<Note> & { id: string }): Promise<WriteResult> {
+    const result = await this.db.transaction((tx) => this.insertNote(tx, input, true));
     // The receipt is invalidated only after the SQLite Outbox transaction commits.
     notifyMobileSyncStatusChanged();
-    return { id: input.id, savedAt };
+    return result;
+  }
+
+  private async ensurePersonalRootNotebook(tx: NativeDatabase, enqueue: boolean): Promise<string> {
+    const id = `${ROOT_DOCUMENT_NOTEBOOK_PREFIX}personal:${this.userId}`;
+    const timestamp = now();
+    const row = { id, scopeKey: "personal", workspaceId: null, userId: this.userId, parentId: null,
+      name: "__NOWEN_ROOT_DOCUMENTS__", icon: "📄", sortOrder: -2147483648, isExpanded: 0,
+      isDeleted: 1, deletedAt: timestamp, createdAt: timestamp, updatedAt: timestamp };
+    const inserted = await tx.run(`INSERT OR IGNORE INTO notebooks
+      (id,scopeKey,workspaceId,userId,parentId,name,icon,sortOrder,isExpanded,isDeleted,deletedAt,createdAt,updatedAt)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, Object.values(row));
+    if (inserted.changes && enqueue) await this.enqueue(tx, "notebook", id, "upsert", row, undefined, "personal");
+    return id;
+  }
+
+  /** Personal root/folder documents use the existing notebook/note Sync V2 entities. */
+  async createPersonalTreeNote(input: Partial<Note> & { id: string }, notebookId: string | null): Promise<WriteResult> {
+    const result = await this.db.transaction(async (tx) => {
+      if (input.workspaceId) throw new Error("本机知识树创建仅支持个人空间");
+      if (notebookId) {
+        const parent = (await tx.query<{ userId: string; isDeleted: number }>(
+          "SELECT userId,isDeleted FROM notebooks WHERE scopeKey='personal' AND id=?", [notebookId],
+        ))[0];
+        if (!parent || parent.userId !== this.userId || parent.isDeleted) throw new Error("本机父文件夹不存在或不可写");
+      }
+      const parent = notebookId || await this.ensurePersonalRootNotebook(tx, true);
+      const saved = await this.insertNote(tx, { ...input, workspaceId: null, notebookId: parent }, true);
+      // This records only locally created content, never inferred from a cached remote note.
+      await tx.run("INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,?,?)",
+        [`localTreeDraft:personal:${input.id}`, JSON.stringify(notebookId ? `notebook:${notebookId}` : null), saved.savedAt]);
+      return saved;
+    });
+    notifyMobileSyncStatusChanged();
+    return result;
+  }
+
+  async listLocalTreeDrafts(): Promise<Array<NoteListItem & { treeParentId: string | null }>> {
+    const rows = await this.db.query<NoteListItem & { treeParent: string }>(`SELECT ${NOTE_LIST_METADATA_COLUMNS},'' AS contentText,m.value AS treeParent
+      FROM notes n JOIN native_runtime_meta m ON m.key='localTreeDraft:personal:' || n.id
+      WHERE n.scopeKey='personal' AND n.userId=? AND n.isTrashed=0`, [this.userId]);
+    return rows.map(({ treeParent, ...note }) => ({ ...note, treeParentId: JSON.parse(treeParent) as string | null }));
+  }
+
+  /** Only call after live remote authorization; never enqueue another creation. */
+  async hydrateAuthorizedNote(note: Note, notebook?: Notebook): Promise<Note> {
+    if (note.workspaceId || note.userId !== this.userId || !Number.isSafeInteger(note.version) || note.version < 1) {
+      throw new Error("远端笔记身份或空间校验失败");
+    }
+    return this.db.transaction(async (tx) => {
+      const current = await this.getNote(note.id, tx, "personal");
+      if (current) return current;
+      const blocked = (await tx.query(`SELECT entityId FROM sync_outbox WHERE scopeKey='personal' AND entityType='note' AND entityId=?
+        UNION ALL SELECT entityId FROM sync_conflicts WHERE scopeKey='personal' AND entityType='note' AND entityId=? AND status='unresolved' LIMIT 1`, [note.id, note.id])).length;
+      if (blocked) throw new Error("笔记在本机已删除或存在待处理修改，不能从远端重新创建");
+      const parent = (await tx.query("SELECT id FROM notebooks WHERE scopeKey='personal' AND id=?", [note.notebookId]))[0];
+      if (!parent) {
+        if (note.notebookId === `${ROOT_DOCUMENT_NOTEBOOK_PREFIX}personal:${this.userId}`) {
+          await this.ensurePersonalRootNotebook(tx, false);
+        } else {
+          if (!notebook || notebook.id !== note.notebookId || notebook.userId !== this.userId || notebook.workspaceId) {
+            throw new Error("远端笔记父文件夹身份校验失败");
+          }
+          await tx.run(`INSERT INTO notebooks (id,scopeKey,workspaceId,userId,name,description,icon,color,sortOrder,isExpanded,createdAt,updatedAt)
+            VALUES (?,'personal',NULL,?,?,?,?,?,?,?,?,?)`, [notebook.id,this.userId,notebook.name,notebook.description ?? null,
+            notebook.icon || "📒",notebook.color ?? null,notebook.sortOrder || 0,notebook.isExpanded ?? 1,notebook.createdAt || now(),notebook.updatedAt || now()]);
+        }
+      }
+      await this.insertNote(tx, { ...note, workspaceId: null }, false);
+      return (await this.getNote(note.id, tx, "personal"))!;
+    });
   }
 
   private async updateNote(id: string, patch: Partial<Note>): Promise<WriteResult> {

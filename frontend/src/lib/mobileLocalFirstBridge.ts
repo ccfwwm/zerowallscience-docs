@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, getBaseUrl } from "./api";
 import { newLocalId } from "./localRepository";
 import type { NativeLocalRepository } from "./nativeLocalRepository";
 import type { Note, Notebook, Tag, Workspace } from "@/types";
@@ -29,6 +29,11 @@ export function installMobileLocalFirstBridge(
 ): () => void {
   if (installed) return () => undefined;
   installed = true;
+  let active = true;
+  const serverBase = getBaseUrl();
+  const assertActive = () => {
+    if (!active || getBaseUrl() !== serverBase) throw new Error("笔记读取会话已改变，请重新打开");
+  };
 
   const target = api as Omit<typeof api, "getVersion" | "getSiteSettings" | "duplicateNote"> & {
     getVersion: () => Promise<Partial<Awaited<ReturnType<typeof api.getVersion>>>>;
@@ -171,12 +176,9 @@ export function installMobileLocalFirstBridge(
     });
     return deviceOnlyMode ? notes : passwordGuard.filterReadable(notes, params.workspaceId);
   };
-  // In signed-in Android mode, the knowledge tree is intentionally server-first
-  // (folder ACL/passwords), while note content is local-first. A newly created
-  // server-side tree note can therefore be visible before Sync V2 has pulled it
-  // into Native SQLite. Do not claim that such a note is missing or enqueue a
-  // duplicate local creation. Read it through the original authenticated server
-  // API until the native synchronization catches up.
+  // Advanced tree operations still create on the server before native Pull.
+  // Read missing content through live authorization, then persist personal
+  // owned bodies so subsequent saves use the transactional Native Outbox.
   const readRemoteMissingNote = async (id: string): Promise<Note> => {
     if (typeof navigator !== "undefined" && navigator.onLine === false) {
       throw new Error("这篇笔记尚未同步到本机，请联网后重试");
@@ -187,7 +189,18 @@ export function installMobileLocalFirstBridge(
     if (slim.id !== id) throw new Error("笔记身份校验失败");
     const remote = await originals.getNote(id);
     if (remote.id !== id) throw new Error("笔记身份校验失败");
-    return remote;
+    assertActive();
+    // Shared/workspace documents still need the complete native ACL/structure
+    // capability. Personal owned notes can be persisted without another create.
+    if (remote.workspaceId || remote.userId !== userId) return remote;
+    const notebook = (await repository.listNotebooksForWorkspace("personal"))
+      .find((item) => item.id === remote.notebookId)
+      || (await originals.getNotebooks("personal")).find((item) => item.id === remote.notebookId);
+    assertActive();
+    const hydrated = await repository.hydrateAuthorizedNote(remote, notebook);
+    await passwordGuard.assertReadable(hydrated);
+    assertActive();
+    return hydrated;
   };
 
   target.getNote = async (id: string): Promise<Note> => {
@@ -308,6 +321,7 @@ export function installMobileLocalFirstBridge(
   };
 
   return () => {
+    active = false;
     passwordGuard.dispose();
     // 子 Bridge 按安装的逆序恢复，避免 wrapper 恢复到另一个 wrapper 上。
     restoreNoteRelationsBridge();

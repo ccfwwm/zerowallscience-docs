@@ -68,6 +68,8 @@ jobs:
           npx vitest run
           src/lib/__tests__/mobileLocalFirstGuestRuntime.test.ts
           src/lib/__tests__/mobileLocalKnowledgeTreeBridge.test.ts
+          src/lib/__tests__/mobileSignedInTreeCreate.test.ts
+          src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts
           src/lib/__tests__/mobileLocalAdvancedTaskBridge.test.ts
           src/lib/__tests__/mobileLocalNoteRelationsBridge.test.ts
           src/lib/__tests__/mobileLocalAttachmentFolderBridge.test.ts

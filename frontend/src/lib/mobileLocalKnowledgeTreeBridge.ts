@@ -12,6 +12,7 @@ import { isMobileLocalMode } from "./mobileLocalMode";
 import { ensureMobileLocalMindMapTree } from "./mobileLocalMindMapTree";
 import type { NativeDatabase } from "./nativeDatabase";
 import type { NativeLocalRepository } from "./nativeLocalRepository";
+import { createNoteFolderPasswordResolver } from "./knowledgeTreePassword";
 
 function ownerAccess(
   nodeId: string,
@@ -162,8 +163,8 @@ function localOnlyUnsupported(message: string): Error & { code?: string } {
  * Android Native 知识树 Bridge。
  *
  * - 纯设备本地模式：列表从 Native Repository 投影，并接管 CRUD / batch / ACL。
- * - 已登录 Local-first：在线读取服务端统一树，断网回退服务端快照；mutation / 权限 /
- *   密码等高级能力仍由服务端处理，直到 Native DB 支持完整结构同步。
+ * - 已登录 Local-first：个人根级/普通文件夹的 MD/富文本可本地创建；本机创建记录
+ *   补充服务端树或离线快照。结构移动、共享、密码等高级能力仍由服务端处理。
  */
 export function installMobileLocalKnowledgeTreeBridge(
   repository: NativeLocalRepository,
@@ -200,6 +201,31 @@ export function installMobileLocalKnowledgeTreeBridge(
   // 登录态以服务端统一树为准；断网时只使用保留密码信息的服务端快照。
   // 权限或服务端错误不能当作断网，否则可能显示已撤权的工作区内容。
   if (!deviceOnly) {
+    const withLocalDrafts = async (result: KnowledgeTreeResponse, scope: string, online: boolean): Promise<KnowledgeTreeResponse> => {
+      if (!db || scope !== "personal") return result;
+      const drafts = await repository.listLocalTreeDrafts();
+      if (!drafts.length) return result;
+      const nodes = [...result.nodes];
+      for (const draft of drafts) {
+        const key = `localTreeDraft:personal:${draft.id}`;
+        const present = nodes.some((node) => node.resourceType === "note" && node.resourceId === draft.id);
+        // A live tree takes over ACL/structure. An ACKed note omitted by it must
+        // not be reconstructed as an unprotected local navigation node.
+        const pending = online && !present ? (await db.query("SELECT id FROM sync_outbox WHERE scopeKey='personal' AND entityType='note' AND entityId=? LIMIT 1", [draft.id])).length : true;
+        if (present || !pending) { await db.run("DELETE FROM native_runtime_meta WHERE key=?", [key]); continue; }
+        if (draft.treeParentId) {
+          const parent = nodes.find((node) => node.id === draft.treeParentId);
+          if (!parent || parent.isDeleted || !parent.access?.capabilities.canView
+            || createNoteFolderPasswordResolver(nodes)(draft, true)?.length !== 0) continue;
+        }
+        nodes.push({ ...noteNode(draft, false), parentId: draft.treeParentId,
+          access: ownerAccess(`note:${draft.id}`, { canCreate: false }) });
+      }
+      const counts = new Map<string, number>();
+      if (nodes.length === result.nodes.length) return result;
+      for (const node of nodes) if (node.parentId) counts.set(node.parentId, (counts.get(node.parentId) || 0) + 1);
+      return { ...result, nodes: applyKnowledgeTreeSort(nodes.map((node) => ({ ...node, childCount: counts.get(node.id) || 0 }))) };
+    };
     const serverFirstList = async (
       workspaceId: string | undefined,
       includeDeleted: boolean,
@@ -223,7 +249,7 @@ export function installMobileLocalKnowledgeTreeBridge(
             console.warn("[mobile knowledge tree] snapshot cache write failed", error);
           }
         }
-        return result;
+        return withLocalDrafts(result, scope, true);
       } catch (error) {
         if (db && error && typeof error === "object" && "status" in error && error.status === 403) {
           if (scope !== "personal") {
@@ -244,14 +270,20 @@ export function installMobileLocalKnowledgeTreeBridge(
           }
           const cached = (await db.query<{ value: string }>(
             "SELECT value FROM native_runtime_meta WHERE key=?", [key],
-          ))[0];
+          ))[0] || (includeDeleted ? (await db.query<{ value: string }>(
+            "SELECT value FROM native_runtime_meta WHERE key=?", [snapshotKey(workspaceId, false)],
+          ))[0] : undefined);
           if (cached) {
             try {
               const nodes = JSON.parse(cached.value) as unknown;
-              if (validNodes(nodes)) return { nodes };
+              if (validNodes(nodes)) return withLocalDrafts({ nodes }, scope, false);
             } catch { /* 损坏的快照不能证明目录没有密码。 */ }
           }
         }
+        // A locally created root has no inherited folder protection. This does
+        // not authorize any cached remote body or project other Native rows.
+        const drafts = await withLocalDrafts({ nodes: [] }, scope, false);
+        if (drafts.nodes.length) return drafts;
         // Native 投影不含文件夹密码，缺失/损坏的服务端快照不能降级成无保护目录。
         throw new Error("目录权限和密码信息尚未缓存，请联网后重试");
       }
@@ -264,6 +296,28 @@ export function installMobileLocalKnowledgeTreeBridge(
       workspaceId, includeDeleted,
       () => originals.listForWorkspace(workspaceId, includeDeleted),
     );
+    const createPersonal = async (workspaceId: string, input: Parameters<typeof originals.create>[0]) => {
+      if (workspaceId !== "personal" || !db || (input.nodeType !== "note" && input.nodeType !== "markdown")) {
+        return originals.createForWorkspace(workspaceId, input);
+      }
+      let notebookId: string | null = null;
+      if (input.parentId) {
+        const { nodes } = await target.listForWorkspace("personal");
+        const parent = nodes.find((node) => node.id === input.parentId);
+        if (!parent || parent.resourceType !== "notebook" || parent.isDeleted || !parent.access?.capabilities.canCreate
+          || createNoteFolderPasswordResolver(nodes)({ id: "", notebookId: parent.resourceId }, true)?.length !== 0) {
+          return originals.createForWorkspace(workspaceId, input);
+        }
+        notebookId = parent.resourceId;
+      }
+      const id = newLocalId(), title = input.title.trim() || "无标题笔记";
+      await repository.createPersonalTreeNote({ id, title, contentFormat: input.nodeType === "markdown" ? "markdown" : "tiptap-json",
+        content: input.nodeType === "markdown" ? `# ${title}\n\n` : JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] }) }, notebookId);
+      const note = (await repository.notes.get(id))!;
+      return { ...noteNode(note, false), parentId: input.parentId, access: ownerAccess(`note:${id}`, { canCreate: false }) };
+    };
+    target.create = (input) => createPersonal(getCurrentWorkspace(), input);
+    target.createForWorkspace = createPersonal;
     return () => { Object.assign(target, originals); };
   }
 
