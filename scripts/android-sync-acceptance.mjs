@@ -126,6 +126,6 @@ try {
 } finally {
   if (page) await native("stop").catch(() => undefined);
   await browser?.close().catch(() => undefined);
-  try { adb("reverse", "--remove", "tcp:47831"); } catch { /* Already removed for offline structural recovery. */ }
+  if (adb("reverse", "--list").includes("tcp:47831")) adb("reverse", "--remove", "tcp:47831");
 }
 process.exit(0);

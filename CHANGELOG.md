@@ -14,6 +14,7 @@
 
 ## 未发布 / Unreleased
 
+- **sync**：Native 个人空间协商接收完整知识树结构，事务保存跨文档父子关系、移动与删除；升级重建订阅、首次 ACK 丢失保留基线。REST 树修改提交后唤醒 Pull，并修复移入根文档时隐藏容器校验失败。Receive negotiated personal tree structure on native clients, retain subscription intent across lost ACKs, notify after REST commits, and preserve hidden containers during root-document moves. Native structural writes and conflict UI remain pending.
 - **android**：个人知识树根级和普通文件夹内的 Markdown/富文本可先保存到本机并进入现有 Sync V2；将已授权的个人远端正文持久化，保护重启和后续离线编辑。Persist personal native tree documents and authorized missing bodies before subsequent offline edits; full shared/protected tree synchronization remains incomplete.
 - **sync**：保护 Native 离线编辑、删除冲突和迟到 ACK；重试保留 mutationId，避免旧更新复活已删除笔记。Protect durable native edits, deletion conflicts and late ACKs without changing mutation identity.
 - **android**：复用 WebSocket 唤醒 Sync V2 Pull，提交后刷新界面，并通过前台周期 Pull 补偿丢失通知。Wake native Pull on notices/reconnect and refresh UI after committed Apply.

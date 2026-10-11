@@ -1,5 +1,7 @@
 # Sync V2 reliability validation / 同步可靠性验证
 
+第三批更新：个人 Native 结构接收、REST 提交通知、根文档移动恢复，以及 Android 新包证据见 [Native tree Pull validation](sync-v2-native-tree-pull-validation.md)。完整本地结构写入与冲突操作尚未接入。
+
 第二批更新：2026-10-11 的 Native 个人根级/普通文件夹 MD/富文本创建、已授权个人正文持久化，以及新包 API Bridge 强杀恢复证据见 [Native tree validation](sync-v2-native-tree-validation.md)。下文保留第一批的原始结果与当时缺口；完整 Native 树结构和浏览器 Local-first 仍未完成。
 
 日期：2026-10-11。基准 `d95d3787`；开发分支 `codex/sync-v2-reliability`。所有笔记正文均为临时测试数据。

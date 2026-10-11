@@ -2,6 +2,8 @@
 
 2026-10-11，基准 `856d42bf`，分支 `codex/native-knowledge-tree-offline`，目标 `release/v1.5.2`。本轮是同步可靠性第二批，所有测试内容均为临时模拟数据。
 
+后续第三批已接入个人树结构接收；本文件保留第二批当时的边界，最新能力与验收见 [Native tree Pull validation](sync-v2-native-tree-pull-validation.md)。
+
 ## 问题、决策与执行链路
 
 Issue #829 的 Native 调用链存在可验证缺口：登录态知识树 `POST /knowledge-tree/nodes` 成功后，编辑器改从 Native Repository 读取。原 fallback 只返回远端正文，随后保存仍可能走远端，离线重开未具备持久化正文。手机浏览器也在 Issue 的报告范围内，但本轮不宣称其 IndexedDB/REST 路径已修复。

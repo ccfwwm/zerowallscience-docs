@@ -1,5 +1,7 @@
 # Sync V2 reliability: implementation and acceptance
 
+Third-batch evidence: [Native personal tree Pull](sync-v2-native-tree-pull-validation.en.md) adds negotiated structural reception, durable subscription recovery, committed REST notifications and root-document move repair. Native structural writes and conflict UI remain pending; the rest of this document retains the original first-batch record.
+
 This branch improves the existing Sync V2 protocol; it does not replace it with another synchronization system. It is a **Draft candidate**, not completed production acceptance. Base: `release/v1.5.2` at `d95d3787`; branch: `codex/sync-v2-reliability`.
 
 The [audit](sync-v2-reliability-audit.md) traces each platform's actual storage and synchronization path. The [validation record](sync-v2-reliability-validation.md) contains the complete entity/platform matrix, failure evidence, commands and limitations.
