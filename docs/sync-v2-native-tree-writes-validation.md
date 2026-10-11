@@ -1,5 +1,7 @@
 # Native 个人文件夹写入与结构冲突恢复
 
+后续个人文件夹离线创建已接入；当前状态与新增证据见[创建验收](sync-v2-native-folder-create-validation.md)。下文保留本批移动/冲突的验收范围。
+
 2026-10-11，`codex/native-knowledge-tree-offline`，继续 Draft PR [#831](https://github.com/cropflre/nowen-note/pull/831)，目标 `release/v1.5.2`。本批基准 `24594972`；[上一批接收验收](sync-v2-native-tree-pull-validation.md)、[English](sync-v2-native-tree-writes-validation.en.md)。
 
 ## 已实现的闭环

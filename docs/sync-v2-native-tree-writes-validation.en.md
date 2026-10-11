@@ -1,5 +1,7 @@
 # Native personal folder writes and structural conflict recovery
 
+Personal offline folder creation is now implemented; see [current creation validation](sync-v2-native-folder-create-validation.en.md). The earlier move/conflict evidence below retains its original acceptance scope.
+
 2026-10-11, continuing Draft [PR #831](https://github.com/cropflre/nowen-note/pull/831) on `codex/native-knowledge-tree-offline` into `release/v1.5.2`, baseline `24594972`. [Chinese evidence](sync-v2-native-tree-writes-validation.md), [previous reception batch](sync-v2-native-tree-pull-validation.en.md).
 
 Subscribed Native clients can move, batch-move and sort ordinary owned personal folders under the root, a folder or a document. Structure, compatible notebook parent/order and Outbox commit atomically; failed queue inserts or graph validation roll back every local move. Complete cached owner ancestry without folder passwords is required. Structural rows provide no ACL proof. Unavailable authorization retains the existing online path; storage failure never starts a second remote write.
