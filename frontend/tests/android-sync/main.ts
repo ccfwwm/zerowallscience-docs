@@ -79,6 +79,8 @@ async function initializeOnce(config: Config) {
       return {folders:[root,child,document].map(({id,parentId})=>({id,parentId})),noteId:note.resourceId};
     },
     async noteStatus(id:string) {return {note:await api.getNote(id),receipt:await readNativeNoteSyncReceipt(db,profileId,id)};},
+    // Trash hides nodes from the editor authorization tree; inspect retention only in this test entry.
+    async retainedNoteStatus(id:string) {return {note:await repository.notes.get(id),receipt:await readNativeNoteSyncReceipt(db,profileId,id)};},
     async pendingMutations() {return db.query("SELECT mutationId,entityType,entityId FROM sync_outbox WHERE profileId=? ORDER BY createdAt,rowid",[profileId]);},
     async treeMove(id: string, parentId: string | null, sortOrder: number) { return knowledgeTreeApi.move(id,{parentId,sortOrder}); },
     async pendingTree() { return db.query("SELECT mutationId,status FROM sync_outbox WHERE profileId=? AND entityType='knowledge_tree_node'",[profileId]); },

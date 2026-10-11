@@ -173,8 +173,8 @@ try {
   await native("edit",created.noteId,"folder-trash-offline-body");
   await native("treeTrash",created.folders[0].id);
   assert.equal((await native("structure",created.folders[0].id)).isDeleted,1);
-  assert.equal((await native("noteStatus",created.noteId)).note.isTrashed,1);
-  assert.equal((await native("noteStatus",created.noteId)).receipt.phase,"pending");
+  assert.equal((await native("retainedNoteStatus",created.noteId)).note.isTrashed,1);
+  assert.equal((await native("retainedNoteStatus",created.noteId)).receipt.phase,"pending");
   assert.ok(!(await native("treeList")).nodes.some((node)=>node.id===created.folders[0].id));
   assert.ok((await native("trashList")).items.some((item)=>item.id===created.folders[0].id));
   const trashMutations=await native("pendingMutations");
@@ -182,7 +182,7 @@ try {
   adb("shell","am","start","-n","com.nowen.note.syncacceptance/com.nowen.note.MainActivity");await attach();
   assert.deepEqual(await native("pendingMutations"),trashMutations);
   assert.ok((await native("trashList")).items.some((item)=>item.id===created.folders[0].id));
-  assert.equal((await native("noteStatus",created.noteId)).note.contentText,"folder-trash-offline-body");
+  assert.equal((await native("retainedNoteStatus",created.noteId)).note.contentText,"folder-trash-offline-body");
   adb("reverse","tcp:47831","tcp:47831");await native("start");
   await wait(async()=>!(await native("pendingMutations")).length && (await serverNote(created.noteId))?.isTrashed===1,
     "offline folder trash did not automatically commit with the pending body");
@@ -216,7 +216,7 @@ try {
     offlineNetworkIsolation: "adb reverse removed; HTTP server unreachable from Android",
     markdownAndRichText: true, missingNoticePoll: true, reconnect: true,
     httpPushToNativePull: stats(download), nativeCommitToServerAndAck: stats(upload), errors: await native("errors"),
-    boundary: "Loopback adb reverse; actual Android Native SQLite, production API Bridge personal folder creation/nesting/document parents and note creation inside the new folder, tree move/sort, personal folder subtree trash/restore through the unified trash API with pending child body preservation, lifecycle receipt invalidation, Outbox restart recovery, automatic Push and concurrent move keep-local via the Native conflict service. Full ConflictCenter GUI, EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
+    boundary: "Loopback adb reverse; actual Android Native SQLite, production API Bridge personal folder creation/nesting/document parents and note creation inside the new folder, tree move/sort, personal folder subtree trash/restore through the unified trash API with pending child body preservation, lifecycle receipt invalidation (retained trashed bodies are inspected via Native Repository; production API reads resume after restore), Outbox restart recovery, automatic Push and concurrent move keep-local via the Native conflict service. Full ConflictCenter GUI, EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
   fs.mkdirSync(new URL("../docs/test-results/", import.meta.url), { recursive: true });
   fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-folder-trash-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
