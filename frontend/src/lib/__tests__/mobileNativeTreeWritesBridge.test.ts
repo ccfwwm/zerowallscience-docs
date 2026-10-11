@@ -19,13 +19,44 @@ function setup() {
   const remoteList = vi.spyOn(knowledgeTreeApi,"listForWorkspace").mockResolvedValue({nodes:[a,b]});
   const moves = vi.fn(async () => [{...a,parentId:b.id,sortOrder:7}]);
   const overrides = vi.fn(async () => [] as Array<Record<string,unknown>>);
-  const repository = {movePersonalTreeNodes:moves,listPersonalTreeOverrides:overrides,listLocalTreeDrafts:async()=>[]} as unknown as NativeLocalRepository;
+  const folderDrafts=vi.fn(async()=>[] as KnowledgeTreeNode[]), createFolder=vi.fn(async()=>a);
+  const remoteCreate=vi.spyOn(knowledgeTreeApi,"createForWorkspace").mockResolvedValue(a);
+  const repository = {movePersonalTreeNodes:moves,listPersonalTreeOverrides:overrides,listPersonalTreeFolderDrafts:folderDrafts,createPersonalTreeFolder:createFolder,listLocalTreeDrafts:async()=>[]} as unknown as NativeLocalRepository;
   const metadata = new Map<string,string>();
-  const db = {run:async(_sql:string,values:unknown[])=>{metadata.set(String(values[0]),String(values[1]));return {changes:1};},
-    query:async(_sql:string,values:unknown[])=>metadata.has(String(values[0]))?[{value:metadata.get(String(values[0]))}]:[]} as unknown as NativeDatabase;
+  let pending=true;
+  const db = {run:async(sql:string,values:unknown[])=>{if(sql.startsWith("DELETE"))metadata.delete(String(values[0]));else metadata.set(String(values[0]),String(values[1]));return {changes:1};},
+    query:async(sql:string,values:unknown[])=>sql.includes("sync_outbox")?(pending?[{id:"queued"}]:[]):metadata.has(String(values[0]))?[{value:metadata.get(String(values[0]))}]:[]} as unknown as NativeDatabase;
   restore = installMobileLocalKnowledgeTreeBridge(repository,{deviceOnly:false},db);
-  return {a,b,moves,overrides,remoteMove,remoteReorder,remoteList};
+  return {a,b,moves,overrides,remoteMove,remoteReorder,remoteList,folderDrafts,createFolder,remoteCreate,metadata,ack:()=>{pending=false;}};
 }
+it("creates personal folders through the transaction and preserves online fallback for unavailable proofs only",async()=>{
+  const f=setup();
+  await knowledgeTreeApi.createForWorkspace("personal",{parentId:f.b.id,nodeType:"folder",title:" Offline "});
+  expect(f.createFolder).toHaveBeenCalledWith(expect.any(String),"Offline",f.b.id); expect(f.remoteCreate).not.toHaveBeenCalled();
+  f.createFolder.mockRejectedValueOnce(Object.assign(new Error("Unbound"),{code:"NATIVE_TREE_WRITE_UNAVAILABLE"}));
+  await knowledgeTreeApi.createForWorkspace("personal",{parentId:null,nodeType:"folder",title:"Online"});
+  expect(f.remoteCreate).toHaveBeenCalledOnce();
+  f.createFolder.mockRejectedValueOnce(new Error("Outbox failed"));
+  await expect(knowledgeTreeApi.createForWorkspace("personal",{parentId:null,nodeType:"folder",title:"Failure"})).rejects.toThrow("Outbox failed");
+  expect(f.remoteCreate).toHaveBeenCalledOnce();
+  await knowledgeTreeApi.createForWorkspace("workspace-a",{parentId:null,nodeType:"folder",title:"Workspace"});
+  expect(f.createFolder).toHaveBeenCalledTimes(3); expect(f.remoteCreate).toHaveBeenCalledTimes(2);
+});
+it("restores reverse-ordered provisional nested folders over an offline cached tree and respects new password flags",async()=>{
+  const f=setup(); await knowledgeTreeApi.listForWorkspace("personal");
+  f.folderDrafts.mockResolvedValue([node("notebook:child","notebook:root"),node("notebook:root",f.b.id)]);
+  f.remoteList.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  const tree=await knowledgeTreeApi.listForWorkspace("personal");
+  expect(tree.nodes.find((n)=>n.id==="notebook:child")?.parentId).toBe("notebook:root");
+  expect(tree.nodes.find((n)=>n.id==="notebook:root")?.childCount).toBe(1);
+  expect(tree.nodes.find((n)=>n.id===f.b.id)?.childCount).toBe(1);
+  f.remoteList.mockResolvedValue({nodes:[f.a,{...f.b,isPasswordProtected:1}]});
+  expect((await knowledgeTreeApi.listForWorkspace("personal")).nodes).toHaveLength(2);
+});
+it("does not grant provisional owner access to an ACKed folder omitted by a live tree",async()=>{
+  const f=setup(); f.folderDrafts.mockResolvedValue([node("notebook:new")]); f.ack();
+  expect((await knowledgeTreeApi.listForWorkspace("personal")).nodes).toHaveLength(2);
+});
 it("routes personal folder move, batch move and reorder through the durable transaction without HTTP", async () => {
   const f=setup();
   expect(await knowledgeTreeApi.move(f.a.id,{parentId:f.b.id,sortOrder:7})).toMatchObject({parentId:f.b.id,sortOrder:7});

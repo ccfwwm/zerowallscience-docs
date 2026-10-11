@@ -317,6 +317,15 @@
         { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "rolls back a failed schema 5 tree migration" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "lost initial tree ACK retains subscription intent" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "REST tree movement emits a committed metadata-only Sync V2 notice" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline folder creation atomically persists nested resources" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline folder creation rolls back the business row" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "lost creation ACK replays immutable mutations" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder creation fails closed for unbound" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a lost structural creation ACK retains the local folder" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "creation dependencies remain ordered" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "creates personal folders through the transaction" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "restores reverse-ordered provisional nested folders" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "does not grant provisional owner access to an ACKed folder" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "preserves subscription intent after a lost initial ACK" },
         { "file": "backend/tests/knowledge-tree-root-documents.test.ts", "case": "moving folders and documents into root documents retains hidden containers" }
       ]

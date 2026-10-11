@@ -67,6 +67,16 @@ async function initializeOnce(config: Config) {
     },
     async schema() { return db.query("PRAGMA user_version"); },
     async treeList() { return knowledgeTreeApi.listForWorkspace("personal"); },
+    async createOfflineFolders() {
+      const root=await knowledgeTreeApi.create({parentId:null,nodeType:"folder",title:"Offline folder"});
+      const child=await knowledgeTreeApi.create({parentId:root.id,nodeType:"folder",title:"Offline child"});
+      const document=await knowledgeTreeApi.create({parentId:`note:${(await ids())[0]}`,nodeType:"folder",title:"Offline document child"});
+      const note=await knowledgeTreeApi.create({parentId:child.id,nodeType:"markdown",title:"Offline nested note"});
+      await api.updateNote(note.resourceId,{content:"folder-offline-body",contentText:"folder-offline-body"});
+      return {folders:[root,child,document].map(({id,parentId})=>({id,parentId})),noteId:note.resourceId};
+    },
+    async noteStatus(id:string) {return {note:await api.getNote(id),receipt:await readNativeNoteSyncReceipt(db,profileId,id)};},
+    async pendingMutations() {return db.query("SELECT mutationId,entityType,entityId FROM sync_outbox WHERE profileId=? ORDER BY createdAt,rowid",[profileId]);},
     async treeMove(id: string, parentId: string | null, sortOrder: number) { return knowledgeTreeApi.move(id,{parentId,sortOrder}); },
     async pendingTree() { return db.query("SELECT mutationId,status FROM sync_outbox WHERE profileId=? AND entityType='knowledge_tree_node'",[profileId]); },
     async treeConflicts() {

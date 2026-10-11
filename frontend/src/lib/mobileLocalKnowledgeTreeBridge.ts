@@ -203,21 +203,34 @@ export function installMobileLocalKnowledgeTreeBridge(
   if (!deviceOnly) {
     const withLocalDrafts = async (result: KnowledgeTreeResponse, scope: string, online: boolean): Promise<KnowledgeTreeResponse> => {
       if (!db || scope !== "personal") return result;
+      const folderDrafts = await repository.listPersonalTreeFolderDrafts();
+      const provisional: KnowledgeTreeNode[] = [];
+      for (const draft of folderDrafts) {
+        const present = result.nodes.some((node) => node.id === draft.id);
+        const pending = online && !present ? (await db.query("SELECT id FROM sync_outbox WHERE scopeKey='personal' AND entityType='notebook' AND entityId=? LIMIT 1",[draft.resourceId])).length : true;
+        if (present || !pending) {
+          if (online) await db.run("DELETE FROM native_runtime_meta WHERE key=?",[`localTreeFolder:personal:${draft.resourceId}`]);
+          continue;
+        }
+        provisional.push(draft);
+      }
+      const safeChain = (node: KnowledgeTreeNode, nodes: KnowledgeTreeNode[]) => {
+        const byId = new Map(nodes.map((item) => [item.id,item]));
+        const visited = new Set<string>();
+        let current: KnowledgeTreeNode | undefined = node;
+        while (current) {
+          if (visited.has(current.id) || current.isDeleted || current.access?.source !== "owner"
+            || !current.access.capabilities.canView || (current.resourceType === "notebook" && current.isPasswordProtected !== 0)) return false;
+          visited.add(current.id);
+          if (!current.parentId) return true;
+          current = byId.get(current.parentId);
+        }
+        return false;
+      };
+      const combined = [...result.nodes,...provisional];
+      result = {...result,nodes:[...result.nodes,...provisional.filter((node) => safeChain(node,combined))]};
       const overrides = await repository.listPersonalTreeOverrides();
       if (overrides.length) {
-        const safeChain = (node: KnowledgeTreeNode, nodes: KnowledgeTreeNode[]) => {
-          const byId = new Map(nodes.map((item) => [item.id,item]));
-          const visited = new Set<string>();
-          let current: KnowledgeTreeNode | undefined = node;
-          while (current) {
-            if (visited.has(current.id) || current.isDeleted || current.access?.source !== "owner"
-              || !current.access.capabilities.canView || (current.resourceType === "notebook" && current.isPasswordProtected !== 0)) return false;
-            visited.add(current.id);
-            if (!current.parentId) return true;
-            current = byId.get(current.parentId);
-          }
-          return false;
-        };
         const nodes = result.nodes.map((node) => {
           const override = overrides.find((row) => row.id === node.id);
           return override ? { ...node,parentId:override.parentId as string | null,sortOrder:override.sortOrder as number } : node;
@@ -227,7 +240,7 @@ export function installMobileLocalKnowledgeTreeBridge(
       }
       const drafts = await repository.listLocalTreeDrafts();
       if (!drafts.length) {
-        if (!overrides.length) return result;
+        if (!overrides.length && !provisional.length) return result;
         const counts = new Map<string,number>();
         for (const node of result.nodes) if (node.parentId) counts.set(node.parentId,(counts.get(node.parentId)||0)+1);
         return {...result,nodes:applyKnowledgeTreeSort(result.nodes.map((node) => ({...node,childCount:counts.get(node.id)||0})))};
@@ -324,9 +337,17 @@ export function installMobileLocalKnowledgeTreeBridge(
       () => originals.listForWorkspace(workspaceId, includeDeleted),
     );
     const createPersonal = async (workspaceId: string, input: Parameters<typeof originals.create>[0]) => {
-      if (workspaceId !== "personal" || !db || (input.nodeType !== "note" && input.nodeType !== "markdown")) {
+      if (workspaceId !== "personal" || !db) {
         return originals.createForWorkspace(workspaceId, input);
       }
+      if (input.nodeType === "folder") {
+        try { return await repository.createPersonalTreeFolder(newLocalId(),input.title.trim() || "新建文件夹",input.parentId); }
+        catch (error) {
+          if ((error as {code?:string})?.code === "NATIVE_TREE_WRITE_UNAVAILABLE") return originals.createForWorkspace(workspaceId,input);
+          throw error;
+        }
+      }
+      if (input.nodeType !== "note" && input.nodeType !== "markdown") return originals.createForWorkspace(workspaceId,input);
       let notebookId: string | null = null;
       if (input.parentId) {
         const { nodes } = await target.listForWorkspace("personal");

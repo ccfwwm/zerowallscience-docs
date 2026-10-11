@@ -7,6 +7,7 @@ import type { SyncEntityType, SyncOperation } from "./types";
 import { normalizeNoteThemeId } from "../lib/noteThemeId";
 import { normalizeNoteColorMark } from "../lib/noteColorMark";
 import { applyKnowledgeTreeStructureMutation } from "./knowledgeTreeStructure.js";
+import { isRootDocumentNotebookId } from "../services/knowledgeTreeRootDocuments.js";
 
 /**
  * Sync V2 服务端 mutation 应用层。
@@ -113,6 +114,17 @@ function applyNotebook(db: Database.Database, input: ApplyMutationInput): number
   }
 
   const p = input.payload || {};
+  // Existing folders under root documents retain a hidden compatibility
+  // container. UPSERT would rerun the creation guard against that deleted
+  // container even for a rename; update state without reassigning its parent.
+  if (isRootDocumentNotebookId(str(p.parentId)) && db.prepare(`SELECT 1 FROM notebooks
+    WHERE id=? AND parentId=? AND workspaceId IS ? AND (? IS NOT NULL OR userId=?)`)
+    .get(input.entityId,p.parentId,workspaceIdOf(input),workspaceIdOf(input),input.userId)) {
+    db.prepare(`UPDATE notebooks SET name=?,description=?,icon=?,color=?,sortOrder=?,isExpanded=?,
+      isDeleted=?,deletedAt=?,updatedAt=datetime('now') WHERE id=?`).run(str(p.name,"未命名笔记本"),p.description??null,
+      str(p.icon,"📒"),p.color??null,num(p.sortOrder),bit(p.isExpanded??1),bit(p.isDeleted),p.deletedAt??null,input.entityId);
+    return null;
+  }
   db.prepare(`
     INSERT INTO notebooks (
       id, userId, parentId, name, description, icon, color,

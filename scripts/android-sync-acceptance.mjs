@@ -135,7 +135,44 @@ try {
   await native("resolveTreeConflict",conflict.id);
   await wait(async () => (await serverTree()).parentId===`note:${ids[0]}` && (await native("pendingTree")).length===0,"keep-local structure did not converge");
   assert.equal((await native("treeConflicts")).length,0);
+  await native("treeList"); await native("stop");
+  adb("reverse","--remove","tcp:47831");
+  const created=await native("createOfflineFolders");
+  const creationMutations=await native("pendingMutations");
+  assert.equal(creationMutations.filter((row)=>row.entityType==="knowledge_tree_node").length,3);
+  const createdOfflineTree=await native("treeList");
+  for(const item of created.folders) assert.equal(createdOfflineTree.nodes.find((node)=>node.id===item.id)?.parentId,item.parentId);
+  assert.equal((await native("noteStatus",created.noteId)).note.contentText,"folder-offline-body");
+  await browser.close();
+  adb("shell","am","force-stop","com.nowen.note.syncacceptance");
+  adb("shell","am","start","-n","com.nowen.note.syncacceptance/com.nowen.note.MainActivity");
+  await attach();
+  assert.deepEqual(await native("pendingMutations"),creationMutations);
+  const restoredFolderTree=await native("treeList");
+  for(const item of created.folders) {
+    assert.equal((await native("structure",item.id)).parentId,item.parentId);
+    assert.equal(restoredFolderTree.nodes.find((node)=>node.id===item.id)?.parentId,item.parentId);
+  }
+  assert.equal((await native("noteStatus",created.noteId)).note.contentText,"folder-offline-body");
+  adb("reverse","tcp:47831","tcp:47831");
+  const folderPushStarted=performance.now(); await native("start");
+  await wait(async()=>{
+    if((await native("pendingMutations")).length) return false;
+    for(const item of created.folders) {
+      const row=await (await fetch(`${base}/acceptance/tree/${encodeURIComponent(item.id)}`)).json();
+      if(!row || row.parentId!==item.parentId) return false;
+    }
+    return (await serverNote(created.noteId))?.contentText==="folder-offline-body"
+      && (await native("noteStatus",created.noteId)).receipt.phase==="confirmed";
+  },"offline folder resources, nesting and note did not automatically converge");
+  const nativeFolderCreationMs=Math.round(performance.now()-folderPushStarted);
+  assert.equal((await native("treeConflicts")).length,0);
+  const acknowledgedFolderTree=await native("treeList");
+  for(const item of created.folders) assert.equal(acknowledgedFolderTree.nodes.filter((node)=>node.id===item.id).length,1);
   const report = { device: serial, package: "com.nowen.note.syncacceptance", offlineImmediateRead: true, forceStopRecovery: true,
+    sourceCommit:execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),
+    nativeOfflineFolderCreate:true,nestedOfflineFolderCreate:true,offlineFolderUnderDocument:true,noteInsideOfflineFolder:true,
+    folderCreationMutationIdentitySurvivesRestart:true,folderCreationOfflineListRecovery:true,automaticFolderCreationPush:true,nativeFolderCreationMs,
     knowledgeTreeRootCreate: true, readWriteThroughProductionApiBridge: true,
     negotiatedPersonalTreePull:true,remoteFolderUnderDocument:true,remoteTreeMove:true,structureForceStopRecovery:true,nativeSchemaVersion:7,
     nativeOfflineTreeMoveAndSort:true,pendingTreeForceStopRecovery:true,automaticStructurePush:true,nativeConcurrentMoveKeepLocal:true,
@@ -143,9 +180,9 @@ try {
     offlineNetworkIsolation: "adb reverse removed; HTTP server unreachable from Android",
     markdownAndRichText: true, missingNoticePoll: true, reconnect: true,
     httpPushToNativePull: stats(download), nativeCommitToServerAndAck: stats(upload), errors: await native("errors"),
-    boundary: "Loopback adb reverse; actual Android Native SQLite, production API Bridge personal tree move/sort, Outbox restart recovery, automatic Push and concurrent move keep-local via the Native conflict service. Full ConflictCenter GUI, EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
+    boundary: "Loopback adb reverse; actual Android Native SQLite, production API Bridge personal folder creation/nesting/document parents and note creation inside the new folder, tree move/sort, Outbox restart recovery, automatic Push and concurrent move keep-local via the Native conflict service. Full ConflictCenter GUI, EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
   fs.mkdirSync(new URL("../docs/test-results/", import.meta.url), { recursive: true });
-  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-tree-writes-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
+  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-folder-create-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally {
   if (page) await native("stop").catch(() => undefined);

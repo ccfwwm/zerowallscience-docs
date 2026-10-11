@@ -23,6 +23,7 @@ function setup(parent?: KnowledgeTreeNode) {
   } as unknown as NativeDatabase;
   const repository = {
     listPersonalTreeOverrides: vi.fn(async () => []),
+    listPersonalTreeFolderDrafts: vi.fn(async () => []),
     listLocalTreeDrafts: vi.fn(async () => drafts),
     createPersonalTreeNote: vi.fn(async (input: Note, notebookId: string | null) => {
       drafts.push({ ...input, userId: "user", workspaceId: null, notebookId: notebookId || "hidden-root",

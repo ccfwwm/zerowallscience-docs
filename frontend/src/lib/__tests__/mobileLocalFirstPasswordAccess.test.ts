@@ -39,6 +39,7 @@ function setup(deviceOnly = false) {
   const repository = {
     listLocalTreeDrafts: vi.fn(async () => []),
     listPersonalTreeOverrides: vi.fn(async () => []),
+    listPersonalTreeFolderDrafts: vi.fn(async () => []),
     listNotebooksForWorkspace: vi.fn(async () => []),
     hydrateAuthorizedNote: vi.fn(async (incoming: Note) => incoming),
     notes: { get: vi.fn(async (id: string) => notes.find((item) => item.id === id)) },

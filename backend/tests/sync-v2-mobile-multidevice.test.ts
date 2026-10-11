@@ -112,6 +112,110 @@ async function movableTree(name: string) {
   return { c, node: `notebook:${ids[0]}`, left: `notebook:${ids[1]}`, right: `notebook:${ids[2]}`, document: `note:${document}` };
 }
 
+test("offline folder creation atomically persists nested resources and document parents across reopen and a second device", async () => {
+  const {c,document}=await movableTree("folder-create"), root=randomUUID(), child=randomUUID(), underDocument=randomUUID(), note=randomUUID();
+  await c.repository.createPersonalTreeFolder(root,"Offline root",null);
+  await c.repository.createPersonalTreeFolder(child,"Offline child",`notebook:${root}`);
+  await c.repository.createPersonalTreeFolder(underDocument,"Under document",document);
+  await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Nested offline body"},child);
+  const intents=await pending(c); assert.equal(intents.length,7);
+  assert.equal(JSON.parse(intents[5].payload).baseParentId,null);
+  assert.equal(JSON.parse(intents[5].payload).parentId,document);
+  assert.equal((await c.repository.listPersonalTreeFolderDrafts()).length,3);
+  await c.db.close(); const reopened=await client("folder-create");
+  assert.deepEqual((await pending(reopened)).map((row)=>row.mutationId),intents.map((row)=>row.mutationId));
+  assert.equal((await reopened.repository.notes.get(note))?.content,"Nested offline body");
+  await reopened.sync();
+  const peer=await client("folder-create-peer"); await peer.sync();
+  assert.equal((await pending(reopened)).length,0); assert.equal((await conflicts(reopened)).length,0);
+  for (const device of [reopened,peer]) {
+    const graph=await device.db.query<{id:string;parentId:string|null}>("SELECT id,parentId FROM native_knowledge_tree_nodes WHERE id IN (?,?,?)",[`notebook:${root}`,`notebook:${child}`,`notebook:${underDocument}`]);
+    assert.equal(graph.find((row)=>row.id===`notebook:${root}`)?.parentId,null);
+    assert.equal(graph.find((row)=>row.id===`notebook:${child}`)?.parentId,`notebook:${root}`);
+    assert.equal(graph.find((row)=>row.id===`notebook:${underDocument}`)?.parentId,document);
+    assert.equal((await device.repository.notes.get(note))?.content,"Nested offline body");
+  }
+  await reopened.repository.notebooks.update(underDocument,{name:"Renamed"}); await reopened.sync();
+  assert.equal((await pending(reopened)).length,0);
+  assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${underDocument}`).parentId,document);
+});
+
+test("lost creation ACK replays immutable mutations before later offline nested creation and moves", async () => {
+  const {c,document}=await movableTree("folder-create-lost-ack"), id=randomUUID(), child=randomUUID();
+  await c.repository.createPersonalTreeFolder(id,"Before ACK",document);
+  const original=(await pending(c)).map((row)=>row.mutationId);
+  afterPush=async()=>{
+    await c.repository.createPersonalTreeFolder(child,"During ACK",`notebook:${id}`);
+    await c.repository.movePersonalTreeNodes([{id:`notebook:${id}`,parentId:null,sortOrder:41}]);
+    return Response.json({code:"SERVER_ERROR"},{status:503});
+  };
+  try {await c.sync();} finally {afterPush=undefined;}
+  assert.deepEqual((await pending(c)).slice(0,2).map((row)=>row.mutationId),original);
+  await c.db.close(); const reopened=await client("folder-create-lost-ack");
+  await reopened.db.run("UPDATE sync_state SET lastSequence=0 WHERE profileId=?",[reopened.profileId]);
+  await reopened.sync(); assert.equal((await pending(reopened)).length,0); assert.equal((await conflicts(reopened)).length,0);
+  assert.deepEqual(serverDb.prepare("SELECT parentId,sortOrder FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${id}`),{parentId:null,sortOrder:41});
+  assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${child}`).parentId,`notebook:${id}`);
+});
+
+test("folder creation fails closed for unbound, missing, foreign and newly protected ancestor proofs", async () => {
+  const {c,node,left}=await movableTree("folder-create-guards");
+  const cached=(await c.db.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key='knowledgeTreeSnapshot:v1:personal:0'"))[0];
+  const nodes=JSON.parse(cached.value) as Array<{id:string;userId:string;isPasswordProtected:number}>;
+  await assert.rejects(c.repository.createPersonalTreeFolder(randomUUID(),"Missing","notebook:missing"),/权限|密码/);
+  nodes.find((n)=>n.id===left)!.userId="other-user";
+  await c.db.run("UPDATE native_runtime_meta SET value=? WHERE key='knowledgeTreeSnapshot:v1:personal:0'",[JSON.stringify(nodes)]);
+  await assert.rejects(c.repository.createPersonalTreeFolder(randomUUID(),"Foreign",left),/权限|密码/);
+  await cachePersonalTree(c);
+  await c.repository.movePersonalTreeNodes([{id:node,parentId:left}]);
+  await c.repository.movePersonalTreeNodes([{id:node,parentId:null}]);
+  const changed=JSON.parse(cached.value) as Array<{id:string;parentId:string|null;isPasswordProtected:number}>;
+  changed.find((n)=>n.id===node)!.parentId=left; changed.find((n)=>n.id===left)!.isPasswordProtected=1;
+  await c.db.run("UPDATE native_runtime_meta SET value=? WHERE key='knowledgeTreeSnapshot:v1:personal:0'",[JSON.stringify(changed)]);
+  await assert.rejects(c.repository.createPersonalTreeFolder(randomUUID(),"Protected source",node),/权限|密码/);
+  await c.db.run("DELETE FROM native_runtime_meta WHERE key=?",[`nativeTreeSubscription:${c.profileId}:personal`]);
+  await assert.rejects(c.repository.createPersonalTreeFolder(randomUUID(),"Unbound",null),/订阅/);
+  assert.equal((await c.repository.listPersonalTreeFolderDrafts()).length,0); assert.equal((await pending(c)).length,2);
+});
+
+test("a lost structural creation ACK retains the local folder for further nested writes and snapshot recovery", async () => {
+  const {c,document}=await movableTree("folder-create-partial-ack"), id=randomUUID(), child=randomUUID();
+  await c.repository.createPersonalTreeFolder(id,"Partial ACK",document);
+  const treeId=(await c.db.query<{mutationId:string}>("SELECT mutationId FROM sync_outbox WHERE entityType='knowledge_tree_node'"))[0].mutationId;
+  await c.db.run("UPDATE sync_state SET lastSequence=0 WHERE profileId=?",[c.profileId]);
+  afterPush=async (response)=>{
+    const body=await response.json() as {results:Array<{mutationId:string}>};
+    return Response.json({...body,results:body.results.map((row)=>row.mutationId===treeId?{...row,status:"failed",code:"NETWORK_UNAVAILABLE"}:row)});
+  };
+  try {await c.sync();} finally {afterPush=undefined;}
+  assert.deepEqual((await pending(c)).map((row)=>row.mutationId),[treeId]);
+  await c.repository.createPersonalTreeFolder(child,"Still offline",`notebook:${id}`);
+  await c.db.close(); const reopened=await client("folder-create-partial-ack"); await reopened.sync();
+  assert.equal((await pending(reopened)).length,0); assert.equal((await conflicts(reopened)).length,0);
+  assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${child}`).parentId,`notebook:${id}`);
+});
+
+test("creation dependencies remain ordered when folder mutations span the 100-row Push boundary", async () => {
+  const {c}=await movableTree("folder-create-page"), ids:string[]=[];
+  for(let i=0;i<51;i++) {
+    const id=randomUUID(); await c.repository.createPersonalTreeFolder(id,"Paged folder",ids.length?`notebook:${ids.at(-1)}`:null); ids.push(id);
+  }
+  assert.equal((await pending(c)).length,102);
+  await c.sync(); await c.sync();
+  assert.equal((await pending(c)).length,0); assert.equal((await conflicts(c)).length,0);
+  assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${ids.at(-1)}`).parentId,`notebook:${ids.at(-2)}`);
+});
+
+test("offline folder creation rolls back the business row, structure, origin and both queues on a structural enqueue failure", async () => {
+  const {c}=await movableTree("folder-create-rollback"), id=randomUUID();
+  await c.db.run("CREATE TRIGGER reject_folder_create BEFORE INSERT ON sync_outbox WHEN NEW.entityType='knowledge_tree_node' BEGIN SELECT RAISE(ABORT,'Folder Outbox failure'); END");
+  await assert.rejects(c.repository.createPersonalTreeFolder(id,"Unsaved",null),/Folder Outbox failure/);
+  assert.equal(await c.repository.notebooks.get(id),null);
+  assert.equal((await c.db.query("SELECT id FROM native_knowledge_tree_nodes WHERE id=?",[`notebook:${id}`])).length,0);
+  assert.equal((await c.repository.listPersonalTreeFolderDrafts()).length,0);
+  assert.equal((await pending(c)).length,0);
+});
+
 test("native personal moves and sorting are atomic, survive reopen and push only structural fields", async () => {
   const { c, node, left, document } = await movableTree("active-offline");
   await c.repository.movePersonalTreeNodes([{ id: node, parentId: document, sortOrder: 23 }, { id: left, sortOrder: 24 }]);
