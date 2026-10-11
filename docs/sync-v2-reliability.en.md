@@ -25,6 +25,8 @@ In an adb loopback environment, 30 samples per direction measured P50/P95/P99 of
 
 ## Remaining acceptance blockers
 
+Second-batch evidence: [Native personal tree validation](sync-v2-native-tree-validation.md) adds atomic personal root/ordinary-folder Markdown and rich-text creation, durable hydration of authorized personal bodies, and actual Android API-bridge force-stop/recovery acceptance. The following paragraph records the first batch's original gaps; full native tree structure and mobile-browser Local-first remain incomplete.
+
 Web/mobile browsers remain REST plus IndexedDB cache/offline queue, without unified transactional Local-first storage. Signed-in Android knowledge tree operations remain server-first; Native knowledge-tree V2 is missing. Issue #829's existing authorized remote fallback is not proof that tree-created notes are durably readable offline. Full EditorPane, tree creation, conflict UX, attachment bytes and revocation need device acceptance. Parent deletion with protected descendants, no-base stale IDs/tombstones, long-running WAN latency and crash reproduction need further tests. Docker full-sync/NAS and macOS/Linux/iOS/HarmonyOS package acceptance have not run.
 
 Commits: audit `bd26fabe`, durability fixes `421d37eb`, native realtime/recovery `4588de41`. No main modification, force-push, merge or release was performed. The [Android harness](../scripts/android-sync-acceptance.mjs), test-only Vite configuration and loopback backend helper are excluded from normal production builds.

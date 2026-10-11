@@ -18,6 +18,7 @@ async function main() {
   const { attachRealtimeServer, broadcastToUser } = await import("../src/services/realtime");
   const { setSyncBroadcaster } = await import("../src/sync/notify");
   const { default: routes } = await import("../src/routes/sync-v2");
+  const { default: treeRoutes } = await import("../src/routes/knowledge-tree");
   const userId = "isolated-android-sync-user", db = getDb();
   db.prepare("INSERT OR IGNORE INTO users (id,username,passwordHash,createdAt,updatedAt) VALUES (?,?,'test-only','now','now')").run(userId, userId);
   const fixtureToken = () => signLoginToken({ userId, username: userId, tokenVersion: 0 });
@@ -31,6 +32,8 @@ async function main() {
     await next();
   });
   app.route("/api/sync/v2", routes);
+  // Match index.ts's trailing-slash mount for the list entry point.
+  app.route("/api/knowledge-tree/", treeRoutes);
   app.get("/acceptance/note/:id", (c) => c.json(db.prepare("SELECT * FROM notes WHERE id=? AND userId=?").get(c.req.param("id"), userId) || null));
   app.post("/acceptance/edit/:id", async (c) => {
     const note = db.prepare("SELECT * FROM notes WHERE id=? AND userId=?").get(c.req.param("id"), userId) as Record<string, unknown> | undefined;

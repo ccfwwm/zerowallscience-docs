@@ -26,6 +26,25 @@ Issue #829 的 Native 调用链存在可验证缺口：登录态知识树 `POST 
 
 Windows 后端依赖是 Electron ABI，使用 `ELECTRON_RUN_AS_NODE=1` 的项目 Electron + tsx + `setup-db-isolation.ts`。初始 HTTP 用例在网络沙箱内失败，隔离回环测试经授权运行后通过；不是源码失败。Windows 契约 `--frontend` 入口存在既有 `spawnSync npx.cmd EINVAL`，已直接用 Node 24 执行其完整映射文件，未修改无关启动脚本。Vitest 的沙箱 realpath 限制同样通过批准的测试执行解决。
 
+## Android 新包证据
+
+生产源码提交 `f6915749`。只读启动 `Pixel_8_API_35`，`emulator-5580`，API 35 / WebView 124.0.6367.219；独立包名 `com.nowen.note.syncacceptance`，JDK 21 的 `assembleDebug` 通过。APK SHA256 `0953a8e9eb2c3c40da3a4b5b2f26454f15162ed89c507340b40707e1dc6cbf72`。
+
+这次测试页安装真实 `installMobileLocalFirstBridge`，通过 `knowledgeTreeApi.create` 创建两个根文档，通过 `api.getNote/updateNote` 读取和编辑。移除 adb reverse 确认 HTTP 服务器不可达 → 创建 MD/富文本并立即打开 → `am force-stop` → 离线重开同 ID、正文及待同步收据 → 恢复网络自动上传并记录 ACK：**通过**。实际 WS/Pull、双向更新、30 秒漏通知补偿、重连：**通过**。测试模拟器 native crash buffer 为 0 行；不等于已复现/修复原先报告的任意原生闪退。
+
+各方向 30 次，计时包括 API 目录授权和轮询观察开销：
+
+| 回环链路 | P50 | P95 | P99（30 样本取最大值） |
+| --- | ---: | ---: | ---: |
+| HTTP Push → Native Pull 后通过笔记 API 读到正文 | 291ms | 304ms | 371ms |
+| Native API 编辑 → 服务端正文及本机 ACK 落盘 | 447ms | 484ms | 529ms |
+
+机器记录：[本轮 Android report](test-results/sync-v2-native-tree-2026-10-11.json)。没有完整 EditorPane GUI、密码/共享/跨文档树结构、附件 bytes、生产 JWT 全套中间件或公网网络验收；仍不是手机浏览器证据。连接的 PJZ110 未参与本轮安装与测试。
+
+失败及保留日志：第一次恢复网络时 helper 的树入口少了正式 `index.ts` 使用的尾斜杠挂载，404；修正后第二次因测试页自动恢复旧令牌、driver 又写入新令牌，触发正确的 `AUTH_SESSION_CHANGED` 保护。去掉测试页自动会话恢复，由 driver 每次明确初始化后通过。原测试库、正文及队列保留，无清库、无放松生产会话或 ACK 检查。忽略的 `sync-tree-device-failed404.log`、`sync-tree-device-failed-session.log` 保留失败记录。测试后已关闭 helper/只读模拟器并恢复生成的 Gradle 文件。
+
+重跑命令与上一轮一致：Vite `--config vite.android-sync.config.ts` → Capacitor sync → `gradlew -I <scripts/android-sync-acceptance.init.gradle> :app:assembleDebug` → 隔离设备安装 → `node scripts/android-sync-acceptance.mjs emulator-5580`。正常前端构建不包含测试入口；helper 只监听 127.0.0.1。
+
 ## 数据安全与兼容性
 
 - 业务、创建来源、Outbox 同事务成功才返回；任一插入失败全部回滚。既有保存检查保持开启。
@@ -38,7 +57,7 @@ Windows 后端依赖是 Electron ABI，使用 `ELECTRON_RUN_AS_NODE=1` 的项目
 
 | 能力 | 本轮范围 | 剩余限制 |
 | --- | --- | --- |
-| Native 个人根级 Markdown/富文本离线创建 | 已实现、独立 SQLite 回归通过 | Android 新包证据见后续记录；完整 EditorPane 视觉/编辑生命周期单独验收 |
+| Native 个人根级 Markdown/富文本离线创建 | 已实现、独立 SQLite 与 Android 新包 API Bridge 验收通过 | 完整 EditorPane 视觉/编辑生命周期单独验收 |
 | Native 普通个人文件夹内离线创建 | 已实现、Bridge 回归通过 | 父文件夹须已同步，真实服务端树/密码元数据已缓存 |
 | #829 个人已授权正文持久化 | 已实现、回归通过 | 手机浏览器、共享/工作区正文与完整结构同步未完成；不关闭 Issue |
 | Native 文件夹创建、任意节点移动/排序/删除冲突 | 既有远端路径 | 完整 Native `knowledge_tree_node` 能力继续下一批 |
@@ -46,3 +65,5 @@ Windows 后端依赖是 Electron ABI，使用 `ELECTRON_RUN_AS_NODE=1` 的项目
 | Web、iOS、HarmonyOS、Docker/NAS、公网延迟 | 本轮无新增验收 | 沿用上一轮未完成清单，不能套用 Native/回环结论 |
 
 English: Personal native Markdown/rich-text root and ordinary-folder creation now commits content, provenance and the existing Sync V2 Outbox atomically. A live-authorized personal body missing locally is hydrated without a duplicate creation, with local edits/deletes and session/password guards preserved. This is a bounded legacy-entity bridge, not complete native tree-structure synchronization or mobile-browser acceptance.
+
+Android API 35 emulator acceptance now exercises the actual personal knowledge-tree create and note API bridges, including unreachable-network creation, force-stop/reopen and automatic ACK recovery. Thirty loopback samples per direction measured P50/P95/P99 291/304/371ms for remote Push to native API read, and 447/484/529ms for native API editing to server content plus persisted ACK. Full editor GUI, protected/shared tree operations, attachment bytes and WAN acceptance remain pending.

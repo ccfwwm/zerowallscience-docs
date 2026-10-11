@@ -90,12 +90,13 @@ try {
   await native("start");
   await wait(async () => (await native("status"))[0].note.contentText === "reconnected", "reconnect did not catch up");
   const report = { device: serial, package: "com.nowen.note.syncacceptance", offlineImmediateRead: true, forceStopRecovery: true,
+    knowledgeTreeRootCreate: true, readWriteThroughProductionApiBridge: true,
     offlineNetworkIsolation: "adb reverse removed; HTTP server unreachable from Android",
     markdownAndRichText: true, missingNoticePoll: true, reconnect: true,
     httpPushToNativePull: stats(download), nativeCommitToServerAndAck: stats(upload), errors: await native("errors"),
-    boundary: "Loopback adb reverse; real Android native SQLite and MobileSyncEngine. Does not test full EditorPane, knowledge tree creation, attachment bytes, or production JWT middleware." };
+    boundary: "Loopback adb reverse; real Android Native SQLite, signed-in personal knowledgeTreeApi create, api get/update and MobileSyncEngine. Does not test full EditorPane, protected/shared/cross-type tree mutations, attachment bytes, or production JWT middleware." };
   fs.mkdirSync(new URL("../docs/test-results/", import.meta.url), { recursive: true });
-  fs.writeFileSync(new URL("../docs/test-results/sync-v2-android-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
+  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-tree-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally {
   if (page) await native("stop").catch(() => undefined);

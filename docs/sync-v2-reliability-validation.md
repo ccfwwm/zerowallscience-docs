@@ -1,5 +1,7 @@
 # Sync V2 reliability validation / 同步可靠性验证
 
+第二批更新：2026-10-11 的 Native 个人根级/普通文件夹 MD/富文本创建、已授权个人正文持久化，以及新包 API Bridge 强杀恢复证据见 [Native tree validation](sync-v2-native-tree-validation.md)。下文保留第一批的原始结果与当时缺口；完整 Native 树结构和浏览器 Local-first 仍未完成。
+
 日期：2026-10-11。基准 `d95d3787`；开发分支 `codex/sync-v2-reliability`。所有笔记正文均为临时测试数据。
 
 ## Phase 0

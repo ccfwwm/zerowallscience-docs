@@ -16,6 +16,7 @@ on:
       - "frontend/src/lib/accountLoginHistory.ts"
       - "frontend/src/components/AccountLoginHistory.tsx"
       - "frontend/src/lib/__tests__/mobileLocal*.test.ts"
+      - "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts"
       - "frontend/src/components/__tests__/AccountLoginHistory*.test.tsx"
       - ".github/workflows/android-local-first-ci.yml"
   pull_request:
@@ -33,6 +34,7 @@ on:
       - "frontend/src/lib/accountLoginHistory.ts"
       - "frontend/src/components/AccountLoginHistory.tsx"
       - "frontend/src/lib/__tests__/mobileLocal*.test.ts"
+      - "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts"
       - "frontend/src/components/__tests__/AccountLoginHistory*.test.tsx"
       - ".github/workflows/android-local-first-ci.yml"
   workflow_dispatch:
