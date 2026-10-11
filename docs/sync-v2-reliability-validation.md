@@ -53,3 +53,67 @@
 - Android 原生闪退：已读取连接设备 PJZ110 crash buffer，没有获得本次 Sync V2 的明确崩溃堆栈；原生列表预览限长与 Kotlin Filesystem 修复在基准里。新增源码验证不能替代新包设备验收。
 - 知识树 Native V2 实体未实现，登录态仍服务端树；附件 bytes、完整 EditorPane 与树创建仍需新包专项验收。父实体增量删除与所有受保护后代的组合须继续扩展故障覆盖，不能用本次 Workspace Snapshot 回归替代。
 - Phase 3 的最终构建、设备实测与完成度矩阵见后续记录；Docker/NAS、iOS/HarmonyOS/macOS/Linux 安装包仍需独立平台证据。
+
+## Phase 3：本轮回归与设备证据（整体生产验收未完成）
+
+生产源码提交：Phase 0 `bd26fabe`；Phase 1 `421d37eb`；Phase 2 `4588de41`。均在 `codex/sync-v2-reliability`，目标 `release/v1.5.2`。Phase 3 单独提交验收工具和记录。保留 Draft PR，不合并、不发布。
+
+| 检查 | 最终结果与边界 |
+| --- | --- |
+| backend 全部 `sync-v2-*.test.ts` + encrypted sync + backup integrity + existing-tree migration + native encrypted storage | **272/272**；Electron RunAsNode、隔离 SQLite，串行 test runner。新增多库测试 **14/14** |
+| frontend 14 个目标文件 | **118/118**；Node 24 + Vitest；真实 SQLite migration/sync-switch 套件没有 skip |
+| consistency gate | **12 invariants / 59 references**；新增 Native 事务并发、删除折叠、Snapshot 保留均在门禁 |
+| frontend `npm run build`、backend `npm run build` | 通过；已有大 chunk 警告仍在 |
+| frontend `npm run lint:baseline` | **1447 historical errors / 0 new errors**；不声称全仓无 lint 历史错误 |
+| Android `assembleDebug` | 通过；JDK 21、API 35 emulator，独立包名 `com.nowen.note.syncacceptance`；不覆盖正式包 |
+| Android SQLite / 强杀 / 同步 | 真正 Native 插件；移除 adb reverse 验证服务器不可达 → MD/富文本创建立即读取 → `am force-stop` → 离线重开同 ID/正文/Outbox → 恢复网络自动上传/ACK；通过 |
+| Android 通知/恢复 | HTTP 客户端 Push → 实际 WS → Native Pull；双向、主动断开通知后的 30s 补偿、重连；通过。测试期间该包 PID crash buffer 0 行 |
+| Docker/NAS、其他系统安装包 | **未运行**；本机无 Docker CLI/runtime；没有 NAS/其他平台设备证据 |
+
+Android 源码来自 `4588de41`，测试工具另在本阶段。隔离 APK SHA256：`4399aefd46c818de3eba68f8c19e7d2e77887de51a14cb572b1c79535b7f9622`。模拟器 `Pixel_8_API_35`，API 35，WebView 124.0.6367.219；只读启动现有 AVD，不改正式 App 数据。真实连接的 PJZ110 上安装未返回，本次没有真机验收通过证据。
+
+最终机器记录：[Android report](test-results/sync-v2-android-2026-10-11.json)。各方向 30 次、同一 host 的 adb reverse 回环网络，计时包括轮询观察开销：
+
+| 链路 | P50 | P95 | P99（30 样本取最大值） |
+| --- | ---: | ---: | ---: |
+| HTTP Push 发出 → Android Native Pull 提交后读到正文 | 337ms | 348ms | 768ms |
+| Android edit 发出 → 服务端正文 + Native ACK 落盘 | 375ms | 394ms | 429ms |
+
+这不是公网 P95/P99，也不是 PC GUI 或完整 EditorPane 的端到端指标；样本数不足以估计生产尾延迟。目标 P95≤3s/P99≤10s 仍须实际部署网络验收。WebSocket 只传唤醒通知，测量没有主动调用每次 sync 来替代自动链路。
+
+失败记录：最初设备脚本通过 Chromium CDP 连接不兼容 WebView context 管理，改用 Playwright Android API；localStorage 测试 ID 标记强杀未及时落盘，改为 SQLite 测试元数据；真实 Native 并发查询错误已补失败测试并修复；超过 15 分钟的旧 fixture JWT 导致 ACK 等待失败，队列保留，修正测试工具每轮签发后通过。没有对生产 Token/ACK 校验放宽。日志保留在工作树忽略的 `sync-*.log`，只含临时测试数据；提交的 report 没有 Token、正文或密钥。
+
+### 完成度矩阵（代码支持不等于平台验收）
+
+| 能力/实体 | Desktop | Android Native | Web/移动浏览器 | 本轮证据/剩余工作 |
+| --- | --- | --- | --- | --- |
+| 正文、标题、格式、元数据；MD/富文本 | V2 + SQLite | V2 + SQLite | REST + cache/queue | 独立多库双向/三端；Native 设备两格式；完整 GUI 跨端未验收 |
+| 本地保存 + Outbox 原子性 | 事务触发器 | 同事务读/写/Outbox | **统一原子 Local-first 未实现** | 失败入队回滚、并发保存；浏览器仍是部分离线链路 |
+| mutationId 幂等 / ACK / 自身回声 | 实现 | 修复并回归 | 分入口实现 | 丢 ACK 重放、连续编辑、非法 ACK；另一设备收据未实现 |
+| 自动实时 / 重连 / 前台补偿 | 既有 backend engine | 新接线，设备通过 | 既有 realtime/queue | Android 30s 漏通知补偿；系统强杀后后台实时不支持 |
+| 离线重启恢复 | 磁盘 SQLite | 实际强杀通过 | 缓存/草稿，部分 | Native 新建/编辑持久化；PC 强杀与浏览器事务故障专项未运行 |
+| 并发冲突、查看、选择、另存为 | 已有台账/UI | 最新编辑/版本基线修复 | 已有 draft/conflict | 双方保留/keep-local/fork；树结构选择现有测试通过；完整手机 UI 未验收 |
+| 笔记本、文件夹、排序 | legacy V2 | legacy V2 | REST | 代码/协议回归；不是完整知识树离线能力 |
+| 知识树节点、移动、结构冲突 | 协商的 V2 实体 | **Native V2 节点未实现**，登录态 server-first | REST | #829 已有授权 fallback；树创建后离线立即打开仍缺口 |
+| 标签、收藏、关联 | V2 | V2 | REST/queue | 后端实体回归；Native 设备关联专项未运行 |
+| 任务、状态、提醒 | legacy V2 | legacy V2 | REST | 代码/协议回归；Native 设备专项未运行 |
+| 日记、思维导图 | legacy V2 | legacy V2 | REST | 同上；新模型/复合资源不冒充全覆盖 |
+| 附件元数据 | V2 | V2 | REST/cache | 当前 metadata 与 bytes 分开；受保护元数据/本地文件清理测试通过 |
+| 附件 bytes/hash/失败恢复 | 独立 transfer | 独立 transfer | offline attachment jobs | 路由/迁移已有回归；跨端新包 bytes 设备专项未运行，不宣称整篇附件完成 |
+| 回收站、恢复、永久删除 | 已有 + 版本保护 | note fields/delete + 本地保护 | REST | 永久删除/旧更新不复活通过；回收站往返设备专项未运行 |
+| Tombstone / Snapshot 历史清理 | reset/Snapshot | reset/Snapshot，保留冲突/子项 | 旧 snapshot/cache | 本次同页折叠与 pruning 回归；无基线旧 ID 的长期 tombstone 策略仍需评估 |
+| 账号 / Profile / 服务器隔离 | Profile/scope | 旧会话取消/响应检查 | scoped cache | 延迟切账号负例；完整双服务器 GUI 切换未验收；不清未同步数据 |
+| Workspace / ACL / 撤权 | scope/fingerprint | plan/freeze/guard | server ACL | 后端权限负例；设备完整撤权/密码目录验收仍需补齐 |
+| V2 加密正文安全 | 密文验证/guard | guard + 密文同步 | 客户端加密 | encrypted sync/native storage 回归通过；加密+附件设备专项未运行 |
+| iOS / HarmonyOS | — | iOS 部分共享；Harmony 缺 Native V2 bridge | — | **均未等价验收**；不能套用 Android 结论 |
+
+后续阻断生产验收的工作：Web 统一 IndexedDB 事务/Local-first；Native 知识树离线创建及 #829 原路径；父实体增量删除与所有受保护后代组合；无基线旧 ID tombstone；完整移动 EditorPane/冲突/附件/权限设备场景；公网长时稳定性与真实 P99；Docker/NAS/macOS/Linux/iOS/HarmonyOS 验收。不能将本轮修复或 CI 当作这些项已经完成。
+
+### 重跑隔离 Android 验收
+
+入口只由 `vite.android-sync.config.ts` 打进测试包，正常 `npm run build` 不包含测试 HTML/工具接口。后端 helper 只监听 127.0.0.1，不部署到生产。
+
+1. 根目录：配置临时 `SYNC_ACCEPTANCE_DIRECTORY`，用项目 Electron RunAsNode + tsx 启动 `backend/tests/sync-v2-android-server.ts`；端口 47831。不要使用生产 DB。
+2. frontend：`npx vite build --config vite.android-sync.config.ts`；Node≥22 运行 Capacitor `sync android`；JDK21 执行 `gradlew -I <absolute scripts/android-sync-acceptance.init.gradle> :app:assembleDebug`。
+3. 只向隔离设备安装 APK，`adb -s <serial> reverse tcp:47831 tcp:47831`，启动 `com.nowen.note.syncacceptance/com.nowen.note.MainActivity`。
+4. 根目录：`node scripts/android-sync-acceptance.mjs <serial>`。只操作这个测试包；关闭其网络转发来模拟离线，恢复后测量。report 写到 `docs/test-results/`。结束后关闭 helper、移除转发并关闭测试模拟器。
