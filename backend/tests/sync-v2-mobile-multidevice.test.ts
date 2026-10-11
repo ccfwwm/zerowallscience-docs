@@ -206,6 +206,26 @@ test("creation dependencies remain ordered when folder mutations span the 100-ro
   assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${ids.at(-1)}`).parentId,`notebook:${ids.at(-2)}`);
 });
 
+test("a folder created during the final Snapshot page remains a creation intent rather than a remote tombstone",async()=>{
+  const {c}=await movableTree("folder-create-during-snapshot"), id=randomUUID(), child=randomUUID(), note=randomUUID();
+  await c.db.run("UPDATE sync_state SET lastSequence=0 WHERE profileId=?",[c.profileId]);
+  afterSnapshot=async(response)=>{
+    const page=await response.clone().json() as {nextCursor:string|null};
+    if(!page.nextCursor) {
+      afterSnapshot=undefined;
+      await c.repository.createPersonalTreeFolder(id,"During Snapshot",null);
+      await c.repository.createPersonalTreeFolder(child,"Nested during Snapshot",`notebook:${id}`);
+      await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"During Snapshot body"},child);
+    }
+    return response;
+  };
+  try {await c.sync();} finally {afterSnapshot=undefined;}
+  assert.equal((await conflicts(c)).length,0); assert.equal((await pending(c)).length,0);
+  assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${id}`).parentId,null);
+  assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${child}`).parentId,`notebook:${id}`);
+  assert.equal((await c.repository.notes.get(note))?.content,"During Snapshot body");
+});
+
 test("offline folder creation rolls back the business row, structure, origin and both queues on a structural enqueue failure", async () => {
   const {c}=await movableTree("folder-create-rollback"), id=randomUUID();
   await c.db.run("CREATE TRIGGER reject_folder_create BEFORE INSERT ON sync_outbox WHEN NEW.entityType='knowledge_tree_node' BEGIN SELECT RAISE(ABORT,'Folder Outbox failure'); END");

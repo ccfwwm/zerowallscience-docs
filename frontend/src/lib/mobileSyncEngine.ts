@@ -529,7 +529,14 @@ export class MobileSyncEngine {
       if (protectedTree) {
         await applyNativePersonalTree(tx,local.map((payload) => ({entityId:String(payload.id),payload})),this.options.userId,true);
         const seen = new Set(tree.map((entry) => entry.entityId));
-        await this.applyTreeEntries(tx,[...tree,...local.filter((row) => !seen.has(String(row.id)))
+        // A creation committed while pages were in flight cannot appear in
+        // that snapshot. Only its original still-pending business mutation
+        // proves this; a later update must not mask a remote tombstone.
+        const creating = new Set((await tx.query<{id:string}>(`SELECT 'notebook:' || o.entityId AS id FROM sync_outbox o
+          JOIN native_runtime_meta m ON m.key='localTreeFolder:personal:' || o.entityId AND m.value=o.mutationId
+          WHERE o.profileId=? AND o.scopeKey='personal' AND o.entityType='notebook' AND o.operation='upsert'`,
+        [this.options.profileId])).map((row) => row.id));
+        await this.applyTreeEntries(tx,[...tree,...local.filter((row) => !seen.has(String(row.id)) && !creating.has(String(row.id)))
           .map((row) => ({entityId:String(row.id),payload:{__delete:true}}))]);
       }
       // Persist the negotiated graph and subscription intent together. A crash

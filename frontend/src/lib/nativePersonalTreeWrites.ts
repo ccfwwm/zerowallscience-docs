@@ -122,7 +122,9 @@ export async function writeNativePersonalTreeFolder(tx: NativeDatabase, id: stri
   await tx.run(`INSERT INTO sync_outbox (id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,payload,status,retryCount,createdAt)
     VALUES (?,?,?,?,'personal','knowledge_tree_node',?,'upsert',?,'pending',0,?)`,
   [newLocalId(),newLocalId(),context.profileId,context.deviceId,desired.id,JSON.stringify(nativeTreeMutationPayload(desired,base)),new Date().toISOString()]);
-  await tx.run("INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,'1',?)",[`localTreeFolder:personal:${id}`,timestamp]);
+  const creation = (await tx.query<{mutationId:string}>(`SELECT mutationId FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
+    AND entityType='notebook' AND entityId=? ORDER BY createdAt,rowid LIMIT 1`,[context.profileId,id]))[0];
+  await tx.run("INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,?,?)",[`localTreeFolder:personal:${id}`,creation.mutationId,timestamp]);
   return (await listNativePersonalTreeFolderDrafts(tx,context.userId)).find((node) => node.id === desired.id)!;
 }
 

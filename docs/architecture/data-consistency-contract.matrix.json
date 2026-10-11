@@ -323,6 +323,7 @@
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder creation fails closed for unbound" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a lost structural creation ACK retains the local folder" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "creation dependencies remain ordered" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a folder created during the final Snapshot page" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "creates personal folders through the transaction" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "restores reverse-ordered provisional nested folders" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "does not grant provisional owner access to an ACKed folder" },
