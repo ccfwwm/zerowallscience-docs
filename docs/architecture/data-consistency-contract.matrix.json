@@ -81,6 +81,10 @@
       "status": "covered",
       "checks": [
         {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "a remote folder tombstone retains pending native structure and child bodies until an explicit remote choice"
+        },
+        {
           "file": "backend/tests/sync-v2-engine.test.ts",
           "case": "VERSION_CONFLICT 登记冲突台账并保留本地内容"
         },

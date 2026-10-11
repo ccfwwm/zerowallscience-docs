@@ -1,5 +1,7 @@
 # Native personal tree structure reception and recovery
 
+Historical reception batch; subsequent folder writes and structural conflict evidence are recorded in [the next batch](sync-v2-native-tree-writes-validation.en.md).
+
 2026-10-11, third reliability batch on `codex/native-knowledge-tree-offline`, continuing Draft PR #831 into `release/v1.5.2`. Baseline: `1b5b0c79`. [Chinese evidence](sync-v2-native-tree-pull-validation.md).
 
 Native previously rejected tree entities and could only project legacy notebook parents. The engine now negotiates the existing complete entity set through `/plan`, with a stable device ID, rebuilds a paginated personal Snapshot, then receives structural changes through the existing Pull path. Workspace subscriptions remain legacy. A fresh profile can use an old server; a persisted or pending tree subscription never silently downgrades.

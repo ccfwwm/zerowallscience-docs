@@ -1,5 +1,7 @@
 # Native 个人知识树结构接收与恢复
 
+本页保留第三批接收验收；后续文件夹主动写入和结构冲突证据见[下一批记录](sync-v2-native-tree-writes-validation.md)。
+
 2026-10-11，同步可靠性第三批，基准 `1b5b0c79`；分支 `codex/native-knowledge-tree-offline`，继续 PR #831，目标 `release/v1.5.2`。[English](sync-v2-native-tree-pull-validation.en.md)。
 
 ## 问题与实际调用链

@@ -270,11 +270,12 @@ export class MobileSyncEngine {
             SELECT ? UNION SELECT t.id FROM native_knowledge_tree_nodes t JOIN subtree p ON t.parentId=p.id WHERE t.scopeKey='personal'
           ) SELECT t.id,t.resourceType,t.resourceId FROM native_knowledge_tree_nodes t JOIN subtree s ON t.id=s.id WHERE t.scopeKey='personal'`,[row.entityId]);
           for (const child of descendants) if (child.id !== row.entityId) {
+            const entityType = child.resourceType === "file" ? "attachment" : child.resourceType;
             const pending = await tx.query(`SELECT id FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
               AND ((entityType='knowledge_tree_node' AND entityId=?) OR (entityType=? AND entityId=?))
               UNION SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey='personal' AND status='unresolved'
               AND ((entityType='knowledge_tree_node' AND entityId=?) OR (entityType=? AND entityId=?)) LIMIT 1`,
-            [this.options.profileId,child.id,child.resourceType,child.resourceId,this.options.profileId,child.id,child.resourceType,child.resourceId]);
+            [this.options.profileId,child.id,entityType,child.resourceId,this.options.profileId,child.id,entityType,child.resourceId]);
             if (pending.length) throw new Error("子节点仍有待同步修改或冲突，请先保留并处理这些内容");
           }
           await applyNativePersonalTree(tx,descendants.map((child) => ({entityId:child.id,payload:{__delete:true}})),this.options.userId,false);
