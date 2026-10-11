@@ -265,7 +265,20 @@ export class MobileSyncEngine {
           await writeNativePersonalTreeMoves(tx,[{id:row.entityId}],{profileId:this.options.profileId,deviceId:this.options.deviceId,userId:this.options.userId});
         }
         const payload = resolution === "keep-remote" ? remote : local;
-        await applyNativePersonalTree(tx,[{entityId:row.entityId,payload}],this.options.userId,false);
+        if (resolution === "keep-remote" && remote.__delete) {
+          const descendants = await tx.query<{id:string;resourceType:string;resourceId:string}>(`WITH RECURSIVE subtree(id) AS (
+            SELECT ? UNION SELECT t.id FROM native_knowledge_tree_nodes t JOIN subtree p ON t.parentId=p.id WHERE t.scopeKey='personal'
+          ) SELECT t.id,t.resourceType,t.resourceId FROM native_knowledge_tree_nodes t JOIN subtree s ON t.id=s.id WHERE t.scopeKey='personal'`,[row.entityId]);
+          for (const child of descendants) if (child.id !== row.entityId) {
+            const pending = await tx.query(`SELECT id FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
+              AND ((entityType='knowledge_tree_node' AND entityId=?) OR (entityType=? AND entityId=?))
+              UNION SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey='personal' AND status='unresolved'
+              AND ((entityType='knowledge_tree_node' AND entityId=?) OR (entityType=? AND entityId=?)) LIMIT 1`,
+            [this.options.profileId,child.id,child.resourceType,child.resourceId,this.options.profileId,child.id,child.resourceType,child.resourceId]);
+            if (pending.length) throw new Error("子节点仍有待同步修改或冲突，请先保留并处理这些内容");
+          }
+          await applyNativePersonalTree(tx,descendants.map((child) => ({entityId:child.id,payload:{__delete:true}})),this.options.userId,false);
+        } else await applyNativePersonalTree(tx,[{entityId:row.entityId,payload}],this.options.userId,false);
         await syncNativeNotebookMoveParents(tx,[row.entityId]);
         await tx.run(`DELETE FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
           AND entityType='knowledge_tree_node' AND entityId=?`, [this.options.profileId,row.entityId]);
@@ -801,6 +814,28 @@ export class MobileSyncEngine {
   private async applyEntries(scope: ScopeDescriptor, entries: SnapshotEntry[], bootstrap: boolean): Promise<void> {
     assertMobileSyncItems(entries,"snapshot",this.hasTreeSubscription(scope));
     for (const entry of entries) if (entry.entityType === "note" && !entry.payload.__delete) validateEncryptedNoteWrite(entry.payload);
+    const treeDeletes = entries.filter((entry) => entry.entityType === "knowledge_tree_node" && entry.payload.__delete);
+    if (treeDeletes.length) {
+      const held = await this.options.db.transaction(async (tx) => {
+        let held = false;
+        for (const entry of treeDeletes) {
+          const conflict = (await tx.query<{id:string}>(`SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey='personal'
+            AND entityType='knowledge_tree_node' AND entityId=? AND status='unresolved' LIMIT 1`,[this.options.profileId,entry.entityId]))[0];
+          const pending = await tx.query(`SELECT id FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
+            AND entityType='knowledge_tree_node' AND entityId=? LIMIT 1`,[this.options.profileId,entry.entityId]);
+          if (!conflict && !pending.length) continue;
+          held = true;
+          if (conflict) await tx.run("UPDATE sync_conflicts SET remotePayload=? WHERE id=?",[JSON.stringify(entry.payload),conflict.id]);
+          else await tx.run(`INSERT INTO sync_conflicts (id,profileId,scopeKey,entityType,entityId,localPayload,remotePayload,status,createdAt)
+            VALUES (?,?,'personal','knowledge_tree_node',?,?,?,'unresolved',?)`,
+          [newLocalId(),this.options.profileId,entry.entityId,JSON.stringify(await readNativePersonalTreeNode(tx,entry.entityId)),JSON.stringify(entry.payload),now()]);
+        }
+        return held;
+      });
+      // Keep the durable conflict, but apply no business deletion or cursor ACK.
+      // A notebook DELETE would otherwise cascade through retained child bodies.
+      if (held) throw syncFailure("VERSION_CONFLICT","远端目录已删除，请先在冲突中心处理本机位置和子节点内容");
+    }
     const notebookParents=entries.flatMap((entry)=>entry.entityType==="notebook"
       && typeof entry.payload.parentId==="string" ? [[entry.entityId,entry.payload.parentId] as const] : []);
     const applied: SnapshotEntry[] = [];

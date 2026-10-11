@@ -206,6 +206,24 @@ test("full tree rebuild preserves newer pending moves and recognizes an intermed
   assert.deepEqual(serverDb.prepare("SELECT parentId,sortOrder FROM knowledge_tree_nodes WHERE id=?").get(node),{parentId:right,sortOrder:2});
 });
 
+test("a remote folder tombstone retains pending native structure and child bodies until an explicit remote choice", async () => {
+  const {c,node,left} = await movableTree("active-delete-race"), note=randomUUID();
+  await c.repository.notes.create({id:note,notebookId:node.slice(9),contentFormat:"markdown",content:"Protected from cascade"});
+  await c.sync(); await cachePersonalTree(c);
+  await c.repository.movePersonalTreeNodes([{id:node,parentId:left,sortOrder:7}]);
+  const before=(await c.db.query<{lastSequence:number}>("SELECT lastSequence FROM sync_state WHERE profileId=?",[c.profileId]))[0].lastSequence;
+  serverDb.prepare("DELETE FROM notebooks WHERE id=?").run(node.slice(9));
+  await c.sync();
+  assert.equal((await c.repository.notes.get(note))?.content,"Protected from cascade");
+  assert.equal((await c.db.query<{lastSequence:number}>("SELECT lastSequence FROM sync_state WHERE profileId=?",[c.profileId]))[0].lastSequence,before);
+  const [conflict]=await c.db.query<{id:string;remotePayload:string}>("SELECT id,remotePayload FROM sync_conflicts WHERE profileId=? AND entityId=? AND status='unresolved'",[c.profileId,node]);
+  assert.ok(conflict); assert.equal(JSON.parse(conflict.remotePayload).__delete,true);
+  await assert.rejects(c.engine.resolveLocalConflict(conflict.id,"keep-local"),/业务资源缺失/);
+  await c.engine.resolveLocalConflict(conflict.id,"keep-remote"); await c.sync();
+  assert.equal((await pending(c)).length,0); assert.equal((await conflicts(c)).length,0);
+  assert.equal(await c.repository.notes.get(note),null);
+});
+
 test.before(async () => {
   const schema = await import("../src/db/schema");
   const routes = await import("../src/routes/sync-v2");
