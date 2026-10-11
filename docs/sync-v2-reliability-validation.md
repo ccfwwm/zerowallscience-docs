@@ -61,14 +61,16 @@
 | 检查 | 最终结果与边界 |
 | --- | --- |
 | backend 全部 `sync-v2-*.test.ts` + encrypted sync + backup integrity + existing-tree migration + native encrypted storage | **272/272**；Electron RunAsNode、隔离 SQLite，串行 test runner。新增多库测试 **14/14** |
-| frontend 14 个目标文件 | **118/118**；Node 24 + Vitest；真实 SQLite migration/sync-switch 套件没有 skip |
+| frontend 15 个目标文件 | **121/121**；Node 24 + Vitest；真实 SQLite migration/sync-switch 套件没有 skip；含音频 ACK 兼容 |
 | consistency gate | **12 invariants / 59 references**；新增 Native 事务并发、删除折叠、Snapshot 保留均在门禁 |
 | frontend `npm run build`、backend `npm run build` | 通过；已有大 chunk 警告仍在 |
 | frontend `npm run lint:baseline` | **1447 historical errors / 0 new errors**；不声称全仓无 lint 历史错误 |
 | Android `assembleDebug` | 通过；JDK 21、API 35 emulator，独立包名 `com.nowen.note.syncacceptance`；不覆盖正式包 |
 | Android SQLite / 强杀 / 同步 | 真正 Native 插件；移除 adb reverse 验证服务器不可达 → MD/富文本创建立即读取 → `am force-stop` → 离线重开同 ID/正文/Outbox → 恢复网络自动上传/ACK；通过 |
 | Android 通知/恢复 | HTTP 客户端 Push → 实际 WS → Native Pull；双向、主动断开通知后的 30s 补偿、重连；通过。测试期间该包 PID crash buffer 0 行 |
-| Docker/NAS、其他系统安装包 | **未运行**；本机无 Docker CLI/runtime；没有 NAS/其他平台设备证据 |
+| Docker/NAS、其他系统安装包 | 本地 **未运行**；本机无 Docker CLI/runtime；远端生产 image/plugin smoke 见下段；没有 NAS/其他平台设备证据 |
+
+PR #830 的 `6b4c5949` 远端 Data Consistency Contract CI（三个 job）、Android Local-first、Knowledge Tree、Data Protection CI 已通过；Docker Plugin Artifacts CI 已真正构建生产镜像并在镜像内执行 plugins smoke，通过，但不等于 NAS/完整同步镜像验收。Voice Memo 最初有 3 条失败：旧 fixture 成功 ACK 缺少 `version`、未模拟后续 Outbox baseVersion 更新，按真实协议补齐后本地 3/3。I18n Release CI 的 16 个 `encryptedConversion.*` 缺失键在原始 `d95d3787` 再跑也失败（23 pass / 1 fail），属于基准问题，未混入同步修复。后续提交的 CI 须以对应 SHA 查询，不能把旧 SHA 的通过状态套用到新提交。
 
 Android 源码来自 `4588de41`，测试工具另在本阶段。隔离 APK SHA256：`4399aefd46c818de3eba68f8c19e7d2e77887de51a14cb572b1c79535b7f9622`。模拟器 `Pixel_8_API_35`，API 35，WebView 124.0.6367.219；只读启动现有 AVD，不改正式 App 数据。真实连接的 PJZ110 上安装未返回，本次没有真机验收通过证据。
 
