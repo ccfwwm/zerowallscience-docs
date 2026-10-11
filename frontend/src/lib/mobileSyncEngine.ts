@@ -8,7 +8,7 @@ import { forgetUnsentLocalNotes } from "./nativeLocalNoteOrigin";
 import { notifyMobileSyncStatusChanged, type MobileSyncAppliedDetail } from "./mobileSyncStatus";
 import { nativeReceiptKey } from "./mobileNoteSyncReceipt";
 import { validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
-import { applyNativePersonalTree, NATIVE_TREE_ENTITY_SET, nativeTreeSubscriptionKey, type NativeTreeEntry } from "./nativeKnowledgeTreeSync";
+import { applyNativePersonalTree, NATIVE_TREE_ENTITY_SET, NATIVE_TREE_PENDING_SUBSCRIPTION, nativeTreeSubscriptionKey, type NativeTreeEntry } from "./nativeKnowledgeTreeSync";
 
 type ScopeStatus = "active" | "replan_required" | "access_revoked";
 type EntityType = "notebook" | "note" | "tag" | "note_tag" | "favorite" | "attachment"
@@ -473,7 +473,14 @@ export class MobileSyncEngine {
       cursor = page.nextCursor;
     } while (cursor);
     await this.restoreNotebookParents(scope,notebookParents);
-    if (this.hasTreeSubscription(scope)) await this.options.db.transaction((tx) => applyNativePersonalTree(tx,tree,this.options.userId,true));
+    if (this.hasTreeSubscription(scope)) await this.options.db.transaction(async (tx) => {
+      await applyNativePersonalTree(tx,tree,this.options.userId,true);
+      // Persist the negotiated graph and subscription intent together. A crash
+      // after the server's ACK must not allow a silent legacy downgrade.
+      await tx.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,?,?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value,updatedAt=excluded.updatedAt`,
+      [nativeTreeSubscriptionKey(this.options.profileId),NATIVE_TREE_PENDING_SUBSCRIPTION,now()]);
+    });
     if(scope.workspaceId)await this.pruneWorkspaceSnapshot(scope,seen);
     await this.advance(scope,sequence,this.hasTreeSubscription(scope));
   }
@@ -484,9 +491,10 @@ export class MobileSyncEngine {
 
   private async negotiateTree(scope: ScopeDescriptor): Promise<void> {
     if (scope.workspaceId || this.treeNegotiated) return;
-    const bound = (await this.options.db.query<{value:string}>(
+    const stored = (await this.options.db.query<{value:string}>(
       "SELECT value FROM native_runtime_meta WHERE key=?", [nativeTreeSubscriptionKey(this.options.profileId)],
-    ))[0]?.value === NATIVE_TREE_ENTITY_SET;
+    ))[0]?.value;
+    const bound = stored === NATIVE_TREE_ENTITY_SET || stored === NATIVE_TREE_PENDING_SUBSCRIPTION;
     const params = new URLSearchParams({scopeKey:scope.scopeKey,entityTypes:NATIVE_TREE_ENTITY_SET,deviceId:this.options.deviceId});
     let supported = false;
     try {

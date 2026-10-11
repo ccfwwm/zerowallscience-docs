@@ -294,7 +294,10 @@
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "refuses to silently downgrade a persisted tree subscription" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "negotiates the complete existing set" },
         { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "upgrades schema 5 with structural metadata" },
-        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "rolls back a failed schema 5 tree migration" }
+        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "rolls back a failed schema 5 tree migration" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "lost initial tree ACK retains subscription intent" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "REST tree movement emits a committed metadata-only Sync V2 notice" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "preserves subscription intent after a lost initial ACK" }
       ]
     }
   ]

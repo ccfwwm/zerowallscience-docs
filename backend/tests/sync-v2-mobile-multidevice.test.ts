@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import Database from "better-sqlite3";
 import { Hono } from "hono";
 import { serve } from "@hono/node-server";
@@ -28,6 +29,7 @@ let serverUrl: string;
 const clients: Client[] = [];
 let afterPush: ((response: Response) => Promise<Response>) | undefined;
 let afterSnapshot: ((response: Response) => Promise<Response>) | undefined;
+let afterAck: ((response: Response) => Promise<Response>) | undefined;
 
 // The real native schema, with independent on-disk SQLite databases. The adapter
 // serializes transactions just like NativeDatabaseImpl; no shared client state.
@@ -96,6 +98,7 @@ async function conflicts(c: Client) { return c.db.query<{ localPayload: string; 
 test.before(async () => {
   const schema = await import("../src/db/schema");
   const routes = await import("../src/routes/sync-v2");
+  const treeRoutes = await import("../src/routes/knowledge-tree");
   serverDb = schema.getDb(); closeServerDb = schema.closeDb;
   for (const user of [USER, "other-user"]) serverDb.prepare("INSERT INTO users (id,username,passwordHash,createdAt,updatedAt) VALUES (?,?,'x','now','now')").run(user, user);
   const app = new Hono();
@@ -105,8 +108,10 @@ test.before(async () => {
     await next();
     if (c.req.path.endsWith("/push") && afterPush) c.res = await afterPush(c.res);
     if (c.req.path.endsWith("/snapshot") && afterSnapshot) c.res = await afterSnapshot(c.res);
+    if (c.req.path.endsWith("/ack") && afterAck) c.res = await afterAck(c.res);
   });
   app.route("/api/sync/v2", routes.default);
+  app.route("/api/knowledge-tree/", treeRoutes.default);
   httpServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
   await new Promise<void>((resolve) => httpServer.once("listening", resolve));
   const address = httpServer.address(); assert.ok(address && typeof address !== "string");
@@ -176,6 +181,47 @@ test("a new native tree subscription rebuilds an existing legacy cursor without 
   const state = (await c.db.query<{lastSequence:number;lastError:string|null}>("SELECT lastSequence,lastError FROM sync_state WHERE profileId=?", [c.profileId]))[0];
   assert.equal(state.lastError, null);
   assert.ok(state.lastSequence < 999999, "the new entity set must not inherit the legacy high-water mark");
+});
+
+test("lost initial tree ACK retains subscription intent and replays the complete baseline after reopen", async () => {
+  const c = await client("structure-lost-ack"), id = randomUUID();
+  await c.repository.notebooks.create({ id,name:"Lost tree ACK" });
+  afterAck = async () => Response.json({code:"SERVER_ERROR"},{status:503});
+  try { await c.sync(); } finally { afterAck = undefined; }
+  const marker = (await c.db.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key=?", [`nativeTreeSubscription:${c.profileId}:personal`]))[0];
+  assert.ok(marker.value.startsWith("pending:"));
+  assert.ok((await c.db.query("SELECT id FROM native_knowledge_tree_nodes WHERE id=?", [`notebook:${id}`])).length);
+  assert.equal((await c.db.query<{lastSequence:number}>("SELECT lastSequence FROM sync_state WHERE profileId=?", [c.profileId]))[0].lastSequence, 0);
+  await c.db.close();
+  const reopened = await client("structure-lost-ack"); await reopened.sync();
+  assert.equal((await reopened.db.query<{lastError:string|null}>("SELECT lastError FROM sync_state WHERE profileId=?", [c.profileId]))[0].lastError, null);
+  assert.ok(!(await reopened.db.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key=?", [`nativeTreeSubscription:${c.profileId}:personal`]))[0].value.startsWith("pending:"));
+});
+
+test("REST tree movement emits a committed metadata-only Sync V2 notice and wakes the negotiated receiver", async () => {
+  const c = await client("structure-rest-notice"), id = randomUUID();
+  await c.repository.notebooks.create({id,name:"Private folder title must not enter notice"}); await c.sync();
+  // Match routes' CommonJS loader; a late native import creates a separate tsx
+  // module instance and cannot register their broadcaster in this test process.
+  const {setSyncBroadcaster} = createRequire(path.resolve(__dirname,"../package.json"))("./src/sync/notify.ts") as typeof import("../src/sync/notify");
+  const notices: Array<{recipient:string;notice:Record<string,unknown>;committed:boolean;sortOrder:number}> = [];
+  setSyncBroadcaster((recipient,notice) => {
+    notices.push({recipient,notice:notice as Record<string,unknown>,committed:!serverDb.inTransaction,
+      sortOrder:(serverDb.prepare("SELECT sortOrder FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${id}`) as {sortOrder:number}).sortOrder});
+  });
+  try {
+    const before = (serverDb.prepare("SELECT MAX(sequence) AS sequence FROM sync_changes_v2").get() as {sequence:number}).sequence;
+    const response = await fetch(`${serverUrl}/api/knowledge-tree/nodes/${encodeURIComponent(`notebook:${id}`)}/move`, {method:"PUT",headers:{Authorization:`Bearer ${USER}`,"Content-Type":"application/json"},body:JSON.stringify({parentId:null,sortOrder:17})});
+    assert.equal(response.status,200);
+    assert.equal(notices.length,1,JSON.stringify(serverDb.prepare("SELECT entityType,userId,workspaceId FROM sync_changes_v2 WHERE sequence>?").all(before))); assert.equal(notices[0].recipient,USER);
+    assert.equal(notices[0].committed,true); assert.equal(notices[0].sortOrder,17);
+    assert.deepEqual(Object.keys(notices[0].notice).sort(),["accessFingerprint","scopeKey","sequence","type"]);
+    assert.equal(notices[0].notice.type,"sync.changed"); assert.equal(notices[0].notice.scopeKey,"personal");
+    const rejected = await fetch(`${serverUrl}/api/knowledge-tree/nodes/${encodeURIComponent(`notebook:${id}`)}/move`, {method:"PUT",headers:{Authorization:"Bearer other-user","Content-Type":"application/json"},body:JSON.stringify({parentId:null,sortOrder:18})});
+    assert.equal(rejected.status,403); assert.equal(notices.length,1);
+  } finally {setSyncBroadcaster(null);}
+  await c.sync();
+  assert.equal((await c.db.query<{sortOrder:number}>("SELECT sortOrder FROM native_knowledge_tree_nodes WHERE id=?", [`notebook:${id}`]))[0].sortOrder,17);
 });
 
 test("invalid remote tree rolls back incremental bodies and structure without acknowledging the cursor", async () => {

@@ -89,24 +89,33 @@ try {
   await remoteEdit(ids[0], "reconnected");
   await native("start");
   await wait(async () => (await native("status"))[0].note.contentText === "reconnected", "reconnect did not catch up");
+  let structureStarted = performance.now();
   const folderResponse = await fetch(`${base}/acceptance/tree-folder`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({parentId:`note:${ids[0]}`})});
   assert.ok(folderResponse.ok, `remote folder create failed: ${folderResponse.status}`);
   const folder = await folderResponse.json();
   await wait(async () => (await native("structure",folder.id))?.parentId === `note:${ids[0]}`, "folder-under-document structure not pulled");
+  const remoteFolderCreateMs = Math.round(performance.now()-structureStarted);
+  structureStarted = performance.now();
   const moved = await fetch(`${base}/acceptance/tree-move/${encodeURIComponent(folder.id)}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({parentId:null,sortOrder:17})});
   assert.ok(moved.ok, `remote tree move failed: ${moved.status}`);
   await wait(async () => {const row=await native("structure",folder.id);return row?.parentId === null && row.sortOrder === 17;}, "remote tree move not pulled");
+  const remoteTreeMoveMs = Math.round(performance.now()-structureStarted);
+  await page.evaluate(() => window.acceptanceRealtime.disconnect());
+  const movedWithoutNotice = await fetch(`${base}/acceptance/tree-move/${encodeURIComponent(folder.id)}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({parentId:`note:${ids[0]}`,sortOrder:19})});
+  assert.ok(movedWithoutNotice.ok);
+  await wait(async () => {const row=await native("structure",folder.id);return row?.parentId === `note:${ids[0]}` && row.sortOrder === 19;}, "poll did not compensate for a missing tree notification",40_000);
   adb("reverse", "--remove", "tcp:47831");
   await browser.close();
   adb("shell", "am", "force-stop", "com.nowen.note.syncacceptance");
   adb("shell", "am", "start", "-n", "com.nowen.note.syncacceptance/com.nowen.note.MainActivity");
   await attach();
   const restoredStructure = await native("structure",folder.id);
-  assert.equal(restoredStructure.parentId,null); assert.equal(restoredStructure.sortOrder,17);
+  assert.equal(restoredStructure.parentId,`note:${ids[0]}`); assert.equal(restoredStructure.sortOrder,19);
   assert.equal((await native("schema"))[0].user_version,6);
   const report = { device: serial, package: "com.nowen.note.syncacceptance", offlineImmediateRead: true, forceStopRecovery: true,
     knowledgeTreeRootCreate: true, readWriteThroughProductionApiBridge: true,
     negotiatedPersonalTreePull:true,remoteFolderUnderDocument:true,remoteTreeMove:true,structureForceStopRecovery:true,nativeSchemaVersion:6,
+    missingTreeNoticePoll:true,remoteFolderCreateMs,remoteTreeMoveMs,
     offlineNetworkIsolation: "adb reverse removed; HTTP server unreachable from Android",
     markdownAndRichText: true, missingNoticePoll: true, reconnect: true,
     httpPushToNativePull: stats(download), nativeCommitToServerAndAck: stats(upload), errors: await native("errors"),

@@ -3,6 +3,7 @@ import type { NativeDatabase } from "./nativeDatabase";
 // Matches the existing server's complete negotiated set. Partial subscriptions
 // are rejected by Sync V2; workspace clients retain their legacy subscription.
 export const NATIVE_TREE_ENTITY_SET = "notebook,note,tag,note_tag,favorite,attachment,task,task_reminder,diary,mindmap,knowledge_tree_node";
+export const NATIVE_TREE_PENDING_SUBSCRIPTION = `pending:${NATIVE_TREE_ENTITY_SET}`;
 
 export function nativeTreeSubscriptionKey(profileId: string): string {
   return `nativeTreeSubscription:${profileId}:personal`;

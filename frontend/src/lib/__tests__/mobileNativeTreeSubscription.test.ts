@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { MobileSyncEngine, assertMobileSyncItems } from "../mobileSyncEngine";
-import { NATIVE_TREE_ENTITY_SET } from "../nativeKnowledgeTreeSync";
+import { NATIVE_TREE_ENTITY_SET, NATIVE_TREE_PENDING_SUBSCRIPTION } from "../nativeKnowledgeTreeSync";
 
 const scope = {scopeKey:"personal",workspaceId:null,workspaceName:null,role:"owner",canWrite:true,accessFingerprint:"test"};
 function fixture(bound=false) {
@@ -44,6 +44,13 @@ describe("native personal tree subscription", () => {
   it("refuses to silently downgrade a persisted tree subscription even when the server returns legacy types", async () => {
     const {db,engine} = fixture(true);
     vi.stubGlobal("fetch",vi.fn().mockResolvedValue(response({entityTypes:NATIVE_TREE_ENTITY_SET.split(",").slice(0,-1)})));
+    await expect(engine.negotiateTree(scope)).rejects.toMatchObject({code:"UNSUPPORTED_TREE_SUBSCRIPTION"});
+    expect(db.run).not.toHaveBeenCalled();
+  });
+  it("preserves subscription intent after a lost initial ACK instead of silently downgrading", async () => {
+    const {db,engine} = fixture();
+    db.query.mockResolvedValue([{value:NATIVE_TREE_PENDING_SUBSCRIPTION}]);
+    vi.stubGlobal("fetch",vi.fn().mockResolvedValue(response({code:"INVALID_PAYLOAD"},400)));
     await expect(engine.negotiateTree(scope)).rejects.toMatchObject({code:"UNSUPPORTED_TREE_SUBSCRIPTION"});
     expect(db.run).not.toHaveBeenCalled();
   });
