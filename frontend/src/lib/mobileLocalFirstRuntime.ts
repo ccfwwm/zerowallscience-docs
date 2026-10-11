@@ -12,9 +12,10 @@ import {
 } from "./localStore";
 import { installMobileLocalFirstBridge } from "./mobileLocalFirstBridge";
 import { migrateMobileLocalAccount } from "./mobileLocalAccountMigration";
-import { notifyMobileSyncStatusChanged, setMobileSyncEnabled } from "./mobileSyncStatus";
+import { notifyMobileSyncStatusChanged, setMobileSyncEnabled, MOBILE_SYNC_APPLIED_EVENT } from "./mobileSyncStatus";
 import { createMobileSyncEngine, type MobileSyncEngine } from "./mobileSyncEngine";
 import { createMobileServerEndpointRuntime } from "./mobileServerEndpointRuntime";
+import { installMobileSyncRealtime } from "./mobileSyncRealtime";
 import { createNativeAttachmentStore } from "./nativeAttachmentStore";
 import { openNativeDatabase, type NativeDatabase } from "./nativeDatabase";
 import { createNativeLocalRepository } from "./nativeLocalRepository";
@@ -546,6 +547,9 @@ async function configureRuntime(): Promise<void> {
       beforeSync: () => endpoints?.beforeSync() || Promise.resolve(),
       onNetworkUnavailable: () => endpoints?.recover(),
       onAttachmentReady:(id)=>{void repository?.refreshAttachmentUrl(id);},
+      onApplied: (detail) => {
+        if (active?.engine === engine) window.dispatchEvent(new CustomEvent(MOBILE_SYNC_APPLIED_EVENT, { detail }));
+      },
     });
     repository = createNativeLocalRepository({
       db,attachments:attachmentStore,accountId:ids.accountId,userId,
@@ -565,6 +569,7 @@ async function configureRuntime(): Promise<void> {
     active = {identity,db,engine,restoreBridge,removeListeners};
     const profile = (await db.query<{ enabled: number }>("SELECT enabled FROM sync_profiles WHERE id=?",[ids.profileId]))[0];
     setMobileSyncEnabled(profile?.enabled === 1);
+    removeListeners.push(installMobileSyncRealtime(engine));
     if (profile?.enabled === 1) engine.start();
   } catch (error) {
     for (const remove of removeListeners) await Promise.resolve(remove()).catch(() => undefined);

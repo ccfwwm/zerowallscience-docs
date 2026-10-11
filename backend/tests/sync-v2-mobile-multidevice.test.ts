@@ -68,6 +68,7 @@ interface Client {
   repository: NativeLocalRepository;
   engine: MobileSyncEngine;
   profileId: string;
+  removedFiles: string[];
   sync(): Promise<void>;
 }
 async function client(name: string): Promise<Client> {
@@ -78,8 +79,9 @@ async function client(name: string): Promise<Client> {
     VALUES (?,?,?, ?,1,'now','now')`, [profileId, name, serverUrl, USER]);
   await db.run("INSERT OR IGNORE INTO sync_devices (profileId,deviceId,platform,createdAt) VALUES (?,?,'android','now')", [profileId, name]);
   const repository = new NativeLocalRepository({ db, attachments: {} as never, accountId: name, userId: USER, getScopeKey: () => "personal" });
-  const engine = new MobileSyncEngine({ db, attachments: {} as never, profileId, deviceId: name, serverUrl, token: USER, userId: USER });
-  const result = { db, file, repository, engine, profileId, async sync() {
+  const removedFiles: string[] = [];
+  const engine = new MobileSyncEngine({ db, attachments: { remove: async (id: string) => { removedFiles.push(id); } } as never, profileId, deviceId: name, serverUrl, token: USER, userId: USER });
+  const result = { db, file, repository, engine, profileId, removedFiles, async sync() {
     engine.start();
     try { await engine.syncOnce(); } finally { engine.stop(); }
   } };
@@ -112,6 +114,37 @@ test.after(async () => {
   await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   closeServerDb();
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test("workspace Snapshot pruning preserves pending descendants, unresolved conflicts and local attachment bytes", async () => {
+  const c = await client("prune-native");
+  const key = "workspace:prune", book = randomUUID(), pendingNote = randomUUID(), conflictedNote = randomUUID(), attachment = randomUUID();
+  await c.db.run("INSERT INTO notebooks (id,scopeKey,workspaceId,userId,name,createdAt,updatedAt) VALUES (?,?,'prune',?,'Book','now','now')", [book,key,USER]);
+  for (const id of [pendingNote, conflictedNote]) await c.db.run("INSERT INTO notes (id,scopeKey,workspaceId,userId,notebookId,title,content,createdAt,updatedAt) VALUES (?,?,'prune',?,?,'Title','retained','now','now')", [id,key,USER,book]);
+  await c.db.run("INSERT INTO sync_outbox (id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,payload,createdAt) VALUES (?,?,?,?,?,'note',?,'upsert','{}','now')", [randomUUID(),randomUUID(),c.profileId,"prune-native",key,pendingNote]);
+  await c.db.run("INSERT INTO sync_conflicts (id,profileId,scopeKey,entityType,entityId,localPayload,remotePayload,createdAt) VALUES (?,?,?,'note',?,'{}','{}','now')", [randomUUID(),c.profileId,key,conflictedNote]);
+  await c.db.run("INSERT INTO attachments (id,scopeKey,workspaceId,userId,noteId,filename,mimeType,size,localPath,available,transferStatus,createdAt,updatedAt) VALUES (?,?,'prune',?,?,'a.png','image/png',4,'fixture',1,'pending_upload','now','now')", [attachment,key,USER,pendingNote]);
+  await (c.engine as unknown as { pruneWorkspaceSnapshot(s: unknown, seen: Map<string,Set<string>>): Promise<void> }).pruneWorkspaceSnapshot({ ...scope, scopeKey: key, workspaceId: "prune" }, new Map());
+  assert.equal((await c.db.query("SELECT id FROM notes WHERE scopeKey=?", [key])).length, 2);
+  assert.equal((await c.db.query("SELECT id FROM notebooks WHERE scopeKey=?", [key])).length, 1);
+  assert.equal((await c.db.query("SELECT id FROM attachments WHERE scopeKey=?", [key])).length, 1);
+  assert.deepEqual(c.removedFiles, []);
+});
+
+test("create then permanent delete between Pulls advances the cursor without a missing Snapshot error", async () => {
+  const a = await client("fold-a"), b = await client("fold-b");
+  const book = randomUUID(), id = randomUUID();
+  await a.repository.notebooks.create({ id: book, name: "Book" });
+  await a.sync(); await b.sync();
+  await a.repository.notes.create({ id, notebookId: book, content: "temporary" });
+  await a.sync();
+  await a.repository.notes.remove(id);
+  await a.sync();
+  await b.sync();
+  assert.equal((await b.repository.notes.get(id)), null);
+  const state = (await b.db.query<{lastError:string|null;lastSequence:number}>("SELECT lastError,lastSequence FROM sync_state WHERE profileId=?", [b.profileId]))[0];
+  assert.equal(state.lastError, null);
+  assert.equal(state.lastSequence, serverDb.prepare("SELECT MAX(sequence) AS seq FROM sync_changes_v2 WHERE userId=?").get(USER).seq);
 });
 
 test("three independent SQLite clients converge bidirectionally after consecutive Markdown and rich-text edits", async () => {
@@ -267,12 +300,16 @@ test("concurrent devices preserve both versions, and keep-local resolution estab
   assert.equal(rows.length, 1);
   assert.equal(JSON.parse(rows[0].localPayload).content, "B version");
   assert.equal(JSON.parse(rows[0].remotePayload).content, "A version");
+  await b.repository.notes.update(id, { content: "B edited after conflict" });
+  await b.sync();
+  const fork = await b.engine.forkLocalConflict(rows[0].id, "local");
+  assert.equal((await b.repository.notes.get(fork))?.content, "B edited after conflict");
   await b.engine.resolveLocalConflict(rows[0].id, "keep-local");
   await b.sync();
   assert.equal((await b.repository.notes.get(id))?.version, (serverDb.prepare("SELECT version FROM notes WHERE id=?").get(id) as {version:number}).version);
   await b.repository.notes.update(id, { title: "after resolution" }); await b.sync(); await a.sync();
   assert.equal((await conflicts(b)).length, 0);
-  assert.equal((await a.repository.notes.get(id))?.content, "B version");
+  assert.equal((await a.repository.notes.get(id))?.content, "B edited after conflict");
 });
 
 test("two edits committed during a delayed ACK survive own echo and subsequent push", async () => {

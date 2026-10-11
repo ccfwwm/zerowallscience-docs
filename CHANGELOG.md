@@ -12,6 +12,13 @@
 
 <!-- ADD_NEW_HERE -->
 
+## 未发布 / Unreleased
+
+- **sync**：保护 Native 离线编辑、删除冲突和迟到 ACK；重试保留 mutationId，避免旧更新复活已删除笔记。Protect durable native edits, deletion conflicts and late ACKs without changing mutation identity.
+- **android**：复用 WebSocket 唤醒 Sync V2 Pull，提交后刷新界面，并通过前台周期 Pull 补偿丢失通知。Wake native Pull on notices/reconnect and refresh UI after committed Apply.
+- **sync**：修复同页创建后删除、工作区 Snapshot 清理和冲突后继续编辑的数据保护问题。Protect pending descendants, attachment bytes and newer local edits during recovery.
+- 验收范围与未完成平台见 `docs/sync-v2-reliability-validation.md`；这些改动尚未正式发布。See the validation record for evidence and remaining acceptance gaps; these changes are not released.
+
 ## v1.5.1 - 2026-10-08
 
 ### ✨ 新增

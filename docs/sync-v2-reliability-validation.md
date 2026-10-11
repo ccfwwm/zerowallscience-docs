@@ -32,10 +32,24 @@
 
 测试执行方式：Windows 的 `better-sqlite3` 是 Electron ABI，必须使用 `ELECTRON_RUN_AS_NODE=1` 的项目 Electron，参数为 `--import ./backend/node_modules/tsx/dist/loader.mjs --import ./backend/tests/setup-db-isolation.ts --test <目标文件>`。PowerShell 对 GUI exe 应使用 `Start-Process -WindowStyle Hidden -Wait -PassThru` 并检查 `ExitCode`。直接 Node 因 ABI 不符没有运行成功；未加载隔离 setup 的加密套件最初失败，补正确 setup 后已通过。新增测试最初确实出现删除丢正文、错误 confirmed、复活旧笔记、并行回写丢标题和延迟 ACK 假冲突的失败。
 
+## Phase 2：通知、界面与恢复
+
+| 根因 | 改动与新链路 |
+| --- | --- |
+| Native 无 `sync.changed` → Pull 接线 | `mobileSyncRealtime.ts`/runtime：复用既有 realtime；通知/重连/前台 → 150ms 合并唤醒 → 同一个引擎 Pull；30s 前台补偿 |
+| 原生 Apply 后列表/打开正文没有明确提交事件 | `mobileSyncEngine` 提交后事件 → `OfflineSyncRuntime` 的 Native 刷新分支与 `EditorPane` 既有版本/未保存内容保护；旧引擎回调被当前 runtime 身份挡住 |
+| 创建与永久删除在同 Feed 页使 Snapshot 缺项 | Native/Desktop 均按身份折叠最终操作；不跳过真正缺失的 upsert，不推进失败游标 |
+| Native 全局事务标记误伤独立 UI 查询 | `nativeDatabase.ts`：外层请求进入既有串行队列等待提交/回滚；事务回调仍只能用 tx；保留失效 tx、嵌套事务、关闭连接与加密 DDL 检查 |
+| Workspace Snapshot 清理级联删待同步子项/冲突/附件 | Native/Desktop 排除 unresolved 冲突并保护剩余父子关系；Native 保留未上传本地附件，只有元数据确实移除才删除文件 |
+| 冲突后继续编辑，keep-local/fork 使用过期快照 | Native 选择时在事务内读最新本地实体，随后生成远端基线的新修订；原冲突两方台账不删除 |
+
+对应失败测试先失败再修复；多库套件增至 14 项。前端包括 Native UI 刷新、通知调度、冲突“查看”/知识树安全选择、目录密码保护与 401 endpoint 恢复。Node 24 的真实 SQLite 本地账号导入/同步开关组合 16/16，覆盖附件复制失败可重试与模式切换不丢队列。旧同步开关 fixture 缺少成功 ACK `version`，已按真实 API 契约修正；没有放宽生产校验。
+
+没有引入第三套同步协议、schema 迁移或新增依赖。父实体因受保护子项被保留是保守的数据保护，之后仍需用户处理冲突。Native 外层数据库队列不能在其自身事务回调内被 await，须使用 tx；本次修改及迁移调用链遵守该约束。
+
 ## 未验收与下一步
 
 - #829 基准已有“本地缺失 → 服务端授权 → 远端完整读取”fallback；本次没有新复现日志。该 fallback 仍不等于刚创建的服务端树笔记已经持久化到 Native，不能宣称离线完整解决。
 - Android 原生闪退：已读取连接设备 PJZ110 crash buffer，没有获得本次 Sync V2 的明确崩溃堆栈；原生列表预览限长与 Kotlin Filesystem 修复在基准里。新增源码验证不能替代新包设备验收。
-- Phase 2：Native `sync.changed` → Pull、重连/周期补偿、Apply 后 UI 刷新、知识树、附件与冲突面板专项覆盖。
-- Phase 3：最终构建/lint、Android 隔离包运行、故障恢复设备场景、Docker/NAS、迁移/备份恢复及延迟实测。iOS/HarmonyOS/其他桌面系统仍需独立平台证据。
-- 尚无 P50/P95/P99；P95≤3s/P99≤10s 只是目标。
+- 知识树 Native V2 实体未实现，登录态仍服务端树；附件 bytes、完整 EditorPane 与树创建仍需新包专项验收。父实体增量删除与所有受保护后代的组合须继续扩展故障覆盖，不能用本次 Workspace Snapshot 回归替代。
+- Phase 3 的最终构建、设备实测与完成度矩阵见后续记录；Docker/NAS、iOS/HarmonyOS/macOS/Linux 安装包仍需独立平台证据。

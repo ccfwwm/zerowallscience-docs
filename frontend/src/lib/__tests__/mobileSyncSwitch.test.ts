@@ -106,7 +106,9 @@ beforeEach(async () => {
     if (url.endsWith("/scopes")) payload = { items: [{ scopeKey: "personal", workspaceId: null, workspaceName: null, role: null, canWrite: true, accessFingerprint: "test" }] };
     else if (url.includes("/push?")) {
       const { mutations } = JSON.parse(String(init?.body));
-      payload = { serverSequence: 1, results: mutations.map(({ mutationId }: { mutationId: string }) => ({ mutationId, status: "applied" })) };
+      payload = { serverSequence: 1, results: mutations.map(({ mutationId, baseVersion, payload: note }: { mutationId: string; baseVersion?: number; payload?: {version?:number} }) => ({
+        mutationId, status: "applied", version: baseVersion == null ? note?.version || 1 : baseVersion + 1,
+      })) };
     } else if (url.includes("/changes?")) payload = { resetRequired: false, nextSequence: 1, items: [] };
     else if (url.includes("/ack")) payload = {};
     else if (url.includes("/blob/")) return { ok: init?.method !== "HEAD", status: init?.method === "HEAD" ? 404 : 200 };

@@ -25,6 +25,7 @@ import { parseMermaidMindmap, normalizeMindMapData } from "@/lib/mindmapTransfor
 import { cn } from "@/lib/utils";
 import SyncStatusBadge from "@/components/SyncStatusBadge";
 import { isAndroidNativeRuntime } from "@/lib/mobileLocalMode";
+import { MOBILE_SYNC_APPLIED_EVENT, type MobileSyncAppliedDetail } from "@/lib/mobileSyncStatus";
 import {
   applyEditorUpdateToNote,
   PREPARE_EDITOR_SPLIT_CLOSE_EVENT,
@@ -1280,6 +1281,20 @@ function OrdinaryEditorPane({
       console.warn(`[EditorPane] active note version check failed (${reason}):`, e);
     }
   }
+
+  useEffect(() => {
+    const applied = (event: Event) => {
+      const cur = activeNoteRef.current;
+      const detail = (event as CustomEvent<MobileSyncAppliedDetail>).detail;
+      if (!cur || !detail) return;
+      if (detail.deletedNoteIds.includes(cur.id)) setRemoteDelete({ trashed: false });
+      else if (detail.noteIds.includes(cur.id)) void checkActiveNoteRemoteVersion("native-sync");
+    };
+    window.addEventListener(MOBILE_SYNC_APPLIED_EVENT, applied);
+    return () => window.removeEventListener(MOBILE_SYNC_APPLIED_EVENT, applied);
+    // The handler reads current note/editor state through existing refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const { presenceUsers, isConnected, setEditing: rtSetEditing } = useRealtimeNote({
     noteId: activeNote?.id ?? null,

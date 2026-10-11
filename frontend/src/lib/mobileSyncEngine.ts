@@ -5,7 +5,7 @@ import { getResolvedApiBaseUrl } from "./serverUrl";
 import { fetchWithAuthRefresh, getAccessToken } from "./authSession";
 import { SERVER_ENDPOINT_CHANGED_EVENT } from "./serverEndpointState";
 import { forgetUnsentLocalNotes } from "./nativeLocalNoteOrigin";
-import { notifyMobileSyncStatusChanged } from "./mobileSyncStatus";
+import { notifyMobileSyncStatusChanged, type MobileSyncAppliedDetail } from "./mobileSyncStatus";
 import { nativeReceiptKey } from "./mobileNoteSyncReceipt";
 import { validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
 
@@ -35,6 +35,7 @@ interface MobileSyncOptions {
   onAttachmentReady?: (attachmentId:string) => void;
   beforeSync?: () => Promise<void>;
   onNetworkUnavailable?: () => void;
+  onApplied?: (detail: MobileSyncAppliedDetail) => void;
 }
 
 interface SnapshotEntry {
@@ -247,9 +248,6 @@ export class MobileSyncEngine {
     const selected=resolution==="manual"?mergedPayload:parse(resolution==="keep-remote"?row.remotePayload:row.localPayload);
     if(!selected)throw new Error("缺少可用的冲突内容");
     if(resolution!=="keep-remote"&&parse(row.remotePayload)?.__delete)throw new Error("远端笔记已永久删除，请先另存为新笔记保留本机内容");
-    const payload = row.entityType === "note" && resolution !== "keep-remote"
-      && typeof row.remoteVersion === "number" && Number.isSafeInteger(row.remoteVersion) && row.remoteVersion > 0
-      ? { ...selected, version: row.remoteVersion + 1 } : selected;
     const workspace=workspaceId(row.scopeKey);
     const stored=(await this.options.db.query<{workspaceName:string;role:string;canWrite:number;accessFingerprint:string}>(
       "SELECT workspaceName,role,canWrite,accessFingerprint FROM sync_workspace_scopes WHERE profileId=? AND scopeKey=?",
@@ -258,6 +256,13 @@ export class MobileSyncEngine {
     const scope:ScopeDescriptor={scopeKey:row.scopeKey,workspaceId:workspace,workspaceName:stored?.workspaceName||null,
       role:stored?.role||null,canWrite:workspace?stored?.canWrite===1:true,accessFingerprint:stored?.accessFingerprint||""};
     await this.options.db.transaction(async(tx)=>{
+      // The editor can keep saving while the conflict is awaiting a choice.
+      // Keep-local must preserve that latest durable edit, not its old snapshot.
+      const chosen = resolution === "keep-local"
+        ? await this.readEntity(tx, row.scopeKey, row.entityType, row.entityId) || selected : selected;
+      const payload = row.entityType === "note" && resolution !== "keep-remote"
+        && typeof row.remoteVersion === "number" && Number.isSafeInteger(row.remoteVersion) && row.remoteVersion > 0
+        ? { ...chosen, version: row.remoteVersion + 1 } : chosen;
       await tx.run(`DELETE FROM sync_outbox WHERE profileId=? AND scopeKey=?
         AND entityType=? AND entityId=? AND status IN ('pending','inflight','failed')`,
       [this.options.profileId,row.scopeKey,row.entityType,row.entityId]);
@@ -276,8 +281,8 @@ export class MobileSyncEngine {
   }
 
   async forkLocalConflict(conflictId:string,side:"local"|"remote"):Promise<string>{
-    const row=(await this.options.db.query<{scopeKey:string;entityType:RemoteEntityType;localPayload:string|null;remotePayload:string|null}>(
-      "SELECT scopeKey,entityType,localPayload,remotePayload FROM sync_conflicts WHERE id=? AND profileId=?",[conflictId,this.options.profileId],
+    const row=(await this.options.db.query<{scopeKey:string;entityId:string;entityType:RemoteEntityType;localPayload:string|null;remotePayload:string|null}>(
+      "SELECT scopeKey,entityId,entityType,localPayload,remotePayload FROM sync_conflicts WHERE id=? AND profileId=?",[conflictId,this.options.profileId],
     ))[0];
     if(!row||row.entityType!=="note")throw new Error("只有笔记冲突支持另存为新笔记");
     const payload=JSON.parse(side==="local"?row.localPayload||"null":row.remotePayload||"null") as Record<string,unknown>|null;
@@ -289,8 +294,9 @@ export class MobileSyncEngine {
     ))[0];
     const scope:ScopeDescriptor={scopeKey:row.scopeKey,workspaceId:workspace,workspaceName:stored?.workspaceName||null,
       role:stored?.role||null,canWrite:workspace?stored?.canWrite===1:true,accessFingerprint:stored?.accessFingerprint||""};
-    const next={...payload,id,workspaceId:workspace,title:`${String(payload.title||"无标题笔记")}（${side==="local"?"本机":"服务器"}版本）`,version:1};
     await this.options.db.transaction(async(tx)=>{
+      const chosen = side === "local" ? await this.readEntity(tx, row.scopeKey, "note", row.entityId) || payload : payload;
+      const next={...chosen,id,workspaceId:workspace,title:`${String(chosen.title||"无标题笔记")}（${side==="local"?"本机":"服务器"}版本）`,version:1};
       await this.applyEntity(tx,scope,{entityType:"note",entityId:id,payload:next});
       await tx.run(`INSERT INTO sync_outbox (
         id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,payload,status,retryCount,createdAt
@@ -476,39 +482,51 @@ export class MobileSyncEngine {
     const stale=await this.options.db.query<{id:string}>(`SELECT id FROM attachments WHERE scopeKey=?
       ${attachmentIds.length?`AND id NOT IN (${attachmentIds.map(()=>"?").join(",")})`:""}`,[scope.scopeKey,...attachmentIds]);
     await this.options.db.transaction(async(tx)=>{
-      const remove=async(table:string,type:EntityType)=>{
+      const remove=async(table:string,type:EntityType,extra="")=>{
         const ids=[...(seen.get(type)||[])];
         await tx.run(`DELETE FROM ${table} WHERE scopeKey=?
           ${ids.length?`AND id NOT IN (${ids.map(()=>"?").join(",")})`:""}
           AND NOT EXISTS (SELECT 1 FROM sync_outbox o WHERE o.profileId=? AND o.scopeKey=?
-            AND o.entityType=? AND o.entityId=${table}.id AND o.status IN ('pending','inflight','failed'))`,
-        [scope.scopeKey,...ids,this.options.profileId,scope.scopeKey,type]);
+            AND o.entityType=? AND o.entityId=${table}.id AND o.status IN ('pending','inflight','failed'))
+          AND NOT EXISTS (SELECT 1 FROM sync_conflicts c WHERE c.profileId=? AND c.scopeKey=?
+            AND c.entityType=? AND c.entityId=${table}.id AND c.status='unresolved') ${extra}`,
+        [scope.scopeKey,...ids,this.options.profileId,scope.scopeKey,type,this.options.profileId,scope.scopeKey,type]);
       };
       const removeComposite=async(table:string,type:EntityType,idSql:string)=>{
         const ids=[...(seen.get(type)||[])];
         await tx.run(`DELETE FROM ${table} WHERE scopeKey=?
           ${ids.length?`AND (${idSql}) NOT IN (${ids.map(()=>"?").join(",")})`:""}
           AND NOT EXISTS (SELECT 1 FROM sync_outbox o WHERE o.profileId=? AND o.scopeKey=?
-            AND o.entityType=? AND o.entityId=(${idSql}) AND o.status IN ('pending','inflight','failed'))`,
-        [scope.scopeKey,...ids,this.options.profileId,scope.scopeKey,type]);
+            AND o.entityType=? AND o.entityId=(${idSql}) AND o.status IN ('pending','inflight','failed'))
+          AND NOT EXISTS (SELECT 1 FROM sync_conflicts c WHERE c.profileId=? AND c.scopeKey=?
+            AND c.entityType=? AND c.entityId=(${idSql}) AND c.status='unresolved')`,
+        [scope.scopeKey,...ids,this.options.profileId,scope.scopeKey,type,this.options.profileId,scope.scopeKey,type]);
       };
-      await remove("attachments","attachment");
+      await remove("attachments","attachment","AND NOT (available=1 AND transferStatus IN ('local','pending_upload','uploading','failed'))");
       await remove("diaries","diary");
       await remove("mindmaps","mindmap");
       const reminderIds=[...(seen.get("task_reminder")||[])];
       await tx.run(`DELETE FROM task_reminders WHERE taskId IN (SELECT id FROM tasks WHERE scopeKey=?)
         ${reminderIds.length?`AND id NOT IN (${reminderIds.map(()=>"?").join(",")})`:""}
         AND NOT EXISTS (SELECT 1 FROM sync_outbox o WHERE o.profileId=? AND o.scopeKey=?
-          AND o.entityType='task_reminder' AND o.entityId=task_reminders.id AND o.status IN ('pending','inflight','failed'))`,
-      [scope.scopeKey,...reminderIds,this.options.profileId,scope.scopeKey]);
-      await remove("tasks","task");
+          AND o.entityType='task_reminder' AND o.entityId=task_reminders.id AND o.status IN ('pending','inflight','failed'))
+        AND NOT EXISTS (SELECT 1 FROM sync_conflicts c WHERE c.profileId=? AND c.scopeKey=?
+          AND c.entityType='task_reminder' AND c.entityId=task_reminders.id AND c.status='unresolved')`,
+      [scope.scopeKey,...reminderIds,this.options.profileId,scope.scopeKey,this.options.profileId,scope.scopeKey]);
+      await remove("tasks","task","AND NOT EXISTS (SELECT 1 FROM task_reminders r WHERE r.taskId=tasks.id)");
       await removeComposite("favorites","favorite","favorites.userId || ':' || favorites.noteId");
       await removeComposite("note_tags","note_tag","note_tags.noteId || ':' || note_tags.tagId");
-      await remove("notes","note");
-      await remove("notebooks","notebook");
-      await remove("tags","tag");
+      await remove("notes","note",`AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.scopeKey=notes.scopeKey AND a.noteId=notes.id)
+        AND NOT EXISTS (SELECT 1 FROM note_tags nt WHERE nt.scopeKey=notes.scopeKey AND nt.noteId=notes.id)
+        AND NOT EXISTS (SELECT 1 FROM favorites f WHERE f.scopeKey=notes.scopeKey AND f.noteId=notes.id)`);
+      await remove("notebooks","notebook",`AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.scopeKey=notebooks.scopeKey AND n.notebookId=notebooks.id)
+        AND NOT EXISTS (SELECT 1 FROM notebooks child WHERE child.scopeKey=notebooks.scopeKey AND child.parentId=notebooks.id)`);
+      await remove("tags","tag","AND NOT EXISTS (SELECT 1 FROM note_tags nt WHERE nt.scopeKey=tags.scopeKey AND nt.tagId=tags.id)");
     });
-    await Promise.all(stale.map(({id})=>this.options.attachments.remove(id).catch(()=>undefined)));
+    for (const { id } of stale) {
+      const retained = await this.options.db.query("SELECT id FROM attachments WHERE scopeKey=? AND id=?", [scope.scopeKey,id]);
+      if (!retained.length) await this.options.attachments.remove(id);
+    }
   }
 
   private async push(scope: ScopeDescriptor): Promise<void> {
@@ -620,9 +638,12 @@ export class MobileSyncEngine {
     );
     assertMobileSyncItems(changes.items,"changes");
     if (changes.resetRequired) { await this.bootstrap(scope); return; }
-    const deletes: SnapshotEntry[] = changes.items.filter((item)=>item.operation==="delete")
+    // Snapshot contains current entities, so intermediate upserts of an entity
+    // already deleted in this feed page must not be requested.
+    const latest = [...new Map(changes.items.map((item) => [`${item.entityType}\0${item.entityId}`, item])).values()];
+    const deletes: SnapshotEntry[] = latest.filter((item)=>item.operation==="delete")
       .map((item)=>({entityType:item.entityType,entityId:item.entityId,payload:{__delete:true}}));
-    const wanted = new Set(changes.items.filter((item)=>item.operation!=="delete").map((item)=>`${item.entityType}\0${item.entityId}`));
+    const wanted = new Set(latest.filter((item)=>item.operation!=="delete").map((item)=>`${item.entityType}\0${item.entityId}`));
     const entries: SnapshotEntry[] = [];
     if (wanted.size) {
       let cursor: string|null=null;
@@ -657,6 +678,7 @@ export class MobileSyncEngine {
     for (const entry of entries) if (entry.entityType === "note" && !entry.payload.__delete) validateEncryptedNoteWrite(entry.payload);
     const notebookParents=entries.flatMap((entry)=>entry.entityType==="notebook"
       && typeof entry.payload.parentId==="string" ? [[entry.entityId,entry.payload.parentId] as const] : []);
+    const applied: SnapshotEntry[] = [];
     await this.options.db.transaction(async (tx) => {
       // 即使远端内容进入冲突中心而未覆盖本地，它的存在也已得到确认。
       await forgetUnsentLocalNotes(tx, scope.scopeKey, entries.filter((entry) => entry.entityType === "note").map((entry) => entry.entityId));
@@ -701,11 +723,17 @@ export class MobileSyncEngine {
           }
         }
         await this.applyEntity(tx,scope,entry);
+        applied.push(entry);
       }
       for(const [id,parentId] of notebookParents){
         const parent=(await tx.query<{id:string}>("SELECT id FROM notebooks WHERE scopeKey=? AND id=?",[scope.scopeKey,parentId]))[0];
         if(parent)await tx.run("UPDATE notebooks SET parentId=? WHERE scopeKey=? AND id=?",[parentId,scope.scopeKey,id]);
       }
+    });
+    if (applied.length && !this.stopped) this.options.onApplied?.({
+      scopeKey: scope.scopeKey,
+      noteIds: applied.filter((entry) => entry.entityType === "note" && !entry.payload.__delete).map((entry) => entry.entityId),
+      deletedNoteIds: applied.filter((entry) => entry.entityType === "note" && entry.payload.__delete).map((entry) => entry.entityId),
     });
   }
 

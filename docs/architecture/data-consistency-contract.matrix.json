@@ -272,7 +272,10 @@
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "two edits committed during a delayed ACK" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "invalid note ACK leaves the durable mutation" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a failed Outbox insertion rolls back note creation" },
-        { "file": "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts", "case": "rejects a late push ACK when the account changes" }
+        { "file": "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts", "case": "rejects a late push ACK when the account changes" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "workspace Snapshot pruning preserves pending descendants" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "create then permanent delete between Pulls" },
+        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "external UI reads wait for an in-progress Apply transaction" }
       ]
     }
   ]

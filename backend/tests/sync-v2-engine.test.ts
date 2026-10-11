@@ -706,6 +706,24 @@ test("无变更时也推进游标并 ACK，避免重复扫描", async () => {
   assert.deepEqual(remote.ackCalls, [42]);
 });
 
+test("同一批创建后删除只应用最终删除，不等待已不存在的 Snapshot", async () => {
+  resetSyncTables();
+  const db = getDb();
+  const { engine, remote, profileId } = createEngine();
+  remote.serverSequence = 43;
+  remote.changesQueue.push({
+    serverSequence: 43, nextSequence: 43, hasMore: false, resetRequired: false,
+    items: [
+      { sequence: 42, entityType: "note", entityId: "created-then-deleted", operation: "upsert" },
+      { sequence: 43, entityType: "note", entityId: "created-then-deleted", operation: "delete" },
+    ],
+  });
+  const status = await engine.syncOnce();
+  assert.notEqual(status.state, "error");
+  assert.equal(sync.getSyncState(db, profileId)?.lastSequence, 43);
+  assert.deepEqual(remote.ackCalls, [43]);
+});
+
 test("Change Feed upsert 缺少 Snapshot payload 时不推进游标或 ACK", async () => {
   resetSyncTables();
   const db = getDb();

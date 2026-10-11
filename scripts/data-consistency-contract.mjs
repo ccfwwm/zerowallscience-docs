@@ -46,7 +46,7 @@ if ([...argumentsSet].some((arg) => !supported.includes(arg)) || argumentsSet.si
     }
     for (const check of policy.checks) {
       if (typeof check.file !== "string" || typeof check.case !== "string" ||
-          check.case.length < 12 || !/^(frontend\/src\/lib\/__tests__|backend\/tests)\/[\w./-]+\.test\.tsx?$/.test(check.file)) {
+          check.case.length < 12 || !/^(frontend\/src\/lib\/(?:__tests__|encryptedNotes\/__tests__)|backend\/tests)\/[\w./-]+\.test\.tsx?$/.test(check.file)) {
         failures.push(policy.id + " uses an invalid test path/case: " + JSON.stringify(check));
         continue;
       }

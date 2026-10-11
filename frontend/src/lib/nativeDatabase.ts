@@ -7,6 +7,8 @@ import {
 } from "@capacitor-community/sqlite";
 
 export interface NativeDatabase {
+  // Outer calls are serialized behind active transactions. A transaction body
+  // must use its tx view; awaiting the outer queue inside it would deadlock.
   run(
     sql: string,
     values?: unknown[],
@@ -665,7 +667,6 @@ async function hashAccountId(accountId: string): Promise<string> {
 
 class NativeDatabaseImpl implements NativeDatabase {
   private queue: Promise<void> = Promise.resolve();
-  private transactionActive = false;
   private closing = false;
   private closed = false;
   private closePromise?: Promise<void>;
@@ -758,7 +759,6 @@ class NativeDatabaseImpl implements NativeDatabase {
     this.assertAcceptingWork();
     return this.enqueue(async () => {
       const transactionView = this.createTransactionView();
-      this.transactionActive = true;
       try {
         return await this.withImmediateTransaction(async () => {
           try {
@@ -769,13 +769,11 @@ class NativeDatabaseImpl implements NativeDatabase {
         });
       } finally {
         transactionView.deactivate();
-        this.transactionActive = false;
       }
     });
   }
 
   close(): Promise<void> {
-    this.assertOuterHandleAvailable();
     if (this.closed) return Promise.resolve();
     if (this.closePromise) return this.closePromise;
 
@@ -806,17 +804,8 @@ class NativeDatabaseImpl implements NativeDatabase {
   }
 
   private assertAcceptingWork(): void {
-    this.assertOuterHandleAvailable();
     if (this.closed) throw new Error("原生数据库连接已关闭");
     if (this.closing) throw new Error("原生数据库连接正在关闭");
-  }
-
-  private assertOuterHandleAvailable(): void {
-    if (this.transactionActive) {
-      throw new Error(
-        "原生数据库事务执行期间不能使用外层句柄；请改用事务回调传入的 tx",
-      );
-    }
   }
 
   private enqueue<T>(work: () => Promise<T>): Promise<T> {

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MobileSyncEngine, isAckedOwnNoteEcho } from "../mobileSyncEngine";
 import { nativeReceiptKey } from "../mobileNoteSyncReceipt";
 import type { NativeDatabase } from "../nativeDatabase";
@@ -12,6 +12,7 @@ const local = { id: "note-a", scopeKey: "personal", version: 4, title: "RACE NEW
 const ownAck = JSON.stringify({ mutationId: "mutation-old", serverVersion: 3 });
 const pending = { baseVersion: 3, payload: JSON.stringify(local) };
 
+beforeEach(() => { localStorage.clear(); });
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe("PR #821 Android receipt ACK and in-flight pull regressions", () => {

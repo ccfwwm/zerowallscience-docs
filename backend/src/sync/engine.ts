@@ -718,7 +718,9 @@ export class SyncEngine {
     const deletions: EngineRemotePayload[] = [];
     const wanted = new Set<string>();
 
-    for (const item of items) {
+    // Only the last operation per identity describes its state in Snapshot.
+    const latest = new Map(items.map((item) => [`${item.entityType}\u0000${item.entityId}`, item]));
+    for (const item of latest.values()) {
       if (item.operation === "delete") {
         deletions.push(item.entityType === "knowledge_tree_node"
           ? {
@@ -779,8 +781,7 @@ export class SyncEngine {
       );
     }
 
-    // 先应用 upsert 再应用 delete：
-    // 同一轮里若既有创建又有删除，删除应当是最终状态。
+    // Apply only the final operation for each entity in this feed page.
     return [...upserts, ...deletions];
   }
 
@@ -990,7 +991,9 @@ export class SyncEngine {
         ${ids.length ? `AND id NOT IN (${placeholders})` : ""}
         AND NOT EXISTS (SELECT 1 FROM sync_outbox o WHERE o.profileId=? AND o.scopeKey=?
           AND o.entityType=? AND o.entityId=${table}.id AND o.status IN ('pending','inflight','failed'))
-        ${extra}`).run(scope.workspaceId,...ids,this.profileId,scope.scopeKey,entityType);
+        AND NOT EXISTS (SELECT 1 FROM sync_conflicts c WHERE c.profileId=? AND c.scopeKey=?
+          AND c.entityType=? AND c.entityId=${table}.id AND c.status='unresolved')
+        ${extra}`).run(scope.workspaceId,...ids,this.profileId,scope.scopeKey,entityType,this.profileId,scope.scopeKey,entityType);
     };
     const removeComposite=(table:string,entityType:string,idSql:string,scopeSql:string)=>{
       const ids=[...(seen.get(entityType) || [])];
@@ -998,19 +1001,24 @@ export class SyncEngine {
       this.db.prepare(`DELETE FROM ${table} WHERE ${scopeSql}
         ${ids.length ? `AND (${idSql}) NOT IN (${placeholders})` : ""}
         AND NOT EXISTS (SELECT 1 FROM sync_outbox o WHERE o.profileId=? AND o.scopeKey=?
-          AND o.entityType=? AND o.entityId=(${idSql}) AND o.status IN ('pending','inflight','failed'))`)
-        .run(scope.workspaceId,...ids,this.profileId,scope.scopeKey,entityType);
+          AND o.entityType=? AND o.entityId=(${idSql}) AND o.status IN ('pending','inflight','failed'))
+        AND NOT EXISTS (SELECT 1 FROM sync_conflicts c WHERE c.profileId=? AND c.scopeKey=?
+          AND c.entityType=? AND c.entityId=(${idSql}) AND c.status='unresolved')`)
+        .run(scope.workspaceId,...ids,this.profileId,scope.scopeKey,entityType,this.profileId,scope.scopeKey,entityType);
     };
     runWithOutboxSuppressed(()=>runChangeFeedSuppressed(this.db,()=>this.db.transaction(()=>{
       removeMissing("attachments","attachment");
       removeComposite("favorites","favorite","favorites.userId || ':' || favorites.noteId","favorites.workspaceId=?");
       removeComposite("note_tags","note_tag","note_tags.noteId || ':' || note_tags.tagId","note_tags.noteId IN (SELECT id FROM notes WHERE workspaceId=?)");
       removeComposite("task_reminders","task_reminder","task_reminders.id","task_reminders.taskId IN (SELECT id FROM tasks WHERE workspaceId=?)");
-      removeMissing("tasks","task");
+      removeMissing("tasks","task","AND NOT EXISTS (SELECT 1 FROM task_reminders r WHERE r.taskId=tasks.id)");
       removeMissing("diaries","diary");
       removeMissing("mindmaps","mindmap");
-      removeMissing("notes","note");
-      removeMissing("notebooks","notebook","AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.notebookId=notebooks.id)");
+      removeMissing("notes","note",`AND NOT EXISTS (SELECT 1 FROM attachments a WHERE a.noteId=notes.id)
+        AND NOT EXISTS (SELECT 1 FROM note_tags nt WHERE nt.noteId=notes.id)
+        AND NOT EXISTS (SELECT 1 FROM favorites f WHERE f.noteId=notes.id)`);
+      removeMissing("notebooks","notebook",`AND NOT EXISTS (SELECT 1 FROM notes n WHERE n.notebookId=notebooks.id)
+        AND NOT EXISTS (SELECT 1 FROM notebooks child WHERE child.parentId=notebooks.id)`);
       removeMissing("tags","tag","AND NOT EXISTS (SELECT 1 FROM note_tags nt WHERE nt.tagId=tags.id)");
     })()));
   }

@@ -39,3 +39,30 @@ it("a failed guard install rolls back without acknowledging a migrated schema", 
   expect(statements.at(-1)).toBe("ROLLBACK");
   expect(statements).not.toContain("PRAGMA user_version = 5"); expect(statements).not.toContain("COMMIT");
 });
+
+async function verifyConcurrentRead(rollback: boolean) {
+  const db = await openNativeDatabase("concurrent-sync-account");
+  let release!: () => void, entered!: () => void;
+  const started = new Promise<void>((resolve) => { entered = resolve; });
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let expired: typeof db | undefined;
+  const apply = db.transaction(async (tx) => {
+    expired = tx;
+    await tx.run("UPDATE notes SET title='fixture'");
+    entered(); await gate;
+    if (rollback) throw new Error("apply failure");
+  });
+  const completion = apply.catch((error) => error.message);
+  await started;
+  // The reader belongs to another event/UI callback, not the transaction body.
+  let read: Promise<unknown[]>;
+  try { read = db.query("SELECT id FROM notes"); }
+  finally { release(); }
+  expect(await completion).toBe(rollback ? "apply failure" : undefined);
+  expect(await read!).toEqual([]);
+  expect(mocks.execute.mock.calls.at(-1)?.[0]).toBe(rollback ? "ROLLBACK" : "COMMIT");
+  expect(() => expired!.query("SELECT id FROM notes")).toThrow("事务视图已失效");
+  await db.close();
+}
+it("external UI reads wait for an in-progress Apply transaction to commit", () => verifyConcurrentRead(false));
+it("external UI reads wait for an in-progress Apply transaction to roll back", () => verifyConcurrentRead(true));
