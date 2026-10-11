@@ -128,6 +128,7 @@ test("offline folder trash and restore preserve bodies and replay their deletion
   assert.ok(!deleted.affectedNodeIds.includes(`note:${old}`));
   assert.equal((await c.repository.notes.get(note))?.content,"Pending before trash");
   assert.equal((await c.repository.notes.get(note))?.isTrashed,1);
+  assert.equal((await c.repository.listPersonalTreeOverrides()).find((row)=>row.id===`note:${note}`)?.localLifecycle,"trash");
   assert.equal((await readNativeNoteSyncReceipt(c.db,c.profileId,note)).phase,"pending");
   const queued=(await pending(c)).map((row)=>row.mutationId);
   assert.ok(bodyIds.every((id)=>queued.includes(id)));
@@ -135,6 +136,7 @@ test("offline folder trash and restore preserve bodies and replay their deletion
   assert.deepEqual((await pending(reopened)).map((row)=>row.mutationId),queued);
   const restored=await reopened.repository.restorePersonalTreeFolder(node);
   assert.ok(restored.restoredNodeIds.includes(`note:${note}`));
+  assert.equal((await reopened.repository.listPersonalTreeOverrides()).find((row)=>row.id===`note:${note}`)?.localLifecycle,"restore");
   assert.equal((await reopened.repository.notes.get(note))?.isTrashed,0);
   assert.equal((await reopened.repository.notes.get(old))?.isTrashed,1);
   await reopened.sync(); const peer=await client("folder-trash-peer"); await peer.sync();

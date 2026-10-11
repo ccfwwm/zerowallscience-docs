@@ -340,6 +340,8 @@
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "persists folder trash and restores it through the unified trash facade" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "projects durable pending trash into the offline bin" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "does not treat a trash authorization rejection as an offline read" },
+        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "opens an explicitly restored ordinary personal body before the server acknowledges its folder restore" },
+        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "does not let a local restore bypass %s authorization" },
         { "file": "backend/tests/knowledge-tree-root-documents.test.ts", "case": "moving folders and documents into root documents retains hidden containers" }
       ]
     }

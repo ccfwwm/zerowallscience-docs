@@ -302,9 +302,10 @@ export class NativeLocalRepository implements LocalRepository {
     return nodes;
   }
 
-  async listPersonalTreeOverrides() {
+  async listPersonalTreeOverrides(): Promise<Array<Record<string,unknown>>> {
     const sync = await this.syncContext(this.db);
-    return sync ? [...await listNativePersonalTreeOverrides(this.db,sync.profileId),...await nativeTreeLifecycleOverrides(this.db,sync.profileId)] : [];
+    return sync ? [...await listNativePersonalTreeOverrides(this.db,sync.profileId),
+      ...(await nativeTreeLifecycleOverrides(this.db,sync.profileId)).map((node)=>({...node,localLifecycle:node.isDeleted===0?"restore":"trash"}))] : [];
   }
 
   private async changePersonalTreeTrash(ids:string[],restoring:boolean) {

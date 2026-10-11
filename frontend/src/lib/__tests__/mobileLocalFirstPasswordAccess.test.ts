@@ -69,6 +69,42 @@ beforeEach(() => {
 afterEach(() => { restore?.(); restore = undefined; vi.restoreAllMocks(); Reflect.deleteProperty(window, "Capacitor"); });
 
 describe("signed-in Android folder password access", () => {
+  it("opens an explicitly restored ordinary personal body before the server acknowledges its folder restore", async () => {
+    const { repository, remoteTree, authorize } = setup();
+    const owner = { source: "owner", capabilities: { canView: true } } as KnowledgeTreeNode["access"];
+    const parent = { ...folder("public", null), userId: "user", isDeleted: 1, access: owner };
+    const child = { id: "note:ordinary", resourceId: "ordinary", resourceType: "note", parentId: "public",
+      userId: "user", workspaceId: null, isDeleted: 1, sortOrder: 0, access: owner } as KnowledgeTreeNode;
+    remoteTree.mockResolvedValue({ nodes: [parent, child], passwordAuthorizedNotes: [] });
+    vi.mocked(repository.listPersonalTreeOverrides).mockResolvedValue([
+      { ...parent, isDeleted: 0, localLifecycle: "restore" }, { ...child, isDeleted: 0, localLifecycle: "restore" },
+    ]);
+    await expect(api.getNote("ordinary")).resolves.toMatchObject({ id: "ordinary" });
+    expect(authorize).not.toHaveBeenCalled();
+    remoteTree.mockRejectedValue(new TypeError("Failed to fetch"));
+    await expect(api.getNote("ordinary")).resolves.toMatchObject({ id: "ordinary" });
+  });
+
+  it.each(["move", "shared", "protected", "missing-parent", "malformed", "live-protection"])(
+    "does not let a local restore bypass %s authorization", async (state) => {
+      const { repository, remoteTree, authorize } = setup();
+      const owner = { source: "owner", capabilities: { canView: true } } as KnowledgeTreeNode["access"];
+      const parent = { ...folder("public", null, state === "protected"), userId: "user", isDeleted: 1, access: owner };
+      const child = { id: "note:ordinary", resourceId: "ordinary", resourceType: "note", parentId: "public",
+        userId: "user", workspaceId: null, isDeleted: 1, sortOrder: 0,
+        access: state === "shared" ? { ...owner, source: "inherited" } : owner } as KnowledgeTreeNode;
+      remoteTree.mockResolvedValue({ nodes: state === "missing-parent" ? [child] : [parent, child],
+        passwordAuthorizedNotes: state === "malformed" ? null as never
+          : state === "live-protection" ? [{ noteId: "ordinary", folderIds: ["protected-ancestor"] }] : [] });
+      vi.mocked(repository.listPersonalTreeOverrides).mockResolvedValue([
+        { ...parent, isDeleted: 0, localLifecycle: state === "move" ? undefined : "restore" },
+        { ...child, isDeleted: 0, localLifecycle: state === "move" ? undefined : "restore" },
+      ]);
+      await expect(api.getNote("ordinary")).rejects.toThrow();
+      expect(authorize).not.toHaveBeenCalled();
+    },
+  );
+
   it("reads a locally created root with live server proofs and after losing the first Push response", async () => {
     const { repository, remoteTree, snapshots, db, authorize } = setup();
     const root = { ...note("local-root", "hidden-root"), userId: "user", isTrashed: 0, treeParentId: null };

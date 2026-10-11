@@ -248,6 +248,17 @@ export function installMobileLocalKnowledgeTreeBridge(
         });
         result = { ...result,nodes:nodes.map((node,index) =>
           safeChain(result.nodes[index],result.nodes,true) && safeChain(node,nodes,true) ? node : result.nodes[index]) };
+        // A server tree can still describe the acknowledged deletion while its
+        // durable local restore is waiting to Push. Only a complete ordinary
+        // owner chain may authorize that retained body; never replace a live
+        // password proof, grant access from a move, or persist this confirmation.
+        if (Array.isArray(result.passwordAuthorizedNotes)) {
+          const restored = result.nodes.filter((node) => node.resourceType === "note" && node.isDeleted === 0
+            && overrides.some((override) => override.id === node.id && override.localLifecycle === "restore")
+            && safeChain(node,result.nodes) && !result.passwordAuthorizedNotes!.some((proof) => proof.noteId === node.resourceId));
+          result = {...result,passwordAuthorizedNotes:[...result.passwordAuthorizedNotes,
+            ...restored.map((node) => ({noteId:node.resourceId,folderIds:[]}))]};
+        }
       }
       const drafts = await repository.listLocalTreeDrafts();
       if (!drafts.length) {
