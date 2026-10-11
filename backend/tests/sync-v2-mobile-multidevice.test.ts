@@ -11,6 +11,7 @@ import { NativeLocalRepository } from "../../frontend/src/lib/nativeLocalReposit
 import { MobileSyncEngine } from "../../frontend/src/lib/mobileSyncEngine";
 import type { NativeDatabase } from "../../frontend/src/lib/nativeDatabase";
 import { nativeReceiptKey, readNativeNoteSyncReceipt } from "../../frontend/src/lib/mobileNoteSyncReceipt";
+import { applyNativePersonalTree } from "../../frontend/src/lib/nativeKnowledgeTreeSync";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nowen-sync-multidevice-"));
 process.env.DB_PATH = path.join(tmpDir, "server.db");
@@ -26,6 +27,7 @@ let httpServer: ReturnType<typeof serve>;
 let serverUrl: string;
 const clients: Client[] = [];
 let afterPush: ((response: Response) => Promise<Response>) | undefined;
+let afterSnapshot: ((response: Response) => Promise<Response>) | undefined;
 
 // The real native schema, with independent on-disk SQLite databases. The adapter
 // serializes transactions just like NativeDatabaseImpl; no shared client state.
@@ -102,6 +104,7 @@ test.before(async () => {
     c.req.raw.headers.set("X-User-Id", c.req.header("Authorization")?.replace("Bearer ", "") || "");
     await next();
     if (c.req.path.endsWith("/push") && afterPush) c.res = await afterPush(c.res);
+    if (c.req.path.endsWith("/snapshot") && afterSnapshot) c.res = await afterSnapshot(c.res);
   });
   app.route("/api/sync/v2", routes.default);
   httpServer = serve({ fetch: app.fetch, hostname: "127.0.0.1", port: 0 });
@@ -136,6 +139,120 @@ test("personal tree creates are readable offline, survive reopen and converge wi
     assert.equal((await b.repository.notes.get(id))?.content, "offline body");
     assert.equal(serverDb.prepare("SELECT parentId FROM knowledge_tree_nodes WHERE id=?").get(`note:${id}`).parentId, null);
   }
+});
+
+test("negotiated native tree preserves folder-under-document links and remote moves across reopen", async () => {
+  const a = await client("structure-writer"), b = await client("structure-reader");
+  const book = randomUUID(), note = randomUUID();
+  await a.repository.notebooks.create({ id: book, name: "Tree folder" });
+  await a.repository.createPersonalTreeNote({ id: note, contentFormat: "markdown", content: "Tree body" }, null);
+  await a.sync();
+  serverDb.prepare("UPDATE knowledge_tree_nodes SET parentId=?,sortOrder=17 WHERE id=?")
+    .run(`note:${note}`, `notebook:${book}`);
+  await b.sync();
+  const row = (await b.db.query<{ parentId: string; sortOrder: number }>("SELECT parentId,sortOrder FROM native_knowledge_tree_nodes WHERE scopeKey='personal' AND id=?", [`notebook:${book}`]))[0];
+  assert.deepEqual(row, { parentId: `note:${note}`, sortOrder: 17 });
+  assert.equal((await b.repository.notebooks.get(book))?.parentId, null, "legacy resource parent does not flatten the tree");
+  assert.equal((await b.repository.notes.get(note))?.content, "Tree body");
+  const binding = serverDb.prepare("SELECT entitySet FROM sync_v2_clients WHERE deviceId=? AND userId=? AND scopeKey='personal'").get("structure-reader", USER) as { entitySet: string };
+  assert.ok(binding.entitySet.includes("knowledge_tree_node"));
+  await b.db.close();
+  const reopened = await client("structure-reader");
+  assert.equal((await reopened.db.query<{parentId:string}>("SELECT parentId FROM native_knowledge_tree_nodes WHERE id=?", [`notebook:${book}`]))[0].parentId, `note:${note}`);
+  serverDb.prepare("UPDATE knowledge_tree_nodes SET parentId=NULL,sortOrder=18 WHERE id=?").run(`notebook:${book}`);
+  await reopened.sync();
+  assert.deepEqual((await reopened.db.query("SELECT parentId,sortOrder FROM native_knowledge_tree_nodes WHERE id=?", [`notebook:${book}`]))[0], { parentId: null, sortOrder: 18 });
+});
+
+test("a new native tree subscription rebuilds an existing legacy cursor without discarding local edits", async () => {
+  const c = await client("structure-upgrade"), book = randomUUID(), note = randomUUID();
+  await c.repository.notebooks.create({ id: book, name: "Upgrade folder" });
+  await c.repository.createPersonalTreeNote({ id: note, contentFormat: "markdown", content: "Pending body" }, null);
+  await c.db.run("INSERT INTO sync_state (profileId,scopeKey,lastSequence,accessStatus,accessFingerprint) VALUES (?,'personal',999999,'active','personal:owner')", [c.profileId]);
+  await c.sync();
+  assert.equal((await pending(c)).length, 0);
+  assert.equal((await c.repository.notes.get(note))?.content, "Pending body");
+  assert.ok((await c.db.query("SELECT id FROM native_knowledge_tree_nodes WHERE id=?", [`notebook:${book}`])).length);
+  const state = (await c.db.query<{lastSequence:number;lastError:string|null}>("SELECT lastSequence,lastError FROM sync_state WHERE profileId=?", [c.profileId]))[0];
+  assert.equal(state.lastError, null);
+  assert.ok(state.lastSequence < 999999, "the new entity set must not inherit the legacy high-water mark");
+});
+
+test("invalid remote tree rolls back incremental bodies and structure without acknowledging the cursor", async () => {
+  const c = await client("structure-invalid"), note = randomUUID();
+  await c.repository.createPersonalTreeNote({ id: note, contentFormat: "markdown", content: "Before invalid tree" }, null);
+  await c.sync();
+  const checkpoint = (await c.db.query<{lastSequence:number}>("SELECT lastSequence FROM sync_state WHERE profileId=?", [c.profileId]))[0].lastSequence;
+  const original = (await c.db.query("SELECT * FROM native_knowledge_tree_nodes WHERE id=?", [`note:${note}`]))[0];
+  serverDb.prepare("UPDATE notes SET content='After remote edit',version=version+1 WHERE id=?").run(note);
+  serverDb.prepare("UPDATE knowledge_tree_nodes SET sortOrder=sortOrder+1 WHERE id=?").run(`note:${note}`);
+  afterSnapshot = async (response) => {
+    const body = await response.json() as {items:Array<{entityId:string;entityType:string;payload:Record<string,unknown>}>};
+    for (const item of body.items || []) if (item.entityType === "knowledge_tree_node" && item.entityId === `note:${note}`) item.payload.parentId = item.entityId;
+    return Response.json(body, {status:response.status});
+  };
+  try { await c.sync(); } finally { afterSnapshot = undefined; }
+  assert.equal((await c.repository.notes.get(note))?.content, "Before invalid tree");
+  assert.deepEqual((await c.db.query("SELECT * FROM native_knowledge_tree_nodes WHERE id=?", [`note:${note}`]))[0], original);
+  const state = (await c.db.query<{lastSequence:number;lastError:string}>("SELECT lastSequence,lastError FROM sync_state WHERE profileId=?", [c.profileId]))[0];
+  assert.equal(state.lastSequence, checkpoint); assert.equal(state.lastError, "INVALID_TREE_STRUCTURE");
+  assert.equal((serverDb.prepare("SELECT lastSequence FROM sync_v2_clients WHERE deviceId=? AND userId=? AND scopeKey='personal'").get("structure-invalid", USER) as {lastSequence:number}).lastSequence, checkpoint);
+  await c.sync();
+  assert.equal((await c.repository.notes.get(note))?.content, "After remote edit");
+});
+
+test("native structural Apply rejects foreign scopes, identities and missing dependencies without altering Outbox", async () => {
+  const c = await client("structure-validation"), id = randomUUID();
+  await c.repository.notebooks.create({ id, name: "Validation" });
+  const entry = { entityId:`notebook:${id}`, payload: { id:`notebook:${id}`, userId:USER, workspaceId:null,
+    parentId:null, nodeType:"folder", resourceType:"notebook", resourceId:id, sortOrder:0, isDeleted:0, deletedAt:null, createdAt:"now", updatedAt:"now" } };
+  await c.db.transaction((tx) => applyNativePersonalTree(tx,[entry],USER,true));
+  const queued = await pending(c);
+  for (const patch of [{userId:"other-user"}, {workspaceId:"foreign"}, {scopeKey:"workspace:foreign"}, {resourceId:"missing"}, {parentId:"notebook:missing"}, {sortOrder:-1}, {sortOrder:1.5}, {nodeType:"file"}, {parentId:entry.entityId}]) {
+    await assert.rejects(c.db.transaction((tx) => applyNativePersonalTree(tx,[{...entry,payload:{...entry.payload,...patch}}],USER,true)), {code:"INVALID_TREE_STRUCTURE"});
+    assert.deepEqual((await c.db.query("SELECT parentId,sortOrder FROM native_knowledge_tree_nodes WHERE id=?", [entry.entityId]))[0], {parentId:null,sortOrder:0});
+    assert.deepEqual(await pending(c), queued);
+  }
+});
+
+test("native file tree metadata requires its scoped attachment without claiming bytes or authorization", async () => {
+  const c = await client("structure-file"), note = randomUUID(), file = randomUUID();
+  await c.repository.createPersonalTreeNote({ id:note, contentFormat:"markdown", content:"Attachment owner" },null);
+  const root = {entityId:`note:${note}`,payload:{id:`note:${note}`,userId:USER,workspaceId:null,parentId:null,nodeType:"markdown",resourceType:"note",resourceId:note,sortOrder:0,isDeleted:0,deletedAt:null,createdAt:"now",updatedAt:"now"}};
+  const entry = {entityId:`file:${file}`,payload:{...root.payload,id:`file:${file}`,parentId:root.entityId,nodeType:"file",resourceType:"file",resourceId:file}};
+  await assert.rejects(c.db.transaction((tx) => applyNativePersonalTree(tx,[root,entry],USER,true)), {code:"INVALID_TREE_STRUCTURE"});
+  await c.db.run(`INSERT INTO attachments (id,scopeKey,workspaceId,noteId,userId,filename,mimeType,size,available,transferStatus,createdAt,updatedAt)
+    VALUES (?,'personal',NULL,?,?,'fixture.txt','text/plain',1,0,'remote','now','now')`, [file,note,USER]);
+  const queued = await pending(c);
+  await c.db.transaction((tx) => applyNativePersonalTree(tx,[root,entry],USER,true));
+  assert.equal((await c.db.query<{parentId:string}>("SELECT parentId FROM native_knowledge_tree_nodes WHERE id=?", [entry.entityId]))[0].parentId, root.entityId);
+  assert.equal((await c.db.query<{available:number}>("SELECT available FROM attachments WHERE id=?", [file]))[0].available, 0);
+  assert.deepEqual(await pending(c), queued);
+  assert.equal((await c.db.query("SELECT key FROM native_runtime_meta WHERE key LIKE 'knowledgeTreeSnapshot:%'")).length, 0);
+});
+
+test("native structural Apply validates final ancestry and deletes parent/child in either order", async () => {
+  const c = await client("structure-reversal"), a = randomUUID(), b = randomUUID();
+  for (const id of [a,b]) await c.repository.notebooks.create({ id, name:"Reversal" });
+  const entry = (id:string,parentId:string|null) => ({entityId:`notebook:${id}`,payload:{id:`notebook:${id}`,userId:USER,workspaceId:null,parentId,
+    nodeType:"folder",resourceType:"notebook",resourceId:id,sortOrder:0,isDeleted:0,deletedAt:null,createdAt:"now",updatedAt:"now"}});
+  await c.db.transaction((tx) => applyNativePersonalTree(tx,[entry(a,`notebook:${b}`),entry(b,null)],USER,true));
+  await c.db.transaction((tx) => applyNativePersonalTree(tx,[entry(b,`notebook:${a}`),entry(a,null)],USER,false));
+  await assert.rejects(c.db.transaction((tx) => applyNativePersonalTree(tx,[{entityId:`notebook:${a}`,payload:{__delete:true}}],USER,false)), {code:"INVALID_TREE_STRUCTURE"});
+  assert.equal((await c.db.query("SELECT id FROM native_knowledge_tree_nodes")).length, 2);
+  await c.db.transaction((tx) => applyNativePersonalTree(tx,[a,b].map((id) => ({entityId:`notebook:${id}`,payload:{__delete:true}})),USER,false));
+  assert.equal((await c.db.query("SELECT id FROM native_knowledge_tree_nodes")).length, 0);
+  assert.equal((await pending(c)).length, 2, "structural deletes do not delete business rows or queued changes");
+});
+
+test("native tree Snapshot reconciles stale metadata after remote permanent deletion", async () => {
+  const c = await client("structure-prune"), note = randomUUID();
+  await c.repository.createPersonalTreeNote({ id:note, contentFormat:"markdown", content:"Deleted remote root" },null);
+  await c.sync();
+  serverDb.prepare("DELETE FROM notes WHERE id=?").run(note);
+  await c.db.run("UPDATE sync_state SET accessStatus='replan_required' WHERE profileId=?", [c.profileId]);
+  await c.sync();
+  assert.equal((await c.db.query("SELECT id FROM native_knowledge_tree_nodes WHERE id=?", [`note:${note}`])).length, 0);
 });
 
 test("tree create rolls back body, root container and provenance when Outbox insertion fails", async () => {
@@ -424,4 +541,17 @@ test("a failed Outbox insertion rolls back note creation in the same SQLite tran
   a.db.transaction = transaction;
   await a.repository.notes.create({ id, notebookId: book, content: "saved after retry", contentFormat: "markdown" });
   assert.equal((await a.repository.notes.get(id))?.content, "saved after retry");
+});
+
+test("native tree subscription completes multiple Snapshot pages before binding and survives incremental deletion", async () => {
+  const c = await client("structure-pagination"), ids = Array.from({length:230},() => randomUUID());
+  const insert = serverDb.prepare("INSERT INTO notebooks (id,userId,workspaceId,parentId,name,createdAt,updatedAt) VALUES (?,?,NULL,NULL,'Paged tree','now','now')");
+  serverDb.transaction(() => { for (const id of ids) insert.run(id,USER); })();
+  await c.sync();
+  const rows = await c.db.query<{id:string}>("SELECT id FROM native_knowledge_tree_nodes");
+  for (const id of ids) assert.ok(rows.some((row) => row.id === `notebook:${id}`));
+  assert.equal((await c.db.query<{lastError:string|null}>("SELECT lastError FROM sync_state WHERE profileId=?", [c.profileId]))[0].lastError, null);
+  serverDb.prepare("DELETE FROM notebooks WHERE id=?").run(ids[0]);
+  await c.sync();
+  assert.equal((await c.db.query("SELECT id FROM native_knowledge_tree_nodes WHERE id=?", [`notebook:${ids[0]}`])).length, 0);
 });

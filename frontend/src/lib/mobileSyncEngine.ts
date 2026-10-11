@@ -8,11 +8,12 @@ import { forgetUnsentLocalNotes } from "./nativeLocalNoteOrigin";
 import { notifyMobileSyncStatusChanged, type MobileSyncAppliedDetail } from "./mobileSyncStatus";
 import { nativeReceiptKey } from "./mobileNoteSyncReceipt";
 import { validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
+import { applyNativePersonalTree, NATIVE_TREE_ENTITY_SET, nativeTreeSubscriptionKey, type NativeTreeEntry } from "./nativeKnowledgeTreeSync";
 
 type ScopeStatus = "active" | "replan_required" | "access_revoked";
 type EntityType = "notebook" | "note" | "tag" | "note_tag" | "favorite" | "attachment"
   | "task" | "task_reminder" | "diary" | "mindmap";
-type RemoteEntityType = EntityType;
+type RemoteEntityType = EntityType | "knowledge_tree_node";
 
 interface ScopeDescriptor {
   scopeKey: string;
@@ -100,12 +101,12 @@ function syncFailure(code:string,message:string):Error&{code:string}{
 }
 
 /** Reject future protocol entities before a mobile cursor or ACK can advance. */
-export function assertMobileSyncItems(items:unknown,kind:"snapshot"|"changes"):void{
+export function assertMobileSyncItems(items:unknown,kind:"snapshot"|"changes",treeSubscription=false):void{
   if(!Array.isArray(items))throw syncFailure("SERVER_ERROR","远端同步条目格式无效");
   for(const item of items){
     if(!item||typeof item!=="object")throw syncFailure("SERVER_ERROR","远端同步条目格式无效");
     const entry=item as Record<string,unknown>;
-    if(!isCoreEntityType(entry.entityType))throw syncFailure("SERVER_ERROR",`不支持的同步实体：${String(entry.entityType)}`);
+    if(!isCoreEntityType(entry.entityType) && !(treeSubscription && entry.entityType === "knowledge_tree_node"))throw syncFailure("SERVER_ERROR",`不支持的同步实体：${String(entry.entityType)}`);
     if(typeof entry.entityId!=="string"||!entry.entityId)throw syncFailure("SERVER_ERROR","远端同步实体 ID 无效");
     if(kind==="changes"&&entry.operation!=="upsert"&&entry.operation!=="delete")
       throw syncFailure("SERVER_ERROR","远端同步操作无效");
@@ -120,6 +121,8 @@ export class MobileSyncEngine {
   private debounce: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
   private syncAbort: AbortController | null = null;
+  private treeNegotiated = false;
+  private treeSubscribed = false;
 
   constructor(private readonly options: MobileSyncOptions) {}
 
@@ -181,12 +184,16 @@ export class MobileSyncEngine {
         ))[0];
         if (state?.accessStatus === "access_revoked") continue;
         try {
+          await this.negotiateTree(scope);
           // Replay durable mutation IDs before reconciling a snapshot. After a
           // lost ACK, the server already has our create; bootstrap alone cannot
           // distinguish that state from a competing creation on another device.
           await this.push(scope);
           if (this.stopped) return;
-          if (!state || state.lastSequence === 0 || state.accessStatus === "replan_required") {
+          const treeBinding = !this.hasTreeSubscription(scope) ? true : (await this.options.db.query<{value:string}>(
+            "SELECT value FROM native_runtime_meta WHERE key=?", [nativeTreeSubscriptionKey(this.options.profileId)],
+          ))[0]?.value === NATIVE_TREE_ENTITY_SET;
+          if (!state || state.lastSequence === 0 || state.accessStatus === "replan_required" || !treeBinding) {
             await this.bootstrap(scope);
           }
           if (this.stopped) return;
@@ -244,6 +251,7 @@ export class MobileSyncEngine {
     }>("SELECT * FROM sync_conflicts WHERE id=? AND profileId=?",[conflictId,this.options.profileId]))[0];
     if(!row||row.status==="resolved")return;
     if(!isCoreEntityType(row.entityType))throw new Error("该冲突类型暂不支持在移动端合并");
+    const entityType = row.entityType;
     const parse=(value:string|null)=>value?JSON.parse(value) as Record<string,unknown>:null;
     const selected=resolution==="manual"?mergedPayload:parse(resolution==="keep-remote"?row.remotePayload:row.localPayload);
     if(!selected)throw new Error("缺少可用的冲突内容");
@@ -259,7 +267,7 @@ export class MobileSyncEngine {
       // The editor can keep saving while the conflict is awaiting a choice.
       // Keep-local must preserve that latest durable edit, not its old snapshot.
       const chosen = resolution === "keep-local"
-        ? await this.readEntity(tx, row.scopeKey, row.entityType, row.entityId) || selected : selected;
+        ? await this.readEntity(tx, row.scopeKey, entityType, row.entityId) || selected : selected;
       const payload = row.entityType === "note" && resolution !== "keep-remote"
         && typeof row.remoteVersion === "number" && Number.isSafeInteger(row.remoteVersion) && row.remoteVersion > 0
         ? { ...chosen, version: row.remoteVersion + 1 } : chosen;
@@ -446,25 +454,68 @@ export class MobileSyncEngine {
   private async bootstrap(scope: ScopeDescriptor): Promise<void> {
     let cursor: string | null = null;
     let sequence = 0;
-    const seen=new Map<EntityType,Set<string>>();
+    const seen=new Map<RemoteEntityType,Set<string>>();
     const notebookParents=new Map<string,string>();
+    const tree: NativeTreeEntry[] = [];
     do {
-      const params = new URLSearchParams({ scopeKey:scope.scopeKey, limit:"200" });
+      const params = this.subscriptionParams(scope, { limit:"200" });
       if (cursor) params.set("cursor",cursor);
       if (sequence) params.set("snapshotSequence",String(sequence));
       const page = await this.request<{ snapshotSequence:number;nextCursor:string|null;items:SnapshotEntry[] }>(`/snapshot?${params}`);
-      assertMobileSyncItems(page.items,"snapshot");
+      assertMobileSyncItems(page.items,"snapshot",this.hasTreeSubscription(scope));
       if (!sequence) sequence = page.snapshotSequence;
       for(const entry of page.items){
         const ids=seen.get(entry.entityType)||new Set<string>();ids.add(entry.entityId);seen.set(entry.entityType,ids);
         if(entry.entityType==="notebook"&&typeof entry.payload.parentId==="string")notebookParents.set(entry.entityId,entry.payload.parentId);
       }
-      await this.applyEntries(scope,page.items,true);
+      tree.push(...page.items.filter((entry) => entry.entityType === "knowledge_tree_node"));
+      await this.applyEntries(scope,page.items.filter((entry) => entry.entityType !== "knowledge_tree_node"),true);
       cursor = page.nextCursor;
     } while (cursor);
     await this.restoreNotebookParents(scope,notebookParents);
+    if (this.hasTreeSubscription(scope)) await this.options.db.transaction((tx) => applyNativePersonalTree(tx,tree,this.options.userId,true));
     if(scope.workspaceId)await this.pruneWorkspaceSnapshot(scope,seen);
-    await this.advance(scope,sequence);
+    await this.advance(scope,sequence,this.hasTreeSubscription(scope));
+  }
+
+  private hasTreeSubscription(scope: ScopeDescriptor): boolean {
+    return !scope.workspaceId && this.treeSubscribed;
+  }
+
+  private async negotiateTree(scope: ScopeDescriptor): Promise<void> {
+    if (scope.workspaceId || this.treeNegotiated) return;
+    const bound = (await this.options.db.query<{value:string}>(
+      "SELECT value FROM native_runtime_meta WHERE key=?", [nativeTreeSubscriptionKey(this.options.profileId)],
+    ))[0]?.value === NATIVE_TREE_ENTITY_SET;
+    const params = new URLSearchParams({scopeKey:scope.scopeKey,entityTypes:NATIVE_TREE_ENTITY_SET,deviceId:this.options.deviceId});
+    let supported = false;
+    try {
+      const plan = await this.request<{entityTypes?:unknown}>(`/plan?${params}`);
+      const types = plan.entityTypes;
+      if (types !== undefined && (!Array.isArray(types) || types.some((type) => !NATIVE_TREE_ENTITY_SET.split(",").includes(type)))) {
+        throw syncFailure("SERVER_ERROR","远端实体订阅响应无效");
+      }
+      supported = Array.isArray(types) && types.length === 11 && new Set(types).size === 11;
+      if (Array.isArray(types) && !supported && (types.length !== 10 || new Set(types).size !== 10 || types.includes("knowledge_tree_node"))) {
+        throw syncFailure("SERVER_ERROR","远端实体订阅响应不完整");
+      }
+    } catch (error) {
+      // Old servers may reject the new set. Fall back only before this profile
+      // has ever bound a tree cursor; never silently downgrade an existing one.
+      if ((error as {code?:string}).code !== "INVALID_PAYLOAD") throw error;
+    }
+    if (!supported && bound) throw syncFailure("UNSUPPORTED_TREE_SUBSCRIPTION","当前服务器不支持已建立的知识树订阅，已保留本地数据与游标");
+    this.treeSubscribed = supported;
+    this.treeNegotiated = true;
+  }
+
+  private subscriptionParams(scope: ScopeDescriptor, extra: Record<string,string> = {}): URLSearchParams {
+    const params = new URLSearchParams({scopeKey:scope.scopeKey,...extra});
+    if (this.hasTreeSubscription(scope)) {
+      params.set("entityTypes",NATIVE_TREE_ENTITY_SET);
+      params.set("deviceId",this.options.deviceId);
+    }
+    return params;
   }
 
   private async restoreNotebookParents(scope:ScopeDescriptor,links:Map<string,string>):Promise<void>{
@@ -477,7 +528,7 @@ export class MobileSyncEngine {
     });
   }
 
-  private async pruneWorkspaceSnapshot(scope:ScopeDescriptor,seen:Map<EntityType,Set<string>>):Promise<void>{
+  private async pruneWorkspaceSnapshot(scope:ScopeDescriptor,seen:Map<RemoteEntityType,Set<string>>):Promise<void>{
     const attachmentIds=[...(seen.get("attachment")||[])];
     const stale=await this.options.db.query<{id:string}>(`SELECT id FROM attachments WHERE scopeKey=?
       ${attachmentIds.length?`AND id NOT IN (${attachmentIds.map(()=>"?").join(",")})`:""}`,[scope.scopeKey,...attachmentIds]);
@@ -568,7 +619,7 @@ export class MobileSyncEngine {
     const noteIds = rows.filter((row) => row.entityType === "note").map((row) => row.entityId);
     if (noteIds.length) await this.options.db.transaction((tx) => forgetUnsentLocalNotes(tx, scope.scopeKey, noteIds));
     const response = await this.request<{ serverSequence:number;results:Array<{mutationId:string;status:string;code?:string;version?:number;serverVersion?:number;serverPayload?:Record<string,unknown>}> }>(
-      `/push?scopeKey=${encodeURIComponent(scope.scopeKey)}`,
+      `/push?${this.subscriptionParams(scope)}`,
       { method:"POST",body:JSON.stringify({scopeKey:scope.scopeKey,deviceId:this.options.deviceId,mutations}) },
     );
     for (const result of response.results) {
@@ -634,9 +685,9 @@ export class MobileSyncEngine {
     ))[0];
     const after = state?.lastSequence || 0;
     const changes = await this.request<{ resetRequired:boolean;nextSequence:number;items:Array<{entityType:RemoteEntityType;entityId:string;operation:string}> }>(
-      `/changes?scopeKey=${encodeURIComponent(scope.scopeKey)}&after=${after}`,
+      `/changes?${this.subscriptionParams(scope,{after:String(after)})}`,
     );
-    assertMobileSyncItems(changes.items,"changes");
+    assertMobileSyncItems(changes.items,"changes",this.hasTreeSubscription(scope));
     if (changes.resetRequired) { await this.bootstrap(scope); return; }
     // Snapshot contains current entities, so intermediate upserts of an entity
     // already deleted in this feed page must not be requested.
@@ -648,10 +699,10 @@ export class MobileSyncEngine {
     if (wanted.size) {
       let cursor: string|null=null;
       do {
-        const params = new URLSearchParams({scopeKey:scope.scopeKey,limit:"200"});
+        const params = this.subscriptionParams(scope,{limit:"200"});
         if(cursor) params.set("cursor",cursor);
         const page = await this.request<{nextCursor:string|null;items:SnapshotEntry[]}>(`/snapshot?${params}`);
-        assertMobileSyncItems(page.items,"snapshot");
+        assertMobileSyncItems(page.items,"snapshot",this.hasTreeSubscription(scope));
         for(const item of page.items){const key=`${item.entityType}\0${item.entityId}`;if(wanted.delete(key))entries.push(item);}
         cursor=page.nextCursor;
       } while(cursor&&wanted.size);
@@ -664,17 +715,22 @@ export class MobileSyncEngine {
     await this.advance(scope,changes.nextSequence);
   }
 
-  private async advance(scope: ScopeDescriptor, sequence: number): Promise<void> {
-    await this.request(`/ack?scopeKey=${encodeURIComponent(scope.scopeKey)}`,{
+  private async advance(scope: ScopeDescriptor, sequence: number, replaceCursor=false): Promise<void> {
+    await this.request(`/ack?${this.subscriptionParams(scope)}`,{
       method:"POST",body:JSON.stringify({scopeKey:scope.scopeKey,deviceId:this.options.deviceId,sequence}),
     });
-    await this.options.db.run(`UPDATE sync_state SET lastSequence=MAX(lastSequence,?),lastSyncAt=?,
-      lastError=NULL,accessStatus='active' WHERE profileId=? AND scopeKey=?`,
-    [sequence,now(),this.options.profileId,scope.scopeKey]);
+    await this.options.db.transaction(async (tx) => {
+      await tx.run(`UPDATE sync_state SET lastSequence=${replaceCursor ? "?" : "MAX(lastSequence,?)"},lastSyncAt=?,
+        lastError=NULL,accessStatus='active' WHERE profileId=? AND scopeKey=?`,
+      [sequence,now(),this.options.profileId,scope.scopeKey]);
+      if (replaceCursor) await tx.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,?,?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value,updatedAt=excluded.updatedAt`,
+      [nativeTreeSubscriptionKey(this.options.profileId),NATIVE_TREE_ENTITY_SET,now()]);
+    });
   }
 
   private async applyEntries(scope: ScopeDescriptor, entries: SnapshotEntry[], bootstrap: boolean): Promise<void> {
-    assertMobileSyncItems(entries,"snapshot");
+    assertMobileSyncItems(entries,"snapshot",this.hasTreeSubscription(scope));
     for (const entry of entries) if (entry.entityType === "note" && !entry.payload.__delete) validateEncryptedNoteWrite(entry.payload);
     const notebookParents=entries.flatMap((entry)=>entry.entityType==="notebook"
       && typeof entry.payload.parentId==="string" ? [[entry.entityId,entry.payload.parentId] as const] : []);
@@ -683,6 +739,7 @@ export class MobileSyncEngine {
       // 即使远端内容进入冲突中心而未覆盖本地，它的存在也已得到确认。
       await forgetUnsentLocalNotes(tx, scope.scopeKey, entries.filter((entry) => entry.entityType === "note").map((entry) => entry.entityId));
       for(const entry of entries){
+        if (entry.entityType === "knowledge_tree_node") continue;
         if (entry.entityType === "note" && !entry.payload.__delete) {
           const current = await this.readEntity(tx, scope.scopeKey, "note", entry.entityId);
           if (current) validateEncryptedNoteWrite(entry.payload, current);
@@ -725,6 +782,11 @@ export class MobileSyncEngine {
         await this.applyEntity(tx,scope,entry);
         applied.push(entry);
       }
+      const tree = entries.filter((entry) => entry.entityType === "knowledge_tree_node");
+      if (tree.length) {
+        await applyNativePersonalTree(tx,tree,this.options.userId,false);
+        applied.push(...tree);
+      }
       for(const [id,parentId] of notebookParents){
         const parent=(await tx.query<{id:string}>("SELECT id FROM notebooks WHERE scopeKey=? AND id=?",[scope.scopeKey,parentId]))[0];
         if(parent)await tx.run("UPDATE notebooks SET parentId=? WHERE scopeKey=? AND id=?",[parentId,scope.scopeKey,id]);
@@ -746,6 +808,7 @@ export class MobileSyncEngine {
   }
 
   private async applyEntity(db:NativeDatabase,scope:ScopeDescriptor,entry:SnapshotEntry):Promise<void>{
+    if (entry.entityType === "knowledge_tree_node") throw syncFailure("SERVER_ERROR","知识树必须通过完整结构 Apply 事务接收");
     const p=entry.payload;const deleting=Boolean(p.__delete);const key=scope.scopeKey;const ws=scope.workspaceId;
     if (entry.entityType === "note" && !deleting) {
       const current = await this.readEntity(db, key, "note", entry.entityId);

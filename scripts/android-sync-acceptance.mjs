@@ -89,18 +89,34 @@ try {
   await remoteEdit(ids[0], "reconnected");
   await native("start");
   await wait(async () => (await native("status"))[0].note.contentText === "reconnected", "reconnect did not catch up");
+  const folderResponse = await fetch(`${base}/acceptance/tree-folder`, {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({parentId:`note:${ids[0]}`})});
+  assert.ok(folderResponse.ok, `remote folder create failed: ${folderResponse.status}`);
+  const folder = await folderResponse.json();
+  await wait(async () => (await native("structure",folder.id))?.parentId === `note:${ids[0]}`, "folder-under-document structure not pulled");
+  const moved = await fetch(`${base}/acceptance/tree-move/${encodeURIComponent(folder.id)}`, {method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify({parentId:null,sortOrder:17})});
+  assert.ok(moved.ok, `remote tree move failed: ${moved.status}`);
+  await wait(async () => {const row=await native("structure",folder.id);return row?.parentId === null && row.sortOrder === 17;}, "remote tree move not pulled");
+  adb("reverse", "--remove", "tcp:47831");
+  await browser.close();
+  adb("shell", "am", "force-stop", "com.nowen.note.syncacceptance");
+  adb("shell", "am", "start", "-n", "com.nowen.note.syncacceptance/com.nowen.note.MainActivity");
+  await attach();
+  const restoredStructure = await native("structure",folder.id);
+  assert.equal(restoredStructure.parentId,null); assert.equal(restoredStructure.sortOrder,17);
+  assert.equal((await native("schema"))[0].user_version,6);
   const report = { device: serial, package: "com.nowen.note.syncacceptance", offlineImmediateRead: true, forceStopRecovery: true,
     knowledgeTreeRootCreate: true, readWriteThroughProductionApiBridge: true,
+    negotiatedPersonalTreePull:true,remoteFolderUnderDocument:true,remoteTreeMove:true,structureForceStopRecovery:true,nativeSchemaVersion:6,
     offlineNetworkIsolation: "adb reverse removed; HTTP server unreachable from Android",
     markdownAndRichText: true, missingNoticePoll: true, reconnect: true,
     httpPushToNativePull: stats(download), nativeCommitToServerAndAck: stats(upload), errors: await native("errors"),
-    boundary: "Loopback adb reverse; real Android Native SQLite, signed-in personal knowledgeTreeApi create, api get/update and MobileSyncEngine. Does not test full EditorPane, protected/shared/cross-type tree mutations, attachment bytes, or production JWT middleware." };
+    boundary: "Loopback adb reverse; real Android Native SQLite, personal tree create/read/update and negotiated structural Pull. Remote folder creation and movement use the production knowledge tree routes. Native structural writes/conflict UI, full EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
   fs.mkdirSync(new URL("../docs/test-results/", import.meta.url), { recursive: true });
-  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-tree-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
+  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-tree-pull-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally {
   if (page) await native("stop").catch(() => undefined);
   await browser?.close().catch(() => undefined);
-  adb("reverse", "--remove", "tcp:47831");
+  try { adb("reverse", "--remove", "tcp:47831"); } catch { /* Already removed for offline structural recovery. */ }
 }
 process.exit(0);

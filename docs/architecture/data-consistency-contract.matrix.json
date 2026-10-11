@@ -282,7 +282,19 @@
         { "file": "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts", "case": "retains server checks for protected folders and workspaces" },
         { "file": "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts", "case": "does not project an ACKed note omitted by the live authorization tree" },
         { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "reads a locally created root with live server proofs" },
-        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "does not persist or return a remote body after its native session is disposed" }
+        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "does not persist or return a remote body after its native session is disposed" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "negotiated native tree preserves folder-under-document links" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a new native tree subscription rebuilds an existing legacy cursor" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "invalid remote tree rolls back incremental bodies and structure" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native structural Apply rejects foreign scopes" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native structural Apply validates final ancestry" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native tree Snapshot reconciles stale metadata" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native file tree metadata requires its scoped attachment" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native tree subscription completes multiple Snapshot pages" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "refuses to silently downgrade a persisted tree subscription" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "negotiates the complete existing set" },
+        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "upgrades schema 5 with structural metadata" },
+        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "rolls back a failed schema 5 tree migration" }
       ]
     }
   ]

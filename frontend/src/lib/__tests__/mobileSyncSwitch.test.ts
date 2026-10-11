@@ -104,6 +104,7 @@ beforeEach(async () => {
   mocks.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
     let payload: unknown;
     if (url.endsWith("/scopes")) payload = { items: [{ scopeKey: "personal", workspaceId: null, workspaceName: null, role: null, canWrite: true, accessFingerprint: "test" }] };
+    else if (url.includes("/plan?")) payload = { entityTypes: ["notebook","note","tag","note_tag","favorite","attachment","task","task_reminder","diary","mindmap"] };
     else if (url.includes("/push?")) {
       const { mutations } = JSON.parse(String(init?.body));
       payload = { serverSequence: 1, results: mutations.map(({ mutationId, baseVersion, payload: note }: { mutationId: string; baseVersion?: number; payload?: {version?:number} }) => ({

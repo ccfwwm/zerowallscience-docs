@@ -33,7 +33,7 @@ type NativeDatabaseGlobal = typeof globalThis & {
   __nowenNoteNativeDatabaseState?: NativeDatabaseGlobalState;
 };
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const DATABASE_PREFIX = "nowen_local_";
 
 const ENTITY_TYPE_CHECK = `
@@ -132,6 +132,30 @@ const MOBILE_MODULE_SCHEMA_STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_native_mindmap_folders_scope_parent
     ON mindmap_folders(scopeKey, parentId, sortOrder)`,
+] as const;
+
+// Structural metadata only. This table is never evidence of ACL/password access
+// and is deliberately outside the locally writable Outbox entity registry.
+const KNOWLEDGE_TREE_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS native_knowledge_tree_nodes (
+    scopeKey TEXT NOT NULL,
+    workspaceId TEXT,
+    id TEXT NOT NULL,
+    userId TEXT NOT NULL,
+    parentId TEXT,
+    nodeType TEXT NOT NULL,
+    resourceType TEXT NOT NULL CHECK (resourceType IN ('notebook','note','mindmap','file')),
+    resourceId TEXT NOT NULL,
+    sortOrder INTEGER NOT NULL CHECK (sortOrder >= 0),
+    isDeleted INTEGER NOT NULL CHECK (isDeleted IN (0,1)),
+    deletedAt TEXT,
+    createdAt TEXT NOT NULL,
+    updatedAt TEXT NOT NULL,
+    PRIMARY KEY (scopeKey, id),
+    CHECK (${SCOPE_CHECK})
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_native_tree_parent
+    ON native_knowledge_tree_nodes(scopeKey,parentId,sortOrder)`,
 ] as const;
 
 const SCHEMA_V1_STATEMENTS = [
@@ -698,6 +722,7 @@ class NativeDatabaseImpl implements NativeDatabase {
           for (const statement of SCHEMA_V1_STATEMENTS) {
             await this.raw.execute(statement, false);
           }
+          await executeSchemaStatements(this.raw, KNOWLEDGE_TREE_SCHEMA_STATEMENTS);
           for (const statement of NATIVE_ENCRYPTED_NOTE_GUARDS) await this.raw.execute(statement, false);
           await this.raw.run(
             `INSERT INTO native_runtime_meta (key, value, updatedAt)
@@ -729,13 +754,14 @@ class NativeDatabaseImpl implements NativeDatabase {
         if (version === 1) {
           await upgradeSchemaV1ToV2(this.raw);
           await upgradeSchemaV2ToV3(this.raw);
-          await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
         } else if (version === 2) {
           await upgradeSchemaV2ToV3(this.raw);
-          await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
         }
         if (version < 5) {
           for (const statement of NATIVE_ENCRYPTED_NOTE_GUARDS) await this.raw.execute(statement, false);
+        }
+        if (version < 6) {
+          await executeSchemaStatements(this.raw, KNOWLEDGE_TREE_SCHEMA_STATEMENTS);
           await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
         }
       });

@@ -7,7 +7,7 @@ import type { NativeAttachmentStore } from "../nativeAttachmentStore";
 // 只隔离无关业务门面；笔记写入、Outbox 序列化、同步请求和音频渲染使用真实实现。
 vi.mock("@/lib/api", async () => {
   const bridge = await import("@/lib/noteAttachmentAccessBridge");
-  return { api: { attachments: {}, attachmentFolders: {} }, resolveAttachmentUrl: bridge.resolveAttachmentAccessUrl };
+  return { api: { attachments: {}, attachmentFolders: {} }, getBaseUrl: () => "https://server.example", resolveAttachmentUrl: bridge.resolveAttachmentAccessUrl };
 });
 vi.mock("../mobileLocalMode", () => ({ isMobileLocalMode: () => false }));
 vi.mock("../mobileLocalKnowledgeTreeBridge", () => ({ installMobileLocalKnowledgeTreeBridge: () => () => undefined }));

@@ -62,6 +62,10 @@ async function initializeOnce(config: Config) {
     stop() { dispose?.(); dispose = undefined; engine.stop(); setMobileSyncEnabled(false); realtime.disconnect(); },
     async sync() { await engine.syncOnce(); },
     async errors() { return db.query("SELECT lastError FROM sync_state WHERE profileId=?", [profileId]); },
+    async structure(id: string) {
+      return (await db.query("SELECT id,parentId,sortOrder,isDeleted FROM native_knowledge_tree_nodes WHERE scopeKey='personal' AND id=?", [id]))[0] || null;
+    },
+    async schema() { return db.query("PRAGMA user_version"); },
   };
   Object.assign(window, { acceptance, acceptanceRealtime: realtime });
   document.getElementById("status")!.textContent = "Native SQLite ready. Test account only.";

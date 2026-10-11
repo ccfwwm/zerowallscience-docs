@@ -35,6 +35,15 @@ async function main() {
   // Match index.ts's trailing-slash mount for the list entry point.
   app.route("/api/knowledge-tree/", treeRoutes);
   app.get("/acceptance/note/:id", (c) => c.json(db.prepare("SELECT * FROM notes WHERE id=? AND userId=?").get(c.req.param("id"), userId) || null));
+  app.post("/acceptance/tree-folder", async (c) => {
+    const {parentId} = await c.req.json<{parentId:string}>();
+    return app.request("http://localhost/api/knowledge-tree/nodes?workspaceId=personal", {method:"POST",
+      headers:{Authorization:`Bearer ${fixtureToken()}`,"Content-Type":"application/json"},
+      body:JSON.stringify({parentId,nodeType:"folder",title:"Acceptance structure"})});
+  });
+  app.put("/acceptance/tree-move/:id", async (c) => app.request(
+    `http://localhost/api/knowledge-tree/nodes/${encodeURIComponent(c.req.param("id"))}/move`, {method:"PUT",
+      headers:{Authorization:`Bearer ${fixtureToken()}`,"Content-Type":"application/json"},body:JSON.stringify(await c.req.json())}));
   app.post("/acceptance/edit/:id", async (c) => {
     const note = db.prepare("SELECT * FROM notes WHERE id=? AND userId=?").get(c.req.param("id"), userId) as Record<string, unknown> | undefined;
     if (!note) return c.json({ error: "NOT_FOUND" }, 404);

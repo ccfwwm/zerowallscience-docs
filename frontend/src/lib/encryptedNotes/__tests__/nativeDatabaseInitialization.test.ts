@@ -20,13 +20,13 @@ vi.mock("@capacitor-community/sqlite", () => ({
 beforeEach(() => { mocks.version = 0; mocks.execute.mockReset().mockResolvedValue({}); mocks.run.mockReset().mockResolvedValue({}); mocks.close.mockReset().mockResolvedValue(undefined); Reflect.deleteProperty(globalThis, "__nowenNoteNativeDatabaseState"); });
 afterEach(() => { Reflect.deleteProperty(globalThis, "__nowenNoteNativeDatabaseState"); });
 
-it.each([0, 4])("initializing schema %s installs all persisted guards before acknowledging version 5", async (version) => {
+it.each([0, 4])("initializing schema %s installs all persisted guards before acknowledging version 6", async (version) => {
   mocks.version = version;
   const db = await openNativeDatabase("encryption-test-account");
   const statements = mocks.execute.mock.calls.map(([sql]) => sql);
   for (const guard of NATIVE_ENCRYPTED_NOTE_GUARDS) {
     expect(statements).toContain(guard);
-    expect(statements.indexOf(guard)).toBeLessThan(statements.indexOf("PRAGMA user_version = 5"));
+    expect(statements.indexOf(guard)).toBeLessThan(statements.indexOf("PRAGMA user_version = 6"));
   }
   expect(statements.at(-1)).toBe("COMMIT");
   await db.close();
@@ -37,7 +37,30 @@ it("a failed guard install rolls back without acknowledging a migrated schema", 
   await expect(openNativeDatabase("encryption-test-account")).rejects.toThrow("Failed DDL");
   const statements = mocks.execute.mock.calls.map(([sql]) => sql);
   expect(statements.at(-1)).toBe("ROLLBACK");
-  expect(statements).not.toContain("PRAGMA user_version = 5"); expect(statements).not.toContain("COMMIT");
+  expect(statements).not.toContain("PRAGMA user_version = 6"); expect(statements).not.toContain("COMMIT");
+});
+
+it("upgrades schema 5 with structural metadata before acknowledging version 6", async () => {
+  mocks.version = 5;
+  const db = await openNativeDatabase("tree-upgrade-account");
+  const statements = mocks.execute.mock.calls.map(([sql]) => sql as string);
+  const table = statements.findIndex((sql) => sql.startsWith("CREATE TABLE IF NOT EXISTS native_knowledge_tree_nodes"));
+  expect(table).toBeGreaterThan(0);
+  expect(table).toBeLessThan(statements.indexOf("PRAGMA user_version = 6"));
+  expect(statements.some((sql) => /DROP TABLE|DELETE FROM/.test(sql))).toBe(false);
+  await db.close();
+});
+
+it("rolls back a failed schema 5 tree migration without advancing the version", async () => {
+  mocks.version = 5;
+  mocks.execute.mockImplementation(async (sql: string) => {
+    if (sql.startsWith("CREATE TABLE IF NOT EXISTS native_knowledge_tree_nodes")) throw new Error("Tree DDL failure");
+    return {};
+  });
+  await expect(openNativeDatabase("tree-failed-upgrade-account")).rejects.toThrow("Tree DDL failure");
+  const statements = mocks.execute.mock.calls.map(([sql]) => sql);
+  expect(statements.at(-1)).toBe("ROLLBACK");
+  expect(statements).not.toContain("PRAGMA user_version = 6");
 });
 
 async function verifyConcurrentRead(rollback: boolean) {

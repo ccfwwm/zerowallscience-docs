@@ -10,6 +10,10 @@ on:
       - "frontend/src/lib/mobileLocal*.ts"
       - "frontend/src/lib/realtime.ts"
       - "frontend/src/lib/mobileSyncEngine.ts"
+      - "frontend/src/lib/nativeKnowledgeTreeSync.ts"
+      - "frontend/src/lib/nativeDatabase.ts"
+      - "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts"
+      - "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts"
       - "frontend/src/lib/__tests__/mobileSyncUnexpectedFailure.test.ts"
       - "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts"
       - "frontend/src/App.tsx"
@@ -28,6 +32,10 @@ on:
       - "frontend/src/lib/mobileLocal*.ts"
       - "frontend/src/lib/realtime.ts"
       - "frontend/src/lib/mobileSyncEngine.ts"
+      - "frontend/src/lib/nativeKnowledgeTreeSync.ts"
+      - "frontend/src/lib/nativeDatabase.ts"
+      - "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts"
+      - "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts"
       - "frontend/src/lib/__tests__/mobileSyncUnexpectedFailure.test.ts"
       - "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts"
       - "frontend/src/App.tsx"
@@ -78,5 +86,7 @@ jobs:
           src/lib/__tests__/mobileLocalRealtimeGuard.test.ts
           src/lib/__tests__/mobileSyncUnexpectedFailure.test.ts
           src/lib/__tests__/mobileSyncEndpoint.test.ts
+          src/lib/__tests__/mobileNativeTreeSubscription.test.ts
+          src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts
           src/components/__tests__/AccountLoginHistory.test.tsx
           src/components/__tests__/AccountLoginHistoryServerEdit.test.tsx
