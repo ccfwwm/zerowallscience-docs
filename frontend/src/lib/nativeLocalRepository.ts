@@ -14,6 +14,7 @@ import { notifyMobileSyncStatusChanged } from "./mobileSyncStatus";
 import { isEncryptedNoteFormat, validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
 import { ROOT_DOCUMENT_NOTEBOOK_PREFIX } from "./rootDocumentCreatePolicy";
 import { listNativePersonalTreeFolderDrafts, listNativePersonalTreeOverrides, writeNativePersonalTreeFolder, writeNativePersonalTreeMoves, type NativeTreeMove } from "./nativePersonalTreeWrites";
+import { nativeTreeLifecycleOverrides, writeNativePersonalTreeLifecycle } from "./nativePersonalTreeTrash";
 
 type EntityType = "notebook" | "note" | "tag" | "note_tag" | "favorite" | "attachment";
 
@@ -303,7 +304,38 @@ export class NativeLocalRepository implements LocalRepository {
 
   async listPersonalTreeOverrides() {
     const sync = await this.syncContext(this.db);
-    return sync ? listNativePersonalTreeOverrides(this.db,sync.profileId) : [];
+    return sync ? [...await listNativePersonalTreeOverrides(this.db,sync.profileId),...await nativeTreeLifecycleOverrides(this.db,sync.profileId)] : [];
+  }
+
+  private async changePersonalTreeTrash(ids:string[],restoring:boolean) {
+    const affected=await this.db.transaction(async(tx)=>{
+      const sync=await this.syncContext(tx);
+      if(!sync) throw Object.assign(new Error("个人目录同步订阅尚未确认"),{code:"NATIVE_TREE_WRITE_UNAVAILABLE"});
+      const result=new Set<string>();
+      const selected=new Set(ids),parents=new Map((await tx.query<{id:string;parentId:string|null}>("SELECT id,parentId FROM native_knowledge_tree_nodes WHERE scopeKey='personal'")).map((node)=>[node.id,node.parentId]));
+      const roots=[...selected].filter((id)=>{
+        const seen=new Set([id]);
+        for(let parent=parents.get(id);parent && !seen.has(parent);parent=parents.get(parent)) {
+          if(selected.has(parent)) return false;seen.add(parent);
+        }
+        return true;
+      });
+      for(const id of roots) {
+        if(result.has(id)) continue;
+        for(const nodeId of await writeNativePersonalTreeLifecycle(tx,id,restoring,{...sync,userId:this.userId})) result.add(nodeId);
+      }
+      return [...result];
+    });
+    this.requestSyncCallback?.(); notifyMobileSyncStatusChanged();
+    return affected;
+  }
+
+  async trashPersonalTreeFolders(ids:string[]) {
+    return {success:true as const,mode:"subtree" as const,affectedNodeIds:await this.changePersonalTreeTrash(ids,false),promotedNodeIds:[] as string[]};
+  }
+
+  async restorePersonalTreeFolder(id:string) {
+    return {success:true as const,restoredNodeIds:await this.changePersonalTreeTrash([id],true)};
   }
 
   async createPersonalTreeFolder(id: string, title: string, parentId: string | null) {
@@ -318,8 +350,8 @@ export class NativeLocalRepository implements LocalRepository {
     return node;
   }
 
-  async listPersonalTreeFolderDrafts() {
-    return listNativePersonalTreeFolderDrafts(this.db,this.userId);
+  async listPersonalTreeFolderDrafts(includeDeleted=false) {
+    return listNativePersonalTreeFolderDrafts(this.db,this.userId,includeDeleted);
   }
 
   async exportWorkspaceScope(scopeKey:string):Promise<Record<string,unknown>> {

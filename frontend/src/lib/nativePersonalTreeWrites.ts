@@ -35,28 +35,30 @@ function unavailable(): never {
 }
 
 /** Creation provenance is local-only. It never confers access to a synced resource. */
-export async function listNativePersonalTreeFolderDrafts(db: NativeDatabase, userId: string): Promise<KnowledgeTreeNode[]> {
+export async function listNativePersonalTreeFolderDrafts(db: NativeDatabase, userId: string, includeDeleted=false): Promise<KnowledgeTreeNode[]> {
   const rows = await db.query<KnowledgeTreeNode>(`SELECT t.id,t.userId,t.workspaceId,t.parentId,t.nodeType,t.resourceType,
     t.resourceId,t.sortOrder,t.isDeleted,t.createdAt,t.updatedAt,n.name AS title,n.icon,n.isExpanded
     FROM native_knowledge_tree_nodes t JOIN notebooks n ON n.scopeKey=t.scopeKey AND n.id=t.resourceId
     JOIN native_runtime_meta m ON m.key='localTreeFolder:personal:' || n.id
-    WHERE t.scopeKey='personal' AND t.resourceType='notebook' AND t.userId=? AND n.userId=? AND n.isDeleted=0 AND t.isDeleted=0`, [userId,userId]);
+    WHERE t.scopeKey='personal' AND t.resourceType='notebook' AND t.userId=? AND n.userId=?
+      ${includeDeleted?"":"AND n.isDeleted=0 AND t.isDeleted=0"}`, [userId,userId]);
   return rows.map((row) => ({...row,scopeKey:`personal:${userId}`,childCount:0,isPasswordProtected:0,
     access:{nodeId:row.id,rolePreset:"admin",source:"owner",sourceNodeId:null,capabilities:{canView:true,canComment:true,
       canCreate:true,canEdit:true,canDelete:true,canMove:true,canDownload:true,canReshare:true,canManageMembers:true}}}));
 }
 
-async function personalWriteProofs(tx: NativeDatabase, context: NativeTreeWriteContext) {
+export async function personalWriteProofs(tx: NativeDatabase, context: NativeTreeWriteContext, includeDeleted=false) {
   const binding = (await tx.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key=?", [nativeTreeSubscriptionKey(context.profileId)]))[0];
   if (binding?.value !== NATIVE_TREE_ENTITY_SET) unavailable();
-  const cached = (await tx.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key='knowledgeTreeSnapshot:v1:personal:0'"))[0];
+  const cached = (await tx.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key=?",[includeDeleted?"knowledgeTreeSnapshot:v1:personal:1":"knowledgeTreeSnapshot:v1:personal:0"]))[0]
+    || (includeDeleted?(await tx.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key='knowledgeTreeSnapshot:v1:personal:0'"))[0]:undefined);
   let nodes: KnowledgeTreeNode[];
   try {
     const parsed: unknown = JSON.parse(cached?.value || "null");
     if (!Array.isArray(parsed)) unavailable();
     nodes = parsed;
   } catch { unavailable(); }
-  const drafts = await listNativePersonalTreeFolderDrafts(tx,context.userId);
+  const drafts = await listNativePersonalTreeFolderDrafts(tx,context.userId,includeDeleted);
   for (const draft of drafts) {
     if (!nodes.some((node) => node.id === draft.id) && (await tx.query(`SELECT id FROM sync_outbox
       WHERE profileId=? AND scopeKey='personal' AND ((entityType='notebook' AND entityId=?)
@@ -76,9 +78,9 @@ async function personalWriteProofs(tx: NativeDatabase, context: NativeTreeWriteC
     const visited = new Set<string>();
     while (node) {
       if (visited.has(node.id) || node.userId !== context.userId || node.workspaceId !== null
-        || node.isDeleted || node.access?.source !== "owner" || !node.access.capabilities.canView
+        || (!includeDeleted && node.isDeleted) || node.access?.source !== "owner" || !node.access.capabilities.canView
         || (node.resourceType === "notebook" && node.isPasswordProtected !== 0)) unavailable();
-      if (checkStored && (!stored.has(node.id) || stored.get(node.id)!.isDeleted || stored.get(node.id)!.parentId !== node.parentId)) unavailable();
+      if (checkStored && (!stored.has(node.id) || (!includeDeleted && stored.get(node.id)!.isDeleted) || stored.get(node.id)!.parentId !== node.parentId)) unavailable();
       visited.add(node.id);
       if (!node.parentId) return;
       node = proof.get(node.parentId);

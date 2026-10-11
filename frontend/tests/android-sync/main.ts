@@ -66,7 +66,10 @@ async function initializeOnce(config: Config) {
       return (await db.query("SELECT id,parentId,sortOrder,isDeleted FROM native_knowledge_tree_nodes WHERE scopeKey='personal' AND id=?", [id]))[0] || null;
     },
     async schema() { return db.query("PRAGMA user_version"); },
-    async treeList() { return knowledgeTreeApi.listForWorkspace("personal"); },
+    async treeList(includeDeleted=false) { return knowledgeTreeApi.listForWorkspace("personal",includeDeleted); },
+    async trashList() {return api.trash.list("personal");},
+    async treeTrash(id:string) {return knowledgeTreeApi.remove(id,"subtree");},
+    async treeRestore(id:string) {return api.trash.mutate("personal","restore",[id]);},
     async createOfflineFolders() {
       const root=await knowledgeTreeApi.create({parentId:null,nodeType:"folder",title:"Offline folder"});
       const child=await knowledgeTreeApi.create({parentId:root.id,nodeType:"folder",title:"Offline child"});

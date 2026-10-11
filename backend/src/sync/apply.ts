@@ -225,6 +225,14 @@ function applyNote(db: Database.Database, input: ApplyMutationInput): number | n
     if (base === undefined || existing.version !== base) {
       throw new SyncError("VERSION_CONFLICT", `服务端版本 ${existing.version}`);
     }
+    // A pre-trash body update cannot implicitly restore a child while its
+    // folder is still deleted. Restoration belongs to the tree lifecycle.
+    if (!p.isTrashed && db.prepare(`WITH RECURSIVE ancestry(id,parentId,isDeleted) AS (
+      SELECT id,parentId,isDeleted FROM knowledge_tree_nodes WHERE id=?
+      UNION SELECT t.id,t.parentId,t.isDeleted FROM knowledge_tree_nodes t JOIN ancestry a ON t.id=a.parentId
+    ) SELECT 1 FROM ancestry WHERE id<>? AND isDeleted=1 LIMIT 1`).get(`note:${input.entityId}`,`note:${input.entityId}`)) {
+      throw new SyncError("VERSION_CONFLICT","所在目录仍在回收站，请先恢复目录后处理正文修改");
+    }
     const nextVersion = existing.version + 1;
     withEncryptedBlockWrite(db, input.entityId, effective.content, effective.contentFormat, () => db.prepare(`
       UPDATE notes SET
@@ -644,6 +652,7 @@ const APPLIERS: Record<ApplyMutationInput["entityType"], (db: Database.Database,
   diary: applyDiary,
   mindmap: applyMindmap,
   knowledge_tree_node: (db, input) => {
+    if(input.payload?.lifecycle && input.payload.lifecycleMutationId!==input.mutationId) throw new SyncError("INVALID_PAYLOAD","回收站操作身份不匹配");
     applyKnowledgeTreeStructureMutation(db, {
       userId: input.userId,
       workspaceId: input.workspaceId ?? null,

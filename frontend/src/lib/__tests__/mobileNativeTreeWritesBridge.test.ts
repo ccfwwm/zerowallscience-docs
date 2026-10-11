@@ -3,13 +3,14 @@ import { knowledgeTreeApi, type KnowledgeTreeNode } from "../knowledgeTreeApi";
 import { installMobileLocalKnowledgeTreeBridge } from "../mobileLocalKnowledgeTreeBridge";
 import type { NativeLocalRepository } from "../nativeLocalRepository";
 import type { NativeDatabase } from "../nativeDatabase";
+import {api} from "../api";
 
 let restore: (() => void) | undefined;
 afterEach(() => { restore?.(); vi.restoreAllMocks(); localStorage.removeItem("nowen-current-workspace"); });
 function node(id: string, parentId: string | null = null): KnowledgeTreeNode {
   return { id,resourceId:id.slice(9),resourceType:"notebook",nodeType:"folder",parentId,userId:"u",workspaceId:null,
     scopeKey:"personal:u",isDeleted:0,isPasswordProtected:0,sortOrder:0,childCount:0,isExpanded:1,createdAt:"now",updatedAt:"now",title:id,
-    access:{nodeId:id,source:"owner",rolePreset:"admin",sourceNodeId:null,capabilities:{canView:true,canMove:true,canCreate:true} as never} };
+    access:{nodeId:id,source:"owner",rolePreset:"admin",sourceNodeId:null,capabilities:{canView:true,canMove:true,canCreate:true,canDelete:true} as never} };
 }
 function setup() {
   localStorage.setItem("nowen-current-workspace","personal");
@@ -21,14 +22,44 @@ function setup() {
   const overrides = vi.fn(async () => [] as Array<Record<string,unknown>>);
   const folderDrafts=vi.fn(async()=>[] as KnowledgeTreeNode[]), createFolder=vi.fn(async()=>a);
   const remoteCreate=vi.spyOn(knowledgeTreeApi,"createForWorkspace").mockResolvedValue(a);
-  const repository = {movePersonalTreeNodes:moves,listPersonalTreeOverrides:overrides,listPersonalTreeFolderDrafts:folderDrafts,createPersonalTreeFolder:createFolder,listLocalTreeDrafts:async()=>[]} as unknown as NativeLocalRepository;
+  const remoteRemove=vi.spyOn(knowledgeTreeApi,"remove").mockResolvedValue({success:true,affectedNodeIds:[a.id],promotedNodeIds:[]});
+  const remoteRestore=vi.spyOn(knowledgeTreeApi,"restore").mockResolvedValue({success:true,restoredNodeIds:[a.id]});
+  const remoteTrash=vi.spyOn(api.trash,"list").mockResolvedValue({items:[]});
+  const trashFolders=vi.fn(async()=>({success:true,mode:"subtree",affectedNodeIds:[a.id],promotedNodeIds:[]}));
+  const restoreFolder=vi.fn(async()=>({success:true,restoredNodeIds:[a.id]}));
+  const repository = {movePersonalTreeNodes:moves,listPersonalTreeOverrides:overrides,listPersonalTreeFolderDrafts:folderDrafts,createPersonalTreeFolder:createFolder,
+    trashPersonalTreeFolders:trashFolders,restorePersonalTreeFolder:restoreFolder,listLocalTreeDrafts:async()=>[]} as unknown as NativeLocalRepository;
   const metadata = new Map<string,string>();
   let pending=true;
   const db = {run:async(sql:string,values:unknown[])=>{if(sql.startsWith("DELETE"))metadata.delete(String(values[0]));else metadata.set(String(values[0]),String(values[1]));return {changes:1};},
     query:async(sql:string,values:unknown[])=>sql.includes("sync_outbox")?(pending?[{id:"queued"}]:[]):metadata.has(String(values[0]))?[{value:metadata.get(String(values[0]))}]:[]} as unknown as NativeDatabase;
   restore = installMobileLocalKnowledgeTreeBridge(repository,{deviceOnly:false},db);
-  return {a,b,moves,overrides,remoteMove,remoteReorder,remoteList,folderDrafts,createFolder,remoteCreate,metadata,ack:()=>{pending=false;}};
+  return {a,b,moves,overrides,remoteMove,remoteReorder,remoteList,folderDrafts,createFolder,remoteCreate,metadata,trashFolders,restoreFolder,remoteRemove,remoteRestore,remoteTrash,ack:()=>{pending=false;}};
 }
+it("persists folder trash and restores it through the unified trash facade without a second online write",async()=>{
+  const f=setup();
+  await knowledgeTreeApi.remove(f.a.id,"subtree");expect(f.trashFolders).toHaveBeenCalledWith([f.a.id]);expect(f.remoteRemove).not.toHaveBeenCalled();
+  await api.trash.mutate("personal","restore",[f.a.id]);expect(f.restoreFolder).toHaveBeenCalledWith(f.a.id);expect(f.remoteRestore).not.toHaveBeenCalled();
+  f.trashFolders.mockRejectedValueOnce(new Error("Outbox failed"));
+  await expect(knowledgeTreeApi.remove(f.a.id,"subtree")).rejects.toThrow("Outbox failed");expect(f.remoteRemove).not.toHaveBeenCalled();
+  f.trashFolders.mockRejectedValueOnce(Object.assign(new Error("Unavailable"),{code:"NATIVE_TREE_WRITE_UNAVAILABLE"}));
+  await knowledgeTreeApi.remove(f.a.id,"subtree");expect(f.remoteRemove).toHaveBeenCalledOnce();
+  await knowledgeTreeApi.remove(f.a.id,"promote");expect(f.trashFolders).toHaveBeenCalledTimes(3);expect(f.remoteRemove).toHaveBeenCalledTimes(2);
+});
+it("projects durable pending trash into the offline bin and hides it from the active tree",async()=>{
+  const f=setup();await knowledgeTreeApi.listForWorkspace("personal",true);
+  f.overrides.mockResolvedValue([{...f.a,isDeleted:1,deletedAt:"now"}]);
+  const active=await knowledgeTreeApi.listForWorkspace("personal");expect(active.nodes.some((node)=>node.id===f.a.id)).toBe(false);
+  f.remoteTrash.mockRejectedValueOnce(new TypeError("Failed to fetch"));f.remoteList.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+  const bin=await api.trash.list("personal");expect(bin.items.find((item)=>item.id===f.a.id)).toMatchObject({canRestore:true,canDeletePermanently:false});
+  f.overrides.mockResolvedValue([{...f.a,isDeleted:0,deletedAt:null}]);
+  const restored=await knowledgeTreeApi.listForWorkspace("personal");expect(restored.nodes.some((node)=>node.id===f.a.id)).toBe(true);
+  expect((await api.trash.list("personal")).items).toEqual([]);
+});
+it("does not treat a trash authorization rejection as an offline read",async()=>{
+  const f=setup();f.remoteTrash.mockRejectedValueOnce(Object.assign(new Error("Forbidden"),{status:403}));
+  await expect(api.trash.list("personal")).rejects.toThrow("Forbidden");expect(f.remoteList).not.toHaveBeenCalled();
+});
 it("creates personal folders through the transaction and preserves online fallback for unavailable proofs only",async()=>{
   const f=setup();
   await knowledgeTreeApi.createForWorkspace("personal",{parentId:f.b.id,nodeType:"folder",title:" Offline "});
@@ -88,4 +119,20 @@ it("falls back for unavailable authorization but propagates a failed local commi
   expect(f.remoteMove).toHaveBeenCalledOnce();
   localStorage.setItem("nowen-current-workspace","workspace-a");
   await knowledgeTreeApi.move(f.a.id,{parentId:null}); expect(f.moves).toHaveBeenCalledTimes(2);
+});
+
+it("restores a mixed selection through its folder cohort and returns no permanent-deletion ids",async()=>{
+  const f=setup(),child={...f.b,parentId:f.a.id,isDeleted:1},note={...f.a,id:"note:n",resourceId:"n",resourceType:"note",nodeType:"markdown",parentId:f.b.id,isDeleted:1} as KnowledgeTreeNode;
+  f.remoteList.mockResolvedValue({nodes:[{...f.a,isDeleted:1},child,note]});
+  f.restoreFolder.mockResolvedValue({success:true,restoredNodeIds:[f.a.id,f.b.id,note.id]});
+  const result=await api.trash.mutate("personal","restore",[note.id,f.b.id,f.a.id]);
+  expect(f.restoreFolder).toHaveBeenCalledOnce();expect(f.restoreFolder).toHaveBeenCalledWith(f.a.id);
+  expect(result).toEqual({succeededIds:[note.id,f.b.id,f.a.id],noteIds:[],failures:[]});expect(f.remoteRestore).not.toHaveBeenCalled();
+});
+it("preserves the server's hidden-path and restore permission decisions for acknowledged trash",async()=>{
+  const f=setup();f.remoteList.mockResolvedValue({nodes:[{...f.a,isDeleted:1},f.b]});
+  const item={id:f.a.id,resourceId:f.a.resourceId,resourceType:"notebook",title:"Folder",contentFormat:null,deletedAt:"now",
+    originalParentId:null,originalPath:[] as string[],originalPathHidden:true,canRestore:false,canDeletePermanently:false,isLocked:false,restoreIncludesAncestors:true} as const;
+  f.remoteTrash.mockResolvedValue({items:[item]});
+  expect((await api.trash.list("personal")).items[0]).toEqual(item);
 });

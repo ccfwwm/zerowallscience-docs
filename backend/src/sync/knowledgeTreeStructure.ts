@@ -3,6 +3,7 @@ import { hasKnowledgeCapability, resolveKnowledgeNodeAccess } from "../services/
 import { SyncError } from "./errors.js";
 import { resolveAuthorizedScope } from "./scope.js";
 import { moveKnowledgeNode } from "../services/knowledgeTreeRootDocuments.js";
+import { applyKnowledgeTreeLifecycle } from "./knowledgeTreeLifecycle.js";
 
 interface TreeRow {
   id: string;
@@ -106,6 +107,10 @@ export function applyKnowledgeTreeStructureMutation(
   }
   if (payload.resourceType !== node.resourceType || payload.resourceId !== node.resourceId) {
     throw new SyncError("INVALID_PAYLOAD", "知识树资源身份不可变更");
+  }
+  if (payload.lifecycle !== undefined) {
+    applyKnowledgeTreeLifecycle(db,input.userId,input.workspaceId,node.id,payload);
+    return;
   }
   const desired = parseStructure(payload, "")!;
   if (payload.deletedAt !== null && payload.deletedAt !== undefined

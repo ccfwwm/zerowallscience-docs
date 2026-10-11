@@ -10,6 +10,7 @@ import { nativeReceiptKey } from "./mobileNoteSyncReceipt";
 import { validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
 import { applyNativePersonalTree, assertNativePersonalTreeEntry, NATIVE_TREE_ENTITY_SET, NATIVE_TREE_PENDING_SUBSCRIPTION, nativeTreeSubscriptionKey, type NativeTreeEntry } from "./nativeKnowledgeTreeSync";
 import { nativeTreeMutationPayload, readNativePersonalTreeNode, sameNativeTreePosition, syncNativeNotebookMoveParents, writeNativePersonalTreeMoves } from "./nativePersonalTreeWrites";
+import { applyNativeTreeLifecycleProjection, nativeTreeLifecycleKey, nativeTreeLifecycleOverrides, readNativeTreeLifecycleIntents, writeNativePersonalTreeLifecycle } from "./nativePersonalTreeTrash";
 
 type ScopeStatus = "active" | "replan_required" | "access_revoked";
 type EntityType = "notebook" | "note" | "tag" | "note_tag" | "favorite" | "attachment"
@@ -254,6 +255,53 @@ export class MobileSyncEngine {
     if(!row||row.status==="resolved")return;
     if (row.entityType === "knowledge_tree_node") {
       if (row.scopeKey !== "personal" || resolution === "manual") throw new Error("个人知识树冲突请选择本机或服务器位置");
+      const intent=row.localPayload?JSON.parse(row.localPayload) as Record<string,unknown>:null;
+      if(intent?.lifecycle) {
+        await this.options.db.transaction(async(tx)=>{
+          const remote=row.remotePayload?JSON.parse(row.remotePayload) as Record<string,unknown>:null;
+          if(!remote || (!remote.__delete && !Array.isArray(remote.lifecycleSubtree))) throw new Error("服务器子树尚未取得，请联网重试同步后处理");
+          if(remote.__delete && resolution!=="keep-remote") throw new Error("远端业务资源已删除，请保留本机正文后处理");
+          const nodes=remote.__delete?[]:remote.lifecycleSubtree as Record<string,unknown>[];
+          const localNodes=await tx.query<{id:string;resourceId:string;resourceType:string}>(`WITH RECURSIVE subtree(id) AS (
+            SELECT ? UNION SELECT t.id FROM native_knowledge_tree_nodes t JOIN subtree s ON t.parentId=s.id WHERE t.scopeKey='personal'
+          ) SELECT t.id,t.resourceId,t.resourceType FROM native_knowledge_tree_nodes t JOIN subtree s ON t.id=s.id WHERE t.scopeKey='personal'`,[row.entityId]);
+          const removed=localNodes.filter((node)=>!nodes.some((remote)=>remote.id===node.id));
+          for(const node of removed) {
+            const type=node.resourceType==="file"?"attachment":node.resourceType;
+            const protectedBody=await tx.query(`SELECT id FROM sync_outbox WHERE profileId=? AND scopeKey='personal'
+              AND entityType=? AND entityId=? UNION SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey='personal'
+              AND entityType=? AND entityId=? AND status='unresolved' LIMIT 1`,[this.options.profileId,type,node.resourceId,this.options.profileId,type,node.resourceId]);
+            if(protectedBody.length) throw new Error("子节点仍有待同步正文或冲突，请先保留并处理这些内容");
+          }
+          await tx.run("DELETE FROM sync_outbox WHERE profileId=? AND scopeKey='personal' AND entityType='knowledge_tree_node' AND entityId=?",[this.options.profileId,row.entityId]);
+          await tx.run("UPDATE sync_conflicts SET status='resolved',resolvedAt=? WHERE id=?",[now(),row.id]);
+          // A node moved outside the remote subtree is retained as a business
+          // resource. Only absent navigation rows are removed here; Pull owns
+          // authoritative business tombstones and its pending-body protection.
+          await applyNativePersonalTree(tx,[...removed.map((node)=>({entityId:node.id,payload:{__delete:true}})),
+            ...nodes.map((payload)=>({entityId:String(payload.id),payload}))],this.options.userId,false);
+          await applyNativeTreeLifecycleProjection(tx,nodes,this.options.userId);
+          if(resolution==="keep-local") {
+            // Refresh positions from the conflict, preserving the cached ACL
+            // and password flags. Unknown resources gain no new access proof.
+            for(const key of ["knowledgeTreeSnapshot:v1:personal:0","knowledgeTreeSnapshot:v1:personal:1"]) {
+              const cached=(await tx.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key=?",[key]))[0];
+              if(!cached) continue;
+              const proofs=JSON.parse(cached.value) as Record<string,unknown>[];
+              await tx.run("UPDATE native_runtime_meta SET value=? WHERE key=?",[JSON.stringify(proofs.map((proof)=>{
+                const position=nodes.find((node)=>node.id===proof.id);
+                return position?{...proof,parentId:position.parentId,sortOrder:position.sortOrder,isDeleted:position.isDeleted}:proof;
+              })),key]);
+            }
+          }
+          if(resolution==="keep-local" && remote.isDeleted!==(intent.lifecycle==="restore"?0:1)) {
+            await writeNativePersonalTreeLifecycle(tx,row.entityId,intent.lifecycle==="restore",
+              {profileId:this.options.profileId,deviceId:this.options.deviceId,userId:this.options.userId});
+          } else if(resolution==="keep-remote") await tx.run("DELETE FROM native_runtime_meta WHERE key=?",[`nativeTreeTrash:${this.options.profileId}:${row.entityId}`]);
+        });
+        notifyMobileSyncStatusChanged();this.options.onApplied?.({scopeKey:"personal",noteIds:[],deletedNoteIds:[]});this.requestSync(0);
+        return;
+      }
       await this.options.db.transaction(async (tx) => {
         const remote = row.remotePayload ? JSON.parse(row.remotePayload) as Record<string,unknown> : null;
         const local = await readNativePersonalTreeNode(tx,row.entityId);
@@ -560,9 +608,10 @@ export class MobileSyncEngine {
     ))[0]?.value;
     const bound = stored === NATIVE_TREE_ENTITY_SET || stored === NATIVE_TREE_PENDING_SUBSCRIPTION;
     const params = new URLSearchParams({scopeKey:scope.scopeKey,entityTypes:NATIVE_TREE_ENTITY_SET,deviceId:this.options.deviceId});
-    let supported = false;
+    let supported = false, lifecycleSupported=false;
     try {
-      const plan = await this.request<{entityTypes?:unknown}>(`/plan?${params}`);
+      const plan = await this.request<{entityTypes?:unknown;treeLifecycle?:unknown}>(`/plan?${params}`);
+      lifecycleSupported=plan.treeLifecycle==="personal-folder-v1";
       const types = plan.entityTypes;
       if (types !== undefined && (!Array.isArray(types) || types.some((type) => !NATIVE_TREE_ENTITY_SET.split(",").includes(type)))) {
         throw syncFailure("SERVER_ERROR","远端实体订阅响应无效");
@@ -577,6 +626,9 @@ export class MobileSyncEngine {
       if ((error as {code?:string}).code !== "INVALID_PAYLOAD") throw error;
     }
     if (!supported && bound) throw syncFailure("UNSUPPORTED_TREE_SUBSCRIPTION","当前服务器不支持已建立的知识树订阅，已保留本地数据与游标");
+    if(supported) await this.options.db.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,?,?)
+      ON CONFLICT(key) DO UPDATE SET value=excluded.value,updatedAt=excluded.updatedAt`,
+      [nativeTreeLifecycleKey(this.options.profileId),lifecycleSupported?"personal-folder-v1":"",now()]);
     this.treeSubscribed = supported;
     this.treeNegotiated = true;
   }
@@ -664,6 +716,10 @@ export class MobileSyncEngine {
       ORDER BY createdAt,rowid LIMIT 100`,
     [this.options.profileId,scope.scopeKey]);
     if (!rows.length || !scope.canWrite && scope.workspaceId) return;
+    if(rows.some((row)=>row.entityType==="knowledge_tree_node" && JSON.parse(row.payload||"{}").lifecycle)) {
+      const capability=(await this.options.db.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key=?",[nativeTreeLifecycleKey(this.options.profileId)]))[0];
+      if(capability?.value!=="personal-folder-v1") throw syncFailure("SERVER_ERROR","当前服务器不支持已保存的文件夹回收站操作，已保留本机数据");
+    }
     for(const row of rows){
       if((!isCoreEntityType(row.entityType) && !(this.hasTreeSubscription(scope) && row.entityType === "knowledge_tree_node"))||row.operation!=="upsert"&&row.operation!=="delete")
         throw syncFailure("SERVER_ERROR","本地存在当前客户端不支持的同步实体或操作");
@@ -741,12 +797,14 @@ export class MobileSyncEngine {
           }
         } else if (result.code === "VERSION_CONFLICT" && source) {
           const local = await this.readEntity(tx, scope.scopeKey, source.entityType, source.entityId);
+          const lifecycle = source.entityType==="knowledge_tree_node" ? (await readNativeTreeLifecycleIntents(tx,this.options.profileId)).filter((intent)=>intent.id===source.entityId).at(-1) : undefined;
+          const localPayload=lifecycle?JSON.stringify({...lifecycle,sortOrder:local?.sortOrder}):local?JSON.stringify(local):source.payload;
           const existing = (await tx.query<{id:string}>(`SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey=?
             AND entityType=? AND entityId=? AND status='unresolved' LIMIT 1`,
           [this.options.profileId,scope.scopeKey,source.entityType,source.entityId]))[0];
           if (existing) {
             await tx.run("UPDATE sync_conflicts SET localPayload=?,remotePayload=? WHERE id=?",
-              [local ? JSON.stringify(local) : source.payload,JSON.stringify(result.serverPayload||{version:result.serverVersion}),existing.id]);
+              [localPayload,JSON.stringify(result.serverPayload||{version:result.serverVersion}),existing.id]);
             await tx.run("DELETE FROM sync_outbox WHERE mutationId=?",[result.mutationId]);
             continue;
           }
@@ -755,7 +813,7 @@ export class MobileSyncEngine {
             localPayload,remotePayload,status,createdAt
           ) VALUES (?,?,?,?,?,?,?,?,?,'unresolved',?)`, [
             newLocalId(),this.options.profileId,scope.scopeKey,source.entityType,source.entityId,
-            source.baseVersion,result.serverVersion ?? null,local ? JSON.stringify(local) : source.payload,
+            source.baseVersion,result.serverVersion ?? null,localPayload,
             JSON.stringify(result.serverPayload||{version:result.serverVersion}),now(),
           ]);
           await tx.run("DELETE FROM sync_outbox WHERE mutationId=?",[result.mutationId]);
@@ -826,6 +884,14 @@ export class MobileSyncEngine {
     if (treeDeletes.length) {
       const held = await this.options.db.transaction(async (tx) => {
         let held = false;
+        for(const intent of await readNativeTreeLifecycleIntents(tx,this.options.profileId)) {
+          if(!treeDeletes.some((entry)=>(intent.lifecycleNodes as Record<string,unknown>[]).some((node)=>node.id===entry.entityId))) continue;
+          held=true;
+          const existing=(await tx.query<{id:string}>("SELECT id FROM sync_conflicts WHERE profileId=? AND entityType='knowledge_tree_node' AND entityId=? AND status='unresolved'",[this.options.profileId,intent.id]))[0];
+          if(!existing) await tx.run(`INSERT INTO sync_conflicts (id,profileId,scopeKey,entityType,entityId,localPayload,remotePayload,status,createdAt)
+            VALUES (?,?,'personal','knowledge_tree_node',?,?,?,'unresolved',?)`,
+            [newLocalId(),this.options.profileId,intent.id,JSON.stringify({...intent,sortOrder:(await readNativePersonalTreeNode(tx,String(intent.id)))?.sortOrder}),JSON.stringify({__delete:true}),now()]);
+        }
         for (const entry of treeDeletes) {
           const conflict = (await tx.query<{id:string}>(`SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey='personal'
             AND entityType='knowledge_tree_node' AND entityId=? AND status='unresolved' LIMIT 1`,[this.options.profileId,entry.entityId]))[0];
@@ -899,6 +965,7 @@ export class MobileSyncEngine {
         await this.applyTreeEntries(tx,tree);
         applied.push(...tree);
       }
+      if(scope.scopeKey==="personal") await applyNativeTreeLifecycleProjection(tx,await nativeTreeLifecycleOverrides(tx,this.options.profileId),this.options.userId);
       for(const [id,parentId] of notebookParents){
         const parent=(await tx.query<{id:string}>("SELECT id FROM notebooks WHERE scopeKey=? AND id=?",[scope.scopeKey,parentId]))[0];
         if(parent)await tx.run("UPDATE notebooks SET parentId=? WHERE scopeKey=? AND id=?",[parentId,scope.scopeKey,id]);
@@ -913,8 +980,18 @@ export class MobileSyncEngine {
 
   private async applyTreeEntries(tx: NativeDatabase, entries: NativeTreeEntry[]): Promise<void> {
     const applicable: NativeTreeEntry[] = [];
+    const lifecycleNodes=new Set((await nativeTreeLifecycleOverrides(tx,this.options.profileId)).map((node)=>node.id));
+    for(let changed=true;changed;) {
+      changed=false;
+      for(const entry of entries) if(!lifecycleNodes.has(entry.entityId) && lifecycleNodes.has(entry.payload.parentId)) {
+        lifecycleNodes.add(entry.entityId);changed=true;
+      }
+    }
     for (const entry of entries) {
       assertNativePersonalTreeEntry(entry.entityId,entry.payload,this.options.userId);
+      // The root mutation compares the complete subtree on Push. Until it is
+      // acknowledged, intermediate echoes cannot undo its local descendants.
+      if(lifecycleNodes.has(entry.entityId) || lifecycleNodes.has(entry.payload.parentId)) continue;
       const conflict = (await tx.query<{id:string}>(`SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey='personal'
         AND entityType='knowledge_tree_node' AND entityId=? AND status='unresolved' LIMIT 1`, [this.options.profileId,entry.entityId]))[0];
       if (conflict) {

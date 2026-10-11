@@ -19,6 +19,7 @@ async function main() {
   const { setSyncBroadcaster } = await import("../src/sync/notify");
   const { default: routes } = await import("../src/routes/sync-v2");
   const { default: treeRoutes } = await import("../src/routes/knowledge-tree");
+  const {default:trashRoutes}=await import("../src/routes/trash");
   const userId = "isolated-android-sync-user", db = getDb();
   db.prepare("INSERT OR IGNORE INTO users (id,username,passwordHash,createdAt,updatedAt) VALUES (?,?,'test-only','now','now')").run(userId, userId);
   const fixtureToken = () => signLoginToken({ userId, username: userId, tokenVersion: 0 });
@@ -34,6 +35,7 @@ async function main() {
   app.route("/api/sync/v2", routes);
   // Match index.ts's trailing-slash mount for the list entry point.
   app.route("/api/knowledge-tree/", treeRoutes);
+  app.route("/api/trash",trashRoutes);
   app.get("/acceptance/note/:id", (c) => c.json(db.prepare("SELECT * FROM notes WHERE id=? AND userId=?").get(c.req.param("id"), userId) || null));
   app.get("/acceptance/tree/:id", (c) => c.json(db.prepare("SELECT id,parentId,sortOrder,isDeleted FROM knowledge_tree_nodes WHERE id=? AND userId=?").get(c.req.param("id"),userId) || null));
   app.post("/acceptance/tree-folder", async (c) => {

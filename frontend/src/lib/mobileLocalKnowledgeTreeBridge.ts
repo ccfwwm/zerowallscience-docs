@@ -13,6 +13,7 @@ import { ensureMobileLocalMindMapTree } from "./mobileLocalMindMapTree";
 import type { NativeDatabase } from "./nativeDatabase";
 import type { NativeLocalRepository } from "./nativeLocalRepository";
 import { createNoteFolderPasswordResolver } from "./knowledgeTreePassword";
+import type { TrashItem } from "@/features/trash/trashTypes";
 
 function ownerAccess(
   nodeId: string,
@@ -174,6 +175,7 @@ export function installMobileLocalKnowledgeTreeBridge(
   const target = knowledgeTreeApi;
   const originals = { ...target };
   const deviceOnly = options.deviceOnly ?? isMobileLocalMode();
+  const originalTrash={...api.trash};
 
   const list = async (workspaceId?: string, includeDeleted = false) => {
     const [notebooks, notes] = await Promise.all([
@@ -203,7 +205,7 @@ export function installMobileLocalKnowledgeTreeBridge(
   if (!deviceOnly) {
     const withLocalDrafts = async (result: KnowledgeTreeResponse, scope: string, online: boolean): Promise<KnowledgeTreeResponse> => {
       if (!db || scope !== "personal") return result;
-      const folderDrafts = await repository.listPersonalTreeFolderDrafts();
+      const folderDrafts = await repository.listPersonalTreeFolderDrafts(true);
       const provisional: KnowledgeTreeNode[] = [];
       for (const draft of folderDrafts) {
         const present = result.nodes.some((node) => node.id === draft.id);
@@ -214,12 +216,12 @@ export function installMobileLocalKnowledgeTreeBridge(
         }
         provisional.push(draft);
       }
-      const safeChain = (node: KnowledgeTreeNode, nodes: KnowledgeTreeNode[]) => {
+      const safeChain = (node: KnowledgeTreeNode, nodes: KnowledgeTreeNode[], allowDeleted=false) => {
         const byId = new Map(nodes.map((item) => [item.id,item]));
         const visited = new Set<string>();
         let current: KnowledgeTreeNode | undefined = node;
         while (current) {
-          if (visited.has(current.id) || current.isDeleted || current.access?.source !== "owner"
+          if (visited.has(current.id) || (!allowDeleted && current.isDeleted) || current.access?.source !== "owner"
             || !current.access.capabilities.canView || (current.resourceType === "notebook" && current.isPasswordProtected !== 0)) return false;
           visited.add(current.id);
           if (!current.parentId) return true;
@@ -228,15 +230,24 @@ export function installMobileLocalKnowledgeTreeBridge(
         return false;
       };
       const combined = [...result.nodes,...provisional];
-      result = {...result,nodes:[...result.nodes,...provisional.filter((node) => safeChain(node,combined))]};
+      result = {...result,nodes:[...result.nodes,...provisional.filter((node) => safeChain(node,combined,true))]};
       const overrides = await repository.listPersonalTreeOverrides();
       if (overrides.length) {
+        const cached=(await db.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key=?",[snapshotKey("personal",true)]))[0];
+        if(cached) {
+          try {
+            const proofs=JSON.parse(cached.value) as KnowledgeTreeNode[];
+            result={...result,nodes:[...result.nodes,...proofs.filter((node)=>!result.nodes.some((current)=>current.id===node.id)
+              && overrides.some((override)=>override.id===node.id) && safeChain(node,proofs,true))]};
+          } catch { /* A broken ACL snapshot cannot authorize a local restore. */ }
+        }
         const nodes = result.nodes.map((node) => {
           const override = overrides.find((row) => row.id === node.id);
-          return override ? { ...node,parentId:override.parentId as string | null,sortOrder:override.sortOrder as number } : node;
+          return override ? { ...node,parentId:override.parentId as string | null,sortOrder:override.sortOrder as number,
+            ...(override.isDeleted!==undefined?{isDeleted:override.isDeleted as number,deletedAt:override.deletedAt as string|null}:{}) } : node;
         });
         result = { ...result,nodes:nodes.map((node,index) =>
-          safeChain(result.nodes[index],result.nodes) && safeChain(node,nodes) ? node : result.nodes[index]) };
+          safeChain(result.nodes[index],result.nodes,true) && safeChain(node,nodes,true) ? node : result.nodes[index]) };
       }
       const drafts = await repository.listLocalTreeDrafts();
       if (!drafts.length) {
@@ -273,6 +284,10 @@ export function installMobileLocalKnowledgeTreeBridge(
     ): Promise<KnowledgeTreeResponse> => {
       const key = snapshotKey(workspaceId, includeDeleted);
       const scope = syncScopeKey(workspaceId);
+      const present=async(result:KnowledgeTreeResponse,online:boolean)=>{
+        const projected=await withLocalDrafts(result,scope,online);
+        return includeDeleted?projected:{...projected,nodes:projected.nodes.filter((node)=>!node.isDeleted)};
+      };
       const validNodes = (nodes: unknown): nodes is KnowledgeTreeNode[] => Array.isArray(nodes)
         && nodes.every((node) => node && typeof node.id === "string"
           && (scope === "personal" ? node.workspaceId == null : syncScopeKey(node.workspaceId || undefined) === scope));
@@ -289,7 +304,7 @@ export function installMobileLocalKnowledgeTreeBridge(
             console.warn("[mobile knowledge tree] snapshot cache write failed", error);
           }
         }
-        return withLocalDrafts(result, scope, true);
+        return present(result, true);
       } catch (error) {
         if (db && error && typeof error === "object" && "status" in error && error.status === 403) {
           if (scope !== "personal") {
@@ -316,13 +331,13 @@ export function installMobileLocalKnowledgeTreeBridge(
           if (cached) {
             try {
               const nodes = JSON.parse(cached.value) as unknown;
-              if (validNodes(nodes)) return withLocalDrafts({ nodes }, scope, false);
+              if (validNodes(nodes)) return present({ nodes }, false);
             } catch { /* 损坏的快照不能证明目录没有密码。 */ }
           }
         }
         // A locally created root has no inherited folder protection. This does
         // not authorize any cached remote body or project other Native rows.
-        const drafts = await withLocalDrafts({ nodes: [] }, scope, false);
+        const drafts = await present({ nodes: [] }, false);
         if (drafts.nodes.length) return drafts;
         // Native 投影不含文件夹密码，缺失/损坏的服务端快照不能降级成无保护目录。
         throw new Error("目录权限和密码信息尚未缓存，请联网后重试");
@@ -381,7 +396,65 @@ export function installMobileLocalKnowledgeTreeBridge(
     };
     target.reorder = async (items) => await localMoves(items)
       ? {success:true,updated:items.length} : originals.reorder(items);
-    return () => { Object.assign(target, originals); };
+    const localTrash=async(ids:string[])=>{
+      if(!db || getCurrentWorkspace()!=="personal") return null;
+      try{return await repository.trashPersonalTreeFolders(ids);}
+      catch(error){if((error as {code?:string})?.code==="NATIVE_TREE_WRITE_UNAVAILABLE") return null;throw error;}
+    };
+    target.remove=async(id,mode="subtree")=>mode==="subtree"?(await localTrash([id]))||originals.remove(id,mode):originals.remove(id,mode);
+    target.batchRemove=async(nodeIds)=>{
+      const result=await localTrash(nodeIds);
+      return result?{success:true,nodeIds,affectedNodeIds:result.affectedNodeIds}:originals.batchRemove(nodeIds);
+    };
+    target.restore=async(id,includeSubtree=true)=>{
+      if(db && getCurrentWorkspace()==="personal" && includeSubtree) {
+        try{return await repository.restorePersonalTreeFolder(id);}
+        catch(error){if((error as {code?:string})?.code!=="NATIVE_TREE_WRITE_UNAVAILABLE") throw error;}
+      }
+      return originals.restore(id,includeSubtree);
+    };
+    api.trash.list=async(workspaceId)=>{
+      if(workspaceId!=="personal" || !db) return originalTrash.list(workspaceId);
+      let remote:TrashItem[]=[];
+      try{remote=(await originalTrash.list(workspaceId)).items;}
+      catch(error){if(!(error instanceof TypeError) || !/failed to fetch|network request failed|load failed/i.test(error.message)) throw error;}
+      const {nodes}=await target.listForWorkspace("personal",true), overrides=await repository.listPersonalTreeOverrides();
+      const items=remote.filter((item)=>!overrides.some((node)=>node.id===item.id && !node.isDeleted));
+      for(const node of nodes.filter((node)=>node.isDeleted && (node.resourceType==="notebook" || node.resourceType==="note"))) {
+        const path:KnowledgeTreeNode[]=[], seen=new Set([node.id]);
+        for(let parent=nodes.find((item)=>item.id===node.parentId);parent && !seen.has(parent.id);parent=nodes.find((item)=>item.id===parent!.parentId)) {
+          path.unshift(parent);seen.add(parent.id);
+        }
+        const existing=items.find((item)=>item.id===node.id), pending=overrides.some((item)=>item.id===node.id);
+        if(existing && !pending) continue;
+        const item:TrashItem={id:node.id,resourceId:node.resourceId,resourceType:node.resourceType as "note"|"notebook",title:node.title,
+          contentFormat:node.contentFormat||null,deletedAt:(node as KnowledgeTreeNode & {deletedAt?:string|null}).deletedAt||null,originalParentId:node.parentId,originalPath:path.map((item)=>item.title),
+          originalPathHidden:false,canRestore:!!node.access?.capabilities.canDelete,canDeletePermanently:existing?.canDeletePermanently===true && !pending,
+          isLocked:!!node.isLocked,restoreIncludesAncestors:path.some((item)=>!!item.isDeleted)};
+        if(existing) Object.assign(existing,item);else items.push(item);
+      }
+      return {items};
+    };
+    api.trash.mutate=async(workspaceId,action,ids)=>{
+      if(workspaceId!=="personal" || action!=="restore" || !db || getCurrentWorkspace()!=="personal") return originalTrash.mutate(workspaceId,action,ids);
+      const succeededIds:string[]=[],restored=new Set<string>(),failures:Array<{id:string;code:string;error:string}>=[];
+      const {nodes}=await target.listForWorkspace("personal",true),byId=new Map(nodes.map((node)=>[node.id,node]));
+      for(const id of [...new Set(ids)]) {
+        try{
+          if(!restored.has(id)) {
+            let root=byId.get(id),parent=byId.get(root?.parentId||"");const seen=new Set<string>();
+            while(parent?.isDeleted && !seen.has(parent.id)) {seen.add(parent.id);root=parent;parent=byId.get(parent.parentId||"");}
+            const result=await target.restore(root?.id||id);
+            result.restoredNodeIds.forEach((node)=>restored.add(node));
+          }
+          succeededIds.push(id);
+        }
+        catch(error){failures.push({id,code:(error as {code?:string}).code||"RESTORE_FAILED",error:error instanceof Error?error.message:String(error)});}
+      }
+      // noteIds means permanently removed bodies in the existing trash contract.
+      return {succeededIds,noteIds:[],failures};
+    };
+    return () => { Object.assign(target, originals);Object.assign(api.trash,originalTrash); };
   }
 
   target.list = (includeDeleted = false) => list(undefined, includeDeleted);

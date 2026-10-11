@@ -34,6 +34,7 @@ import {
   resolveResourceKnowledgeAccess,
 } from "../services/knowledgeCapabilities";
 import { knowledgeTreeSnapshotPage } from "../sync/knowledgeTreeSnapshot";
+import { readKnowledgeTreeLifecycleSubtree } from "../sync/knowledgeTreeLifecycle";
 
 /**
  * Sync Protocol V2。
@@ -284,6 +285,7 @@ app.get("/plan", (c) => {
     scopeKey: scope.scopeKey,
     accessFingerprint: scope.accessFingerprint,
     entityTypes: subscription.types,
+    treeLifecycle: scope.workspaceId===null && subscription.types.includes("knowledge_tree_node") ? "personal-folder-v1" : null,
     serverSequence,
     minAvailableSequence: minSequence,
     resetRequired: needsReset(after, minSequence)
@@ -796,6 +798,18 @@ app.post("/push", async (c) => {
           `).get(parsed.entityId, scope.workspaceId, scope.workspaceId, userId) as
             | Record<string, unknown>
             | undefined;
+          if (serverPayload && parsed.payload?.lifecycle) {
+            const current=readKnowledgeTreeLifecycleSubtree(db,parsed.entityId);
+            // Include former descendants moved out by another device, so the
+            // explicit remote choice can undo their provisional trash flags.
+            for(const base of Array.isArray(parsed.payload.baseSubtree)?parsed.payload.baseSubtree:[]) {
+              if(!base || typeof base!=="object" || typeof base.id!=="string" || current.some((node)=>node.id===base.id)) continue;
+              const node=db.prepare(`SELECT id,userId,workspaceId,parentId,nodeType,resourceType,resourceId,sortOrder,
+                isDeleted,deletedAt,createdAt,updatedAt FROM knowledge_tree_nodes WHERE id=? AND userId=? AND workspaceId IS NULL`).get(base.id,userId) as Record<string,unknown>|undefined;
+              if(node) current.push(node);
+            }
+            serverPayload.lifecycleSubtree=current;
+          }
         } else if (table) {
           serverPayload = db.prepare(`SELECT * FROM ${table} WHERE id=? AND workspaceId IS ?
             AND (? IS NOT NULL OR userId=?)`).get(

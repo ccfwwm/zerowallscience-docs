@@ -328,6 +328,18 @@
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "restores reverse-ordered provisional nested folders" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "does not grant provisional owner access to an ACKed folder" },
         { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "preserves subscription intent after a lost initial ACK" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline folder trash and restore preserve bodies" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder lifecycle rolls back the entire local subtree" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "lost folder trash ACK and a restore queued during Push" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent child moves conflict with offline folder trash" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder trash rejects missing server capability" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "acknowledged folder trash restores its cohort" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a pre-trash edit from an old device cannot revive" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a password added after local trash was committed" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder trash committed during the final Snapshot page" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "persists folder trash and restores it through the unified trash facade" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "projects durable pending trash into the offline bin" },
+        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "does not treat a trash authorization rejection as an offline read" },
         { "file": "backend/tests/knowledge-tree-root-documents.test.ts", "case": "moving folders and documents into root documents retains hidden containers" }
       ]
     }

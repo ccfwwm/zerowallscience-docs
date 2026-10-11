@@ -14,6 +14,7 @@
 
 ## 未发布 / Unreleased
 
+- **sync**：普通个人文件夹支持 Native 离线移入回收站和按删除批次恢复，保留子文档正文、原有队列与稳定 mutationId；并发子树变化进入冲突处理，旧设备正文不能隐式复活仍在回收站的目录。Persist native personal folder trash/restore atomically with deletion cohorts, durable bodies, stable intents and lifecycle-aware receipts; protect against concurrent subtree changes and stale-device resurrection.
 - **sync**：普通个人文件夹支持 Native 离线新建、嵌套创建和已有文档下创建，业务/结构 Outbox 同事务落库并依赖有序重放；新文件夹内可继续创建文档，重启与丢失 ACK 保留资源身份，快照重建期间新建目录不会误记为远端删除。Persist native personal folder creation/nesting and document parents atomically, replay ordered business/structure intents across restarts and lost ACKs, and preserve creations made during Snapshot rebuilding. 验收见 `docs/sync-v2-native-folder-create-validation.md`。
 - **sync**：个人普通文件夹的移动、批量移动与排序可先事务保存到 Native SQLite/Outbox，支持重启后上传和结构冲突选择；schema 7 无损升级队列，远端目录墓碑先保留本机位置与子正文。Persist ordinary personal folder moves and sorting atomically, replay after restart, and recover structural conflicts without cascading over retained child bodies. Document/mindmap/file moves and folder trash/restore retain their existing online paths. 验收见 `docs/sync-v2-native-tree-writes-validation.md`。
 - **sync**：Native 个人空间协商接收完整知识树结构，事务保存跨文档父子关系、移动与删除；升级重建订阅、首次 ACK 丢失保留基线。REST 树修改提交后唤醒 Pull，并修复移入根文档时隐藏容器校验失败。Receive negotiated personal tree structure on native clients, retain subscription intent across lost ACKs, notify after REST commits, and preserve hidden containers during root-document moves.

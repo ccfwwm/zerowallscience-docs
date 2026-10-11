@@ -95,12 +95,12 @@ async function client(name: string): Promise<Client> {
 async function pending(c: Client) { return c.db.query<{ mutationId: string; baseVersion: number; payload: string }>("SELECT mutationId,baseVersion,payload FROM sync_outbox WHERE profileId=? ORDER BY createdAt,rowid", [c.profileId]); }
 async function conflicts(c: Client) { return c.db.query<{ localPayload: string; remotePayload: string }>("SELECT localPayload,remotePayload FROM sync_conflicts WHERE profileId=? AND status='unresolved'", [c.profileId]); }
 
-async function cachePersonalTree(c: Client): Promise<void> {
-  const response = await fetch(`${serverUrl}/api/knowledge-tree/?workspaceId=personal`, { headers: { Authorization: `Bearer ${USER}` } });
+async function cachePersonalTree(c: Client,includeDeleted=false): Promise<void> {
+  const response = await fetch(`${serverUrl}/api/knowledge-tree/?workspaceId=personal${includeDeleted?"&includeDeleted=1":""}`, { headers: { Authorization: `Bearer ${USER}` } });
   assert.equal(response.status, 200);
   const { nodes } = await response.json() as { nodes: unknown[] };
-  await c.db.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES ('knowledgeTreeSnapshot:v1:personal:0',?,'now')
-    ON CONFLICT(key) DO UPDATE SET value=excluded.value`, [JSON.stringify(nodes)]);
+  await c.db.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,?,'now')
+    ON CONFLICT(key) DO UPDATE SET value=excluded.value`, [`knowledgeTreeSnapshot:v1:personal:${includeDeleted?1:0}`,JSON.stringify(nodes)]);
 }
 
 async function movableTree(name: string) {
@@ -111,6 +111,162 @@ async function movableTree(name: string) {
   await c.sync(); await cachePersonalTree(c);
   return { c, node: `notebook:${ids[0]}`, left: `notebook:${ids[1]}`, right: `notebook:${ids[2]}`, document: `note:${document}` };
 }
+
+test("offline folder trash and restore preserve bodies and replay their deletion cohort after restart", async () => {
+  const {c,node}=await movableTree("folder-trash"), child=randomUUID(), note=randomUUID(), old=randomUUID();
+  await c.repository.createPersonalTreeFolder(child,"Nested",node);
+  await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Original"},child);
+  await c.repository.createPersonalTreeNote({id:old,contentFormat:"markdown",content:"Earlier trash"},child);
+  await c.sync();
+  const {deleteKnowledgeNode}=await import("../src/services/knowledgeTree");
+  deleteKnowledgeNode({db:serverDb,actorUserId:USER,nodeId:`note:${old}`,mode:"subtree"});
+  await c.sync(); await cachePersonalTree(c);
+  await c.repository.notes.update(note,{content:"Pending before trash",contentText:"Pending before trash"});
+  const bodyIds=(await pending(c)).map((row)=>row.mutationId);
+  const deleted=await c.repository.trashPersonalTreeFolders([node]);
+  assert.ok(deleted.affectedNodeIds.includes(`note:${note}`));
+  assert.ok(!deleted.affectedNodeIds.includes(`note:${old}`));
+  assert.equal((await c.repository.notes.get(note))?.content,"Pending before trash");
+  assert.equal((await c.repository.notes.get(note))?.isTrashed,1);
+  assert.equal((await readNativeNoteSyncReceipt(c.db,c.profileId,note)).phase,"pending");
+  const queued=(await pending(c)).map((row)=>row.mutationId);
+  assert.ok(bodyIds.every((id)=>queued.includes(id)));
+  await c.db.close(); const reopened=await client("folder-trash");
+  assert.deepEqual((await pending(reopened)).map((row)=>row.mutationId),queued);
+  const restored=await reopened.repository.restorePersonalTreeFolder(node);
+  assert.ok(restored.restoredNodeIds.includes(`note:${note}`));
+  assert.equal((await reopened.repository.notes.get(note))?.isTrashed,0);
+  assert.equal((await reopened.repository.notes.get(old))?.isTrashed,1);
+  await reopened.sync(); const peer=await client("folder-trash-peer"); await peer.sync();
+  assert.equal((await pending(reopened)).length,0); assert.equal((await conflicts(reopened)).length,0);
+  assert.equal((await peer.repository.notes.get(note))?.content,"Pending before trash");
+  assert.equal((await peer.repository.notes.get(note))?.isTrashed,0);
+  assert.equal((await peer.repository.notes.get(old))?.isTrashed,1);
+});
+
+test("folder lifecycle rolls back the entire local subtree when Outbox persistence fails",async()=>{
+  const {c,node}=await movableTree("folder-trash-rollback"), note=randomUUID();
+  await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Keep"},node.slice(9));
+  await c.sync(); await cachePersonalTree(c);
+  await c.db.run("CREATE TRIGGER reject_trash BEFORE INSERT ON sync_outbox WHEN json_extract(NEW.payload,'$.lifecycle') IS NOT NULL BEGIN SELECT RAISE(ABORT,'Lifecycle Outbox failed'); END");
+  await assert.rejects(c.repository.trashPersonalTreeFolders([node]),/Lifecycle Outbox failed/);
+  assert.equal((await c.repository.notes.get(note))?.isTrashed,0);
+  assert.equal((await c.db.query<{isDeleted:number}>("SELECT isDeleted FROM native_knowledge_tree_nodes WHERE id=?",[node]))[0].isDeleted,0);
+  assert.equal((await pending(c)).length,0);
+});
+
+test("lost folder trash ACK and a restore queued during Push retain stable intentions and child bodies",async()=>{
+  const {c,node}=await movableTree("folder-trash-lost-ack"),note=randomUUID();
+  await c.repository.createPersonalTreeNote({id:note,contentFormat:"tiptap-json",content:JSON.stringify({type:"doc",content:[]})},node.slice(9));
+  await c.sync();await cachePersonalTree(c);
+  await c.repository.trashPersonalTreeFolders([node]);
+  const mutation=(await pending(c))[0].mutationId;
+  afterPush=async(response)=>{
+    const result=await response.json();
+    await c.repository.restorePersonalTreeFolder(node);
+    return Response.json({...result,results:result.results.map((row:Record<string,unknown>)=>({...row,status:"failed",code:"NETWORK_UNAVAILABLE"}))});
+  };
+  try{await c.sync();}finally{afterPush=undefined;}
+  assert.equal((await c.repository.notes.get(note))?.isTrashed,0);
+  assert.ok((await pending(c)).some((row)=>row.mutationId===mutation));
+  assert.equal((await conflicts(c)).length,0);
+  await c.sync();assert.equal((await pending(c)).length,0);assert.equal((await conflicts(c)).length,0);
+  assert.equal(serverDb.prepare("SELECT isTrashed FROM notes WHERE id=?").get(note).isTrashed,0);
+});
+
+test("concurrent child moves conflict with offline folder trash and both explicit choices retain bodies",async()=>{
+  for(const choice of ["keep-local","keep-remote"] as const) for(const kind of ["child","root"] as const) {
+    const {c,node,left}=await movableTree(`folder-trash-${choice}-${kind}`),child=randomUUID(),note=randomUUID();
+    await c.repository.createPersonalTreeFolder(child,"Moved child",node);
+    await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Retained child"},child);
+    await c.sync();await cachePersonalTree(c);
+    await c.repository.trashPersonalTreeFolders([node]);
+    const {moveKnowledgeNode}=await import("../src/services/knowledgeTree");
+    moveKnowledgeNode({db:serverDb,actorUserId:USER,nodeId:kind==="child"?`notebook:${child}`:node,parentId:left});
+    await c.sync();
+    const conflict=(await c.db.query<{id:string;localPayload:string}>("SELECT id,localPayload FROM sync_conflicts WHERE profileId=? AND entityId=? AND status='unresolved'",[c.profileId,node]))[0];
+    assert.ok(conflict);assert.equal(JSON.parse(conflict.localPayload).lifecycle,"trash");
+    assert.equal((await readNativeNoteSyncReceipt(c.db,c.profileId,note)).phase,"conflict");
+    assert.equal((await c.repository.notes.get(note))?.content,"Retained child");
+    await c.engine.resolveLocalConflict(conflict.id,choice);await c.sync();
+    assert.equal((await conflicts(c)).length,0);assert.equal((await pending(c)).length,0);
+    assert.equal((await c.repository.notes.get(note))?.isTrashed,kind==="root" && choice==="keep-local"?1:0,"only current descendants belong to a rebased delete");
+    assert.equal(serverDb.prepare("SELECT isDeleted FROM knowledge_tree_nodes WHERE id=?").get(node).isDeleted,choice==="keep-local"?1:0);
+    assert.equal((await c.db.query<{parentId:string}>("SELECT parentId FROM native_knowledge_tree_nodes WHERE id=?",[`notebook:${child}`]))[0].parentId,kind==="child"?left:node);
+  }
+});
+
+test("folder trash rejects missing server capability and protected ancestry without altering queues",async()=>{
+  const {c,node}=await movableTree("folder-trash-guards");
+  await c.db.run("DELETE FROM native_runtime_meta WHERE key=?",[`nativeTreeLifecycle:${c.profileId}:personal`]);
+  await assert.rejects(c.repository.trashPersonalTreeFolders([node]),/尚未确认/);
+  await c.db.run("INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,'personal-folder-v1','now')",[`nativeTreeLifecycle:${c.profileId}:personal`]);
+  const cache=(await c.db.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key='knowledgeTreeSnapshot:v1:personal:0'"))[0];
+  const nodes=JSON.parse(cache.value);nodes.find((row:Record<string,unknown>)=>row.id===node).isPasswordProtected=1;
+  await c.db.run("UPDATE native_runtime_meta SET value=? WHERE key='knowledgeTreeSnapshot:v1:personal:0'",[JSON.stringify(nodes)]);
+  await assert.rejects(c.repository.trashPersonalTreeFolders([node]),/权限|密码/);
+  assert.equal((await pending(c)).length,0);
+  assert.equal((await c.db.query<{isDeleted:number}>("SELECT isDeleted FROM native_knowledge_tree_nodes WHERE id=?",[node]))[0].isDeleted,0);
+});
+
+test("acknowledged folder trash restores its cohort and a reverse-ordered batch deletes each subtree once",async()=>{
+  const {c,node}=await movableTree("folder-trash-batch"),child=randomUUID(),note=randomUUID();
+  await c.repository.createPersonalTreeFolder(child,"Child",node);
+  await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Batch body"},child);
+  await c.sync();await cachePersonalTree(c);
+  await c.repository.trashPersonalTreeFolders([`notebook:${child}`,node]);
+  assert.equal((await pending(c)).length,1);
+  const payload=JSON.parse((await pending(c))[0].payload);
+  assert.equal(payload.sortOrder,undefined,"an old per-node parser must reject the atomic command");
+  const {applyKnowledgeTreeStructureMutation}=await import("../src/sync/knowledgeTreeStructure");
+  assert.throws(()=>applyKnowledgeTreeStructureMutation(serverDb,{userId:USER,workspaceId:null,entityId:node,operation:"upsert",payload:{...payload,lifecycle:undefined}}),
+    (error:{code:string})=>error.code==="INVALID_PAYLOAD");
+  await c.sync();assert.equal((await pending(c)).length,0);
+  await cachePersonalTree(c,true);await c.repository.restorePersonalTreeFolder(node);await c.sync();
+  assert.equal((await c.repository.notes.get(note))?.isTrashed,0);assert.equal((await pending(c)).length,0);
+});
+
+test("a pre-trash edit from an old device cannot revive a document under a trashed folder",async()=>{
+  const {c,node}=await movableTree("folder-trash-old-writer"),note=randomUUID();
+  await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Cloud body"},node.slice(9));
+  await c.sync();await cachePersonalTree(c);
+  const peer=await client("folder-trash-old-reader");await peer.sync();
+  await peer.repository.notes.update(note,{content:"Offline old device",contentText:"Offline old device"});
+  await c.repository.trashPersonalTreeFolders([node]);await c.sync();await peer.sync();
+  assert.equal(serverDb.prepare("SELECT isTrashed FROM notes WHERE id=?").get(note).isTrashed,1);
+  assert.equal((await peer.repository.notes.get(note))?.content,"Offline old device");
+  assert.equal((await conflicts(peer)).length,1);
+});
+
+test("a password added after local trash was committed blocks server application and retains the intent",async()=>{
+  const {c,node}=await movableTree("folder-trash-password-race");
+  await c.repository.trashPersonalTreeFolders([node]);
+  const mutation=(await pending(c))[0].mutationId;
+  serverDb.prepare("INSERT INTO notebook_passwords (notebookId,passwordHash) VALUES (?,'test-only-hash')").run(node.slice(9));
+  await c.sync();
+  assert.equal((await pending(c))[0].mutationId,mutation);
+  assert.equal(serverDb.prepare("SELECT isDeleted FROM knowledge_tree_nodes WHERE id=?").get(node).isDeleted,0);
+  assert.equal((await c.db.query<{status:string;lastError:string}>("SELECT status,lastError FROM sync_outbox WHERE mutationId=?",[mutation]))[0].lastError,"SCOPE_FORBIDDEN");
+});
+
+
+test("folder trash committed during the final Snapshot page retains its complete pending projection",async()=>{
+  const {c,node}=await movableTree("folder-trash-snapshot"),note=randomUUID();
+  await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Snapshot body"},node.slice(9));
+  await c.sync();await cachePersonalTree(c);
+  await c.db.run("UPDATE sync_state SET lastSequence=0 WHERE profileId=?",[c.profileId]);
+  let injected=false;
+  afterSnapshot=async(response)=>{
+    const result=await response.json();
+    if(!result.nextCursor && !injected){injected=true;await c.repository.trashPersonalTreeFolders([node]);}
+    return Response.json(result);
+  };
+  try{await c.sync();}finally{afterSnapshot=undefined;}
+  assert.ok(injected);assert.equal((await pending(c)).length,0);assert.equal((await conflicts(c)).length,0);
+  assert.equal((await c.repository.notes.get(note))?.content,"Snapshot body");
+  assert.equal((await c.repository.notes.get(note))?.isTrashed,1);
+  assert.equal(serverDb.prepare("SELECT isTrashed FROM notes WHERE id=?").get(note).isTrashed,1);
+});
 
 test("offline folder creation atomically persists nested resources and document parents across reopen and a second device", async () => {
   const {c,document}=await movableTree("folder-create"), root=randomUUID(), child=randomUUID(), underDocument=randomUUID(), note=randomUUID();

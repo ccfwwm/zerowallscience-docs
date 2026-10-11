@@ -169,7 +169,43 @@ try {
   assert.equal((await native("treeConflicts")).length,0);
   const acknowledgedFolderTree=await native("treeList");
   for(const item of created.folders) assert.equal(acknowledgedFolderTree.nodes.filter((node)=>node.id===item.id).length,1);
+  await native("treeList",true);await native("stop");adb("reverse","--remove","tcp:47831");
+  await native("edit",created.noteId,"folder-trash-offline-body");
+  await native("treeTrash",created.folders[0].id);
+  assert.equal((await native("structure",created.folders[0].id)).isDeleted,1);
+  assert.equal((await native("noteStatus",created.noteId)).note.isTrashed,1);
+  assert.equal((await native("noteStatus",created.noteId)).receipt.phase,"pending");
+  assert.ok(!(await native("treeList")).nodes.some((node)=>node.id===created.folders[0].id));
+  assert.ok((await native("trashList")).items.some((item)=>item.id===created.folders[0].id));
+  const trashMutations=await native("pendingMutations");
+  await browser.close();adb("shell","am","force-stop","com.nowen.note.syncacceptance");
+  adb("shell","am","start","-n","com.nowen.note.syncacceptance/com.nowen.note.MainActivity");await attach();
+  assert.deepEqual(await native("pendingMutations"),trashMutations);
+  assert.ok((await native("trashList")).items.some((item)=>item.id===created.folders[0].id));
+  assert.equal((await native("noteStatus",created.noteId)).note.contentText,"folder-trash-offline-body");
+  adb("reverse","tcp:47831","tcp:47831");await native("start");
+  await wait(async()=>!(await native("pendingMutations")).length && (await serverNote(created.noteId))?.isTrashed===1,
+    "offline folder trash did not automatically commit with the pending body");
+  await native("trashList");await native("stop");adb("reverse","--remove","tcp:47831");
+  const restored=await native("treeRestore",created.folders[1].id);
+  assert.deepEqual(restored.failures,[],"selecting the child restores its deleted ancestor cohort");
+  assert.equal((await native("structure",created.folders[0].id)).isDeleted,0);
+  assert.equal((await native("noteStatus",created.noteId)).note.isTrashed,0);
+  assert.equal((await native("noteStatus",created.noteId)).receipt.phase,"pending");
+  const restoreMutations=await native("pendingMutations");
+  await browser.close();adb("shell","am","force-stop","com.nowen.note.syncacceptance");
+  adb("shell","am","start","-n","com.nowen.note.syncacceptance/com.nowen.note.MainActivity");await attach();
+  assert.deepEqual(await native("pendingMutations"),restoreMutations);
+  assert.ok((await native("treeList")).nodes.some((node)=>node.id===created.folders[0].id));
+  adb("reverse","tcp:47831","tcp:47831");await native("start");
+  await wait(async()=>!(await native("pendingMutations")).length && (await serverNote(created.noteId))?.isTrashed===0
+    && (await native("noteStatus",created.noteId)).receipt.phase==="confirmed","offline folder restore did not automatically converge");
+  assert.equal((await serverNote(created.noteId)).contentText,"folder-trash-offline-body");
+  assert.equal((await native("treeConflicts")).length,0);
   const report = { device: serial, package: "com.nowen.note.syncacceptance", offlineImmediateRead: true, forceStopRecovery: true,
+    nativeOfflineFolderTrash:true,offlineUnifiedTrashList:true,pendingChildBodyPreserved:true,trashMutationIdentitySurvivesRestart:true,
+    automaticFolderTrashPush:true,nativeOfflineFolderRestore:true,restoreIncludesDeletedAncestors:true,restoreMutationIdentitySurvivesRestart:true,
+    automaticFolderRestorePush:true,lifecycleReceiptInvalidation:true,
     sourceCommit:execFileSync("git",["rev-parse","HEAD"],{encoding:"utf8"}).trim(),
     nativeOfflineFolderCreate:true,nestedOfflineFolderCreate:true,offlineFolderUnderDocument:true,noteInsideOfflineFolder:true,
     folderCreationMutationIdentitySurvivesRestart:true,folderCreationOfflineListRecovery:true,automaticFolderCreationPush:true,nativeFolderCreationMs,
@@ -180,9 +216,9 @@ try {
     offlineNetworkIsolation: "adb reverse removed; HTTP server unreachable from Android",
     markdownAndRichText: true, missingNoticePoll: true, reconnect: true,
     httpPushToNativePull: stats(download), nativeCommitToServerAndAck: stats(upload), errors: await native("errors"),
-    boundary: "Loopback adb reverse; actual Android Native SQLite, production API Bridge personal folder creation/nesting/document parents and note creation inside the new folder, tree move/sort, Outbox restart recovery, automatic Push and concurrent move keep-local via the Native conflict service. Full ConflictCenter GUI, EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
+    boundary: "Loopback adb reverse; actual Android Native SQLite, production API Bridge personal folder creation/nesting/document parents and note creation inside the new folder, tree move/sort, personal folder subtree trash/restore through the unified trash API with pending child body preservation, lifecycle receipt invalidation, Outbox restart recovery, automatic Push and concurrent move keep-local via the Native conflict service. Full ConflictCenter GUI, EditorPane, protected/shared ACL, attachment bytes and full production JWT middleware are not accepted here." };
   fs.mkdirSync(new URL("../docs/test-results/", import.meta.url), { recursive: true });
-  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-folder-create-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
+  fs.writeFileSync(new URL("../docs/test-results/sync-v2-native-folder-trash-2026-10-11.json", import.meta.url), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally {
   if (page) await native("stop").catch(() => undefined);
