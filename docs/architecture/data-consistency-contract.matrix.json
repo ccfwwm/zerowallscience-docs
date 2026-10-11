@@ -254,6 +254,26 @@
           "case": "updates the real editor badge after a committed Android edit"
         }
       ]
+    },
+    {
+      "id": "DCC-012",
+      "title": "Native independent SQLite clients preserve durable edits across sync failures",
+      "status": "covered",
+      "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "three independent SQLite clients converge bidirectionally" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "remote permanent deletion preserves offline body" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline create survives database close/reopen" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "missing or invalid successful ACK version cannot claim cloud confirmation" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "an old offline update cannot resurrect" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "apply failure rolls back the entire batch" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "successful push replay after client ACK crash" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "overlapping native writes read the latest revision" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent devices preserve both versions" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "two edits committed during a delayed ACK" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "invalid note ACK leaves the durable mutation" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a failed Outbox insertion rolls back note creation" },
+        { "file": "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts", "case": "rejects a late push ACK when the account changes" }
+      ]
     }
   ]
 }

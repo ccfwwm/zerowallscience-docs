@@ -248,6 +248,10 @@ function applyNote(db: Database.Database, input: ApplyMutationInput): number | n
     return nextVersion;
   }
 
+  // An update based on an existing revision is not a new entity. An old device
+  // must not resurrect a permanently deleted note, even after feed retention.
+  if (input.baseVersion !== undefined) throw new SyncError("VERSION_CONFLICT", "远端笔记已删除，请保留冲突或另存为新笔记");
+
   // 新建：客户端生成 UUID，离线也能创建，不依赖服务端分配 ID。
   const version = Math.max(1, num(p.version, 1));
   db.prepare(`

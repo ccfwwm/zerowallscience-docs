@@ -244,9 +244,9 @@ export class NativeLocalRepository implements LocalRepository {
     return { scopeKey, workspaceId: workspaceIdFromScope(scopeKey) };
   }
 
-  private async assertWritable(scopeKey:string):Promise<void> {
+  private async assertWritable(scopeKey:string, db:NativeDatabase=this.db):Promise<void> {
     if(scopeKey === "personal") return;
-    const scope=(await this.db.query<{canWrite:number;accessStatus:string}>(
+    const scope=(await db.query<{canWrite:number;accessStatus:string}>(
       "SELECT canWrite,accessStatus FROM sync_workspace_scopes WHERE scopeKey=? LIMIT 1",[scopeKey],
     ))[0];
     if(!scope || scope.canWrite !== 1 || scope.accessStatus !== "active") {
@@ -378,13 +378,13 @@ export class NativeLocalRepository implements LocalRepository {
     `, values);
   }
 
-  private async getNote(id: string): Promise<Note | null> {
+  private async getNote(id: string, db: NativeDatabase = this.db): Promise<Note | null> {
     const currentScopeKey = this.scope().scopeKey;
-    const rows = await this.db.query<Note>(`SELECT * FROM notes WHERE id=?
+    const rows = await db.query<Note>(`SELECT * FROM notes WHERE id=?
       ORDER BY CASE WHEN scopeKey=? THEN 0 ELSE 1 END LIMIT 1`, [id,currentScopeKey]);
     if (!rows[0]) return null;
     const scopeKey = this.scopeFromWorkspace(rows[0].workspaceId).scopeKey;
-    const tags = await this.db.query<Tag>(`
+    const tags = await db.query<Tag>(`
       SELECT t.* FROM tags t JOIN note_tags nt
         ON nt.scopeKey=t.scopeKey AND nt.tagId=t.id
       WHERE nt.scopeKey=? AND nt.noteId=? ORDER BY t.name
@@ -416,7 +416,7 @@ export class NativeLocalRepository implements LocalRepository {
       ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, Object.values(row));
       await tx.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,'1',?)
         ON CONFLICT(key) DO UPDATE SET value=excluded.value,updatedAt=excluded.updatedAt`, [unsentLocalNoteKey(scope.scopeKey, input.id), savedAt]);
-      await this.enqueue(tx, "note", input.id, "upsert", row);
+      await this.enqueue(tx, "note", input.id, "upsert", row, undefined, scope.scopeKey);
     });
     // The receipt is invalidated only after the SQLite Outbox transaction commits.
     notifyMobileSyncStatusChanged();
@@ -424,16 +424,16 @@ export class NativeLocalRepository implements LocalRepository {
   }
 
   private async updateNote(id: string, patch: Partial<Note>): Promise<WriteResult> {
-    const current = await this.getNote(id);
-    if (!current) throw new Error("笔记不存在");
-    validateEncryptedNoteWrite(patch as Record<string, unknown>, current as unknown as Record<string, unknown>);
-    if (isEncryptedNoteFormat(current.contentFormat) && patch.version !== undefined && patch.version !== current.version) throw Object.assign(new Error("笔记版本已改变"), { status: 409, code: "VERSION_CONFLICT" });
-    const encrypted = isEncryptedNoteFormat(current.contentFormat);
-    if (encrypted && patch.content !== undefined && !Number.isSafeInteger(patch.version)) throw Object.assign(new Error("加密正文保存需要明确版本"), { status: 409, code: "VERSION_CONFLICT" });
-    const next = { ...current, ...patch, id, updatedAt: now(), version: current.version + 1 };
-    const scope = this.scopeFromWorkspace(current.workspaceId);
-    await this.assertWritable(scope.scopeKey);
-    await this.db.transaction(async (tx) => {
+    const result = await this.db.transaction(async (tx) => {
+      const current = await this.getNote(id, tx);
+      if (!current) throw new Error("笔记不存在");
+      validateEncryptedNoteWrite(patch as Record<string, unknown>, current as unknown as Record<string, unknown>);
+      if (isEncryptedNoteFormat(current.contentFormat) && patch.version !== undefined && patch.version !== current.version) throw Object.assign(new Error("笔记版本已改变"), { status: 409, code: "VERSION_CONFLICT" });
+      const encrypted = isEncryptedNoteFormat(current.contentFormat);
+      if (encrypted && patch.content !== undefined && !Number.isSafeInteger(patch.version)) throw Object.assign(new Error("加密正文保存需要明确版本"), { status: 409, code: "VERSION_CONFLICT" });
+      const next = { ...current, ...patch, id, updatedAt: now(), version: current.version + 1 };
+      const scope = this.scopeFromWorkspace(current.workspaceId);
+      await this.assertWritable(scope.scopeKey, tx);
       const changed = await tx.run(`UPDATE notes SET notebookId=?,title=?,content=?,contentText=?,contentFormat=?,colorMark=?,
         isPinned=?,isFavorite=?,isLocked=?,isArchived=?,isTrashed=?,trashedAt=?,version=?,sortOrder=?,updatedAt=?
         WHERE scopeKey=? AND id=?${encrypted ? " AND version=?" : ""}`, [
@@ -443,11 +443,12 @@ export class NativeLocalRepository implements LocalRepository {
         scope.scopeKey, id, ...(encrypted ? [current.version] : []),
       ]);
       if (encrypted && changed.changes !== 1) throw Object.assign(new Error("笔记版本已改变"), { status: 409, code: "VERSION_CONFLICT" });
-      await this.enqueue(tx, "note", id, "upsert", next as unknown as Record<string, unknown>, current.version);
+      await this.enqueue(tx, "note", id, "upsert", next as unknown as Record<string, unknown>, current.version, scope.scopeKey);
+      return { id, savedAt: next.updatedAt };
     });
     // Refresh per-note receipt from committed Outbox, even while a push is in flight.
     notifyMobileSyncStatusChanged();
-    return { id, savedAt: next.updatedAt };
+    return result;
   }
 
   private async removeNote(id: string): Promise<void> {
@@ -458,7 +459,7 @@ export class NativeLocalRepository implements LocalRepository {
     await this.db.transaction(async (tx) => {
       await tx.run("DELETE FROM notes WHERE scopeKey=? AND id=?", [scope.scopeKey, id]);
       await tx.run("DELETE FROM native_runtime_meta WHERE key=?", [unsentLocalNoteKey(scope.scopeKey, id)]);
-      await this.enqueue(tx, "note", id, "delete", undefined, current?.version ?? null);
+      await this.enqueue(tx, "note", id, "delete", undefined, current?.version ?? null, scope.scopeKey);
     });
     notifyMobileSyncStatusChanged();
   }

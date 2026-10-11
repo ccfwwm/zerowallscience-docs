@@ -30,9 +30,10 @@ export async function readNativeNoteSyncReceipt(
   );
   try {
     const receipt = rows[0] && JSON.parse(rows[0].value) as { mutationId?: unknown; serverVersion?: unknown };
-    if (typeof receipt?.mutationId === "string" && receipt.mutationId) {
-      const version = typeof receipt.serverVersion === "number" && Number.isSafeInteger(receipt.serverVersion)
-        ? receipt.serverVersion : null;
+    if (typeof receipt?.mutationId === "string" && receipt.mutationId
+      && typeof receipt.serverVersion === "number" && Number.isSafeInteger(receipt.serverVersion)
+      && receipt.serverVersion > 0) {
+      const version = receipt.serverVersion;
       return { phase: "confirmed", localRevision: null, acknowledgedRevision: version };
     }
   } catch { /* Corrupt metadata cannot prove an ACK. */ }

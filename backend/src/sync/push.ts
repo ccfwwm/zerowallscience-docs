@@ -72,9 +72,8 @@ export function coalesceMutations(rows: SyncOutboxRow[]): CoalescedMutation[] {
     existing.operation = row.operation;
     existing.payload = parsePayload(row.payload);
     // baseVersion 保持最早那条：它才代表"这串修改的共同祖先"。
-    if (existing.baseVersion === undefined && row.baseVersion !== null) {
-      existing.baseVersion = row.baseVersion;
-    }
+    // An absent first base means creation. Later local revisions must not turn
+    // that creation into an update of a server entity that does not exist yet.
   }
 
   return order.map((key) => byEntity.get(key) as CoalescedMutation);

@@ -180,10 +180,14 @@ export class MobileSyncEngine {
         ))[0];
         if (state?.accessStatus === "access_revoked") continue;
         try {
+          // Replay durable mutation IDs before reconciling a snapshot. After a
+          // lost ACK, the server already has our create; bootstrap alone cannot
+          // distinguish that state from a competing creation on another device.
+          await this.push(scope);
+          if (this.stopped) return;
           if (!state || state.lastSequence === 0 || state.accessStatus === "replan_required") {
             await this.bootstrap(scope);
           }
-          await this.push(scope);
           if (this.stopped) return;
           await this.pull(scope);
           if (this.stopped) return;
@@ -222,7 +226,7 @@ export class MobileSyncEngine {
     } finally {
       this.running = false;
       this.syncAbort = null;
-      notifyMobileSyncStatusChanged();
+      if (!this.stopped) notifyMobileSyncStatusChanged();
       if (this.rerun) { this.rerun = false; this.requestSync(0); }
     }
   }
@@ -232,15 +236,20 @@ export class MobileSyncEngine {
     resolution:"keep-local"|"keep-remote"|"manual",
     mergedPayload?:Record<string,unknown>,
   ):Promise<void>{
+    this.syncAbort?.abort();
     const row=(await this.options.db.query<{
       id:string;scopeKey:string;entityType:RemoteEntityType;entityId:string;
       localVersion:number|null;remoteVersion:number|null;localPayload:string|null;remotePayload:string|null;status:string;
-    }>("SELECT * FROM sync_conflicts WHERE id=?",[conflictId]))[0];
+    }>("SELECT * FROM sync_conflicts WHERE id=? AND profileId=?",[conflictId,this.options.profileId]))[0];
     if(!row||row.status==="resolved")return;
     if(!isCoreEntityType(row.entityType))throw new Error("该冲突类型暂不支持在移动端合并");
     const parse=(value:string|null)=>value?JSON.parse(value) as Record<string,unknown>:null;
-    const payload=resolution==="manual"?mergedPayload:parse(resolution==="keep-remote"?row.remotePayload:row.localPayload);
-    if(!payload)throw new Error("缺少可用的冲突内容");
+    const selected=resolution==="manual"?mergedPayload:parse(resolution==="keep-remote"?row.remotePayload:row.localPayload);
+    if(!selected)throw new Error("缺少可用的冲突内容");
+    if(resolution!=="keep-remote"&&parse(row.remotePayload)?.__delete)throw new Error("远端笔记已永久删除，请先另存为新笔记保留本机内容");
+    const payload = row.entityType === "note" && resolution !== "keep-remote"
+      && typeof row.remoteVersion === "number" && Number.isSafeInteger(row.remoteVersion) && row.remoteVersion > 0
+      ? { ...selected, version: row.remoteVersion + 1 } : selected;
     const workspace=workspaceId(row.scopeKey);
     const stored=(await this.options.db.query<{workspaceName:string;role:string;canWrite:number;accessFingerprint:string}>(
       "SELECT workspaceName,role,canWrite,accessFingerprint FROM sync_workspace_scopes WHERE profileId=? AND scopeKey=?",
@@ -268,7 +277,7 @@ export class MobileSyncEngine {
 
   async forkLocalConflict(conflictId:string,side:"local"|"remote"):Promise<string>{
     const row=(await this.options.db.query<{scopeKey:string;entityType:RemoteEntityType;localPayload:string|null;remotePayload:string|null}>(
-      "SELECT scopeKey,entityType,localPayload,remotePayload FROM sync_conflicts WHERE id=?",[conflictId],
+      "SELECT scopeKey,entityType,localPayload,remotePayload FROM sync_conflicts WHERE id=? AND profileId=?",[conflictId,this.options.profileId],
     ))[0];
     if(!row||row.entityType!=="note")throw new Error("只有笔记冲突支持另存为新笔记");
     const payload=JSON.parse(side==="local"?row.localPayload||"null":row.remotePayload||"null") as Record<string,unknown>|null;
@@ -314,6 +323,7 @@ export class MobileSyncEngine {
     init.signal?.addEventListener("abort", cancel, { once: true });
     syncSignal?.addEventListener("abort", cancel, { once: true });
     window.addEventListener(SERVER_ENDPOINT_CHANGED_EVENT, endpointChanged);
+    if (syncSignal) window.addEventListener("nowen:token-changed", cancel);
     if (init.signal?.aborted) cancel();
     try {
       // Capacitor 的原生 POST/PUT fetch 不消费 AbortSignal；仍须释放同步循环，
@@ -329,7 +339,10 @@ export class MobileSyncEngine {
           ...(init.body ? { "Content-Type": "application/json" } : {}),
           ...(init.headers || {}),
         },
-      }, apiBaseUrl, fetch)]);
+      }, apiBaseUrl, (input, requestInit) => {
+        controller.signal.throwIfAborted();
+        return fetch(input, requestInit);
+      })]);
     } catch (cause) {
       if (!syncSignal?.aborted) this.options.onNetworkUnavailable?.();
       throw Object.assign(new Error("网络不可用", { cause }), { code: "NETWORK_UNAVAILABLE" });
@@ -339,19 +352,24 @@ export class MobileSyncEngine {
       init.signal?.removeEventListener("abort", cancel);
       syncSignal?.removeEventListener("abort", cancel);
       window.removeEventListener(SERVER_ENDPOINT_CHANGED_EVENT, endpointChanged);
+      if (syncSignal) window.removeEventListener("nowen:token-changed", cancel);
     }
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const signal = this.syncAbort?.signal;
     const response = await this.fetchResponse(path, init);
+    signal?.throwIfAborted();
+    const responseToken = getAccessToken();
     if (!response.ok) {
       const payload = await response.json().catch(() => ({})) as { code?: string; error?: string };
       // A reverse proxy may use a different JSON error code for HTTP 401.
       const code = response.status === 401 ? "AUTH_EXPIRED" : (payload.code || "SERVER_ERROR");
       throw Object.assign(new Error(payload.error || code), { code, status: response.status });
     }
+    let payload: T;
     try {
-      return await response.json() as T;
+      payload = await response.json() as T;
     } catch {
       // NodeBao/reverse proxies sometimes return their HTML login/home page
       // with HTTP 200 for an unrecognized /sync/v2 route. This is not a
@@ -361,6 +379,11 @@ export class MobileSyncEngine {
         "同步接口返回了非 JSON 响应，请检查节点小宝的 API 代理路径与登录状态",
       );
     }
+    signal?.throwIfAborted();
+    if (getAccessToken() !== responseToken) {
+      throw syncFailure("AUTH_SESSION_CHANGED", "登录状态已更新，旧同步响应已隔离");
+    }
+    return payload;
   }
 
   private async fetchScopes(): Promise<ScopeDescriptor[]> {
@@ -493,7 +516,11 @@ export class MobileSyncEngine {
       mutationId:string;entityType:EntityType;entityId:string;operation:"upsert"|"delete";
       baseVersion:number|null;payload:string|null;
     }>(`SELECT mutationId,entityType,entityId,operation,baseVersion,payload FROM sync_outbox
-      WHERE profileId=? AND scopeKey=? AND status IN ('pending','failed') ORDER BY createdAt LIMIT 100`,
+      WHERE profileId=? AND scopeKey=? AND status IN ('pending','failed')
+        AND NOT EXISTS (SELECT 1 FROM sync_conflicts c WHERE c.profileId=sync_outbox.profileId
+          AND c.scopeKey=sync_outbox.scopeKey AND c.entityType=sync_outbox.entityType
+          AND c.entityId=sync_outbox.entityId AND c.status='unresolved')
+      ORDER BY createdAt,rowid LIMIT 100`,
     [this.options.profileId,scope.scopeKey]);
     if (!rows.length || !scope.canWrite && scope.workspaceId) return;
     for(const row of rows){
@@ -502,6 +529,18 @@ export class MobileSyncEngine {
     }
     const mutations = rows.map((row) => ({ ...row,
       baseVersion:row.baseVersion??undefined,payload:row.payload?JSON.parse(row.payload):undefined }));
+    // Acknowledgements rebase all unsent descendants to the confirmed version.
+    // The server applies this batch in order, so later note mutations must then
+    // use the revision produced by the preceding mutation of the same note.
+    const noteVersions = new Map<string, number>();
+    for (const mutation of mutations) {
+      if (mutation.entityType !== "note") continue;
+      if (noteVersions.has(mutation.entityId)) mutation.baseVersion = noteVersions.get(mutation.entityId);
+      if (mutation.operation === "upsert") {
+        noteVersions.set(mutation.entityId, mutation.baseVersion === undefined
+          ? Math.max(1, Number(mutation.payload?.version) || 1) : mutation.baseVersion + 1);
+      } else noteVersions.delete(mutation.entityId);
+    }
     for (const mutation of mutations) if (mutation.entityType === "note" && mutation.operation === "upsert") {
       validateEncryptedNoteWrite(mutation.payload || {});
       const current = await this.readEntity(this.options.db, scope.scopeKey, "note", mutation.entityId);
@@ -516,7 +555,13 @@ export class MobileSyncEngine {
     );
     for (const result of response.results) {
       const source = mutations.find((mutation) => mutation.mutationId === result.mutationId);
-      if (source?.entityType === "note" && result.code === "VERSION_CONFLICT" && result.serverPayload) {
+      if (!source) throw syncFailure("SERVER_ERROR", "同步 ACK 不属于当前发送批次");
+      if (source.entityType === "note" && source.operation === "upsert"
+        && (result.status === "applied" || result.status === "duplicate")
+        && !(typeof result.version === "number" && Number.isSafeInteger(result.version) && result.version > 0)) {
+        throw syncFailure("SERVER_ERROR", "笔记同步 ACK 缺少有效版本，已保留待发送修改");
+      }
+      if (source.entityType === "note" && result.code === "VERSION_CONFLICT" && result.serverPayload && !result.serverPayload.__delete) {
         validateEncryptedNoteWrite(result.serverPayload);
         validateEncryptedNoteWrite(result.serverPayload, source.payload);
       }
@@ -527,13 +572,17 @@ export class MobileSyncEngine {
         if (result.status === "applied" || result.status === "duplicate") {
           await tx.run("DELETE FROM sync_outbox WHERE mutationId=?",[result.mutationId]);
           if (source?.entityType === "note" && source.operation === "upsert") {
+            // Edits committed during Push descend from this server revision.
+            // Keep their content and calibrate the next batch's base atomically.
+            const remaining = await tx.run(`UPDATE sync_outbox SET baseVersion=?
+              WHERE profileId=? AND scopeKey=? AND entityType='note' AND entityId=?
+                AND status IN ('pending','failed')`, [result.version, this.options.profileId, scope.scopeKey, source.entityId]);
+            if (!remaining.changes) await tx.run("UPDATE notes SET version=? WHERE scopeKey=? AND id=?", [result.version, scope.scopeKey, source.entityId]);
             // Persist the mutation-specific ACK atomically with the Outbox removal.
             await tx.run(`INSERT INTO native_runtime_meta (key,value,updatedAt) VALUES (?,?,?)
               ON CONFLICT(key) DO UPDATE SET value=excluded.value,updatedAt=excluded.updatedAt`, [
               nativeReceiptKey(this.options.profileId, source.entityId),
-              JSON.stringify({ mutationId: result.mutationId,
-                serverVersion: typeof result.version === "number" && Number.isSafeInteger(result.version) && result.version > 0
-                  ? result.version : null }),
+              JSON.stringify({ mutationId: result.mutationId, serverVersion: result.version }),
               now(),
             ]);
           }
@@ -541,12 +590,13 @@ export class MobileSyncEngine {
             await this.options.attachments.remove(source.entityId).catch(() => undefined);
           }
         } else if (result.code === "VERSION_CONFLICT" && source) {
+          const local = await this.readEntity(tx, scope.scopeKey, source.entityType, source.entityId);
           await tx.run(`INSERT INTO sync_conflicts (
             id,profileId,scopeKey,entityType,entityId,localVersion,remoteVersion,
             localPayload,remotePayload,status,createdAt
           ) VALUES (?,?,?,?,?,?,?,?,?,'unresolved',?)`, [
             newLocalId(),this.options.profileId,scope.scopeKey,source.entityType,source.entityId,
-            source.baseVersion,result.serverVersion,source.payload,
+            source.baseVersion,result.serverVersion ?? null,local ? JSON.stringify(local) : source.payload,
             JSON.stringify(result.serverPayload||{version:result.serverVersion}),now(),
           ]);
           await tx.run("DELETE FROM sync_outbox WHERE mutationId=?",[result.mutationId]);
@@ -618,17 +668,17 @@ export class MobileSyncEngine {
         const conflict=(await tx.query<{id:string}>(`SELECT id FROM sync_conflicts WHERE
           profileId=? AND scopeKey=? AND entityType=? AND entityId=? AND status='unresolved' LIMIT 1`,
         [this.options.profileId,scope.scopeKey,entry.entityType,entry.entityId]))[0];
-        if(conflict&&!entry.payload.__delete){
+        if(conflict){
           await tx.run(`UPDATE sync_conflicts SET remotePayload=?,remoteVersion=COALESCE(?,remoteVersion)
             WHERE id=?`,[JSON.stringify(entry.payload),Number(entry.payload.version)||null,conflict.id]);
           continue;
         }
         const pending=(await tx.query<{payload:string|null;baseVersion:number|null}>(`SELECT payload,baseVersion FROM sync_outbox WHERE
-          profileId=? AND scopeKey=? AND entityType=? AND entityId=? AND status IN ('pending','failed','inflight') LIMIT 1`,
+          profileId=? AND scopeKey=? AND entityType=? AND entityId=? AND status IN ('pending','failed','inflight') ORDER BY createdAt DESC,rowid DESC LIMIT 1`,
         [this.options.profileId,scope.scopeKey,entry.entityType,entry.entityId]))[0];
-        if(pending&&!entry.payload.__delete){
+        if(pending){
           const local=await this.readEntity(tx,scope.scopeKey,entry.entityType,entry.entityId);
-          if (!bootstrap && entry.entityType === "note" && local) {
+          if (entry.entityType === "note" && local && !entry.payload.__delete) {
             // A previous mutation from THIS profile was already acknowledged,
             // and the pull sees that exact server version while a newer local
             // edit waits in Outbox. This is our own echo, not a true conflict.
@@ -639,11 +689,13 @@ export class MobileSyncEngine {
             ))[0];
             if (isAckedOwnNoteEcho(entry.payload, local, pending, receipt?.value)) continue;
           }
-          if(!bootstrap||stable(local)!==stable(entry.payload)){
+          if(entry.payload.__delete||!bootstrap||stable(local)!==stable(entry.payload)){
             await tx.run(`INSERT INTO sync_conflicts (id,profileId,scopeKey,entityType,entityId,
-              localPayload,remotePayload,status,createdAt) VALUES (?,?,?,?,?,?,?,'unresolved',?)`,[
+              localPayload,remotePayload,localVersion,remoteVersion,status,createdAt) VALUES (?,?,?,?,?,?,?,?,?,'unresolved',?)`,[
               newLocalId(),this.options.profileId,scope.scopeKey,entry.entityType,entry.entityId,
-              pending.payload||JSON.stringify(local),JSON.stringify(entry.payload),now(),
+              local ? JSON.stringify(local) : pending.payload,JSON.stringify(entry.payload),
+              typeof local?.version === "number" ? local.version : null,
+              typeof entry.payload.version === "number" ? entry.payload.version : null,now(),
             ]);
             continue;
           }

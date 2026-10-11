@@ -66,6 +66,38 @@ describe("mobile sync transport rerouting", () => {
     expect(db.transaction).not.toHaveBeenCalled();
   });
 
+  it("rejects JSON that completes after its sync session was stopped", async () => {
+    vi.useFakeTimers();
+    const { engine, db } = createEngine();
+    let finish!: (value: unknown) => void;
+    const body = new Promise((resolve) => { finish = resolve; });
+    const json = vi.fn(() => body);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json })));
+    engine.start();
+    const pending = engine.syncOnce();
+    while (!json.mock.calls.length) await Promise.resolve();
+    engine.stop();
+    finish({ items: [ { scopeKey: "personal", workspaceId: null, canWrite: true, accessFingerprint: "old" } ] });
+    await pending;
+    expect(db.transaction).not.toHaveBeenCalled();
+    expect(db.run).not.toHaveBeenCalled();
+  });
+
+  it("rejects a late push ACK when the account changes while decoding JSON", async () => {
+    localStorage.setItem("nowen-token", "same-token");
+    const { internal } = createEngine();
+    let finish!: (value: unknown) => void;
+    const body = new Promise((resolve) => { finish = resolve; });
+    const json = vi.fn(() => body);
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json })));
+    const pending = internal.request("/push");
+    const rejected = expect(pending).rejects.toMatchObject({ code: "AUTH_SESSION_CHANGED" });
+    while (!json.mock.calls.length) await Promise.resolve();
+    localStorage.setItem("nowen-token", "new-account-token");
+    finish({ results: [] });
+    await rejected;
+  });
+
   it("blocks cross-account outbox requests during session reconfiguration", async () => {
     const { internal } = createEngine();
     localStorage.setItem("nowen-token", "different-user");

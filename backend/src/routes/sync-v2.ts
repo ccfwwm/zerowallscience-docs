@@ -804,6 +804,8 @@ app.post("/push", async (c) => {
           if (parsed.entityType === "note" && typeof serverPayload?.version === "number") {
             serverVersion=serverPayload.version;
             serverPayload = withEncryptedBlocksSupport(serverPayload);
+          } else if (parsed.entityType === "note" && !serverPayload) {
+            serverPayload = { id: parsed.entityId, __delete: true };
           }
         }
       }
