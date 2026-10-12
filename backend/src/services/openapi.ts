@@ -279,7 +279,10 @@ export function generateOpenAPISpec(): Record<string, any> {
       "/api/notes/{id}": {
         get: { tags: ["笔记"], summary: "获取笔记详情", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "笔记详情", content: { "application/json": { schema: { $ref: "#/components/schemas/Note" } } } } } },
         put: { tags: ["笔记"], summary: "更新笔记", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], requestBody: { content: { "application/json": { schema: { type: "object", properties: { title: { type: "string" }, content: { type: "string" }, contentText: { type: "string" }, contentFormat: { type: "string", enum: ["tiptap-json", "markdown", "html"] }, version: { type: "integer", description: "内容类更新必须携带当前笔记 version" } } } } } }, responses: { "200": { description: "更新成功" } } },
-        delete: { tags: ["笔记"], summary: "永久删除笔记", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "删除成功" } } },
+        delete: { tags: ["笔记"], summary: "永久删除回收站笔记（旧入口）", deprecated: true, description: "普通删除使用 PUT isTrashed=1。活动笔记返回 409 NOTE_NOT_TRASHED；不会自动软删。", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "删除成功" }, "403": { description: "无管理权限或笔记已锁定" }, "409": { description: "NOTE_NOT_TRASHED：请先移入回收站" } } },
+      },
+      "/api/notes/{id}/permanent": {
+        delete: { tags: ["笔记"], summary: "永久删除已在回收站的笔记", description: "需要管理权限。活动笔记返回 NOTE_NOT_TRASHED，正文、历史、附件保持原样。", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "删除成功" }, "403": { description: "无管理权限或笔记已锁定" }, "409": { description: "NOTE_NOT_TRASHED：请先移入回收站" } } },
       },
 
       // ===== 标签 =====
@@ -377,8 +380,14 @@ export function generateOpenAPISpec(): Record<string, any> {
       },
 
       // ===== 导出 =====
-      "/api/export/{noteId}": {
-        get: { tags: ["导出"], summary: "导出笔记", parameters: [{ name: "noteId", in: "path", required: true, schema: { type: "string" } }, { name: "format", in: "query", schema: { type: "string", enum: ["markdown", "html", "json", "txt"] } }], responses: { "200": { description: "导出内容" } } },
+      "/api/export/markdown-package/jobs": {
+        post: { tags: ["导出"], summary: "创建 Markdown 包导出作业", requestBody: { required: true, content: { "application/json": { schema: { type: "object", required: ["notes"], properties: { notes: { type: "array", items: { type: "object", required: ["id", "markdown"], properties: { id: { type: "string" }, title: { type: "string" }, markdown: { type: "string", description: "客户端准备的 Markdown 正文，不是 content 字段" } } } } } } } } }, responses: { "202": { description: "作业已创建；查询状态，ready 后下载并校验产物" } } },
+      },
+      "/api/export/markdown-package/jobs/{id}": {
+        get: { tags: ["导出"], summary: "查询 Markdown 导出作业状态", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "作业状态及 ready 时的 downloadToken" }, "404": { description: "作业不存在或无权访问" } } },
+      },
+      "/api/export/download/{token}": {
+        get: { tags: ["导出"], summary: "使用下载能力令牌读取导出文件", parameters: [{ name: "token", in: "path", required: true, schema: { type: "string" } }], responses: { "200": { description: "实际导出字节；下载成功不代表重新导入已验证" }, "404": { description: "下载令牌不存在或已失效" } } },
       },
 
       // ===== 附件 / 文件 =====

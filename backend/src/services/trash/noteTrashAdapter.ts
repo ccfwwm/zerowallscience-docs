@@ -12,6 +12,18 @@ import { KnowledgeTreeError } from "../knowledgeTree.js";
 // Shared by the legacy note endpoint and the unified trash lifecycle.
 export function permanentlyDeleteNote(id: string, userId: string, deferReclaim = false): number {
   const db = getDb();
+  // Hold the SQLite write lock from lifecycle/ACL validation through deletion.
+  const { freedBytesEstimate, removedFiles } = db.transaction(() => deleteTrashedNoteData(id, userId)).immediate();
+  try { yDestroyDoc(id); } catch {}
+  if (!deferReclaim) reclaimSpace(db, { freedBytesEstimate, tag: "notes.delete" });
+  emitWebhook("note.deleted", userId, { noteId: id, removedFiles });
+  logAudit(userId, "note", "delete", { noteId: id, removedFiles }, { targetType: "note", targetId: id });
+  try { broadcastNoteDeleted(id, { actorUserId: userId, trashed: false }); } catch {}
+  return freedBytesEstimate;
+}
+
+function deleteTrashedNoteData(id: string, userId: string): { freedBytesEstimate: number; removedFiles: number } {
+  const db = getDb();
   // 永久删除只针对回收站生命周期；tombstone 继续按删除前 Knowledge ACL 校验。
   const { permission } = resolveTrashedNotePermission(id, userId);
   if (!hasPermission(permission, "manage")) {
@@ -19,9 +31,12 @@ export function permanentlyDeleteNote(id: string, userId: string, deferReclaim =
     throw new KnowledgeTreeError("FORBIDDEN", 403, "仅笔记 owner 或工作区管理员可永久删除");
   }
 
-  const note = db.prepare("SELECT isLocked FROM notes WHERE id = ?").get(id) as { isLocked: number } | undefined;
+  const note = db.prepare("SELECT isLocked, isTrashed FROM notes WHERE id = ?").get(id) as { isLocked: number; isTrashed: number } | undefined;
   if (note && note.isLocked === 1) {
     throw new KnowledgeTreeError("NOTE_LOCKED", 403, "Note is locked");
+  }
+  if (!note || note.isTrashed !== 1) {
+    throw new KnowledgeTreeError("NOTE_NOT_TRASHED", 409, "请先将笔记移入回收站，再永久删除");
   }
 
   // ⚠ 先清理磁盘附件物理文件（必须在 DELETE FROM notes 之前，否则 CASCADE 后查不到 path）
@@ -79,20 +94,5 @@ export function permanentlyDeleteNote(id: string, userId: string, deferReclaim =
     console.warn("[notes.delete] prune unused tags failed:", e);
   }
 
-  // Phase 3: 释放内存 Y.Doc（CASCADE 已清 note_yupdates/note_ysnapshots）
-  try { yDestroyDoc(id); } catch {}
-
-  // 回收磁盘空间：与"清空回收站"一致的 checkpoint + incremental_vacuum 策略。
-  // 没有这一步，单删笔记永远不会让 .db 主文件缩小（SQLite 默认不归还 free page），
-  // 用户感知就是"删了笔记占用不降"，这是此前的缺陷。
-  if (!deferReclaim) reclaimSpace(db, { freedBytesEstimate, tag: "notes.delete" });
-
-  emitWebhook("note.deleted", userId, { noteId: id, removedFiles });
-  logAudit(userId, "note", "delete", { noteId: id, removedFiles }, { targetType: "note", targetId: id });
-
-  // Phase 2: 广播永久删除
-  try {
-    broadcastNoteDeleted(id, { actorUserId: userId, trashed: false });
-  } catch {}
-  return freedBytesEstimate;
+  return { freedBytesEstimate, removedFiles };
 }

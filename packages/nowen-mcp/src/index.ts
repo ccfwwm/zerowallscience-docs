@@ -222,7 +222,7 @@ server.tool(
   "将 Nowen Note 中指定笔记移入回收站（软删除），或从回收站永久删除",
   {
     noteId: z.string().describe("笔记 ID"),
-    permanent: z.boolean().optional().describe("是否永久删除（默认 false，仅移入回收站）"),
+    permanent: z.boolean().optional().describe("是否永久删除（默认 false，仅移入回收站；true 要求笔记已在回收站）"),
   },
   async ({ noteId, permanent }) => {
     try {

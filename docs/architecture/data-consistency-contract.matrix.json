@@ -138,6 +138,14 @@
       "status": "covered",
       "checks": [
         {
+          "file": "backend/tests/note-delete-attachments.test.ts",
+          "case": "permanent endpoint"
+        },
+        {
+          "file": "backend/tests/note-delete-attachments.test.ts",
+          "case": "legacy permanent delete remains available for an explicitly trashed note"
+        },
+        {
           "file": "backend/tests/sync-v2-outbox-capture.test.ts",
           "case": "删除笔记产生 delete mutation 且带 baseVersion"
         },

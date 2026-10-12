@@ -218,9 +218,14 @@ export class NowenClient {
     return this.request(`/api/notes/${id}`, { method: "PUT", body: params });
   }
 
-  /** 删除笔记（永久） */
+  /** @deprecated Use permanentlyDeleteNote after trashNote. Active notes return NOTE_NOT_TRASHED. */
   async deleteNote(id: string): Promise<void> {
-    return this.request(`/api/notes/${id}`, { method: "DELETE" });
+    return this.permanentlyDeleteNote(id);
+  }
+
+  /** 永久删除回收站中的笔记；不会自动将普通笔记移入回收站。 */
+  async permanentlyDeleteNote(id: string): Promise<void> {
+    return this.request(`/api/notes/${id}/permanent`, { method: "DELETE" });
   }
 
   /** 移入回收站（软删除） */

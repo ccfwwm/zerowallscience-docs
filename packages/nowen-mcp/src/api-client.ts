@@ -288,7 +288,7 @@ export class NowenApiClient {
 
   /** 删除笔记（永久） */
   async deleteNote(id: string): Promise<any> {
-    return this.request(`/api/notes/${id}`, { method: "DELETE" });
+    return this.request(`/api/notes/${id}/permanent`, { method: "DELETE" });
   }
 
   // ==================== 通用块 / 双链 ====================

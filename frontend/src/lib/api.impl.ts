@@ -1706,7 +1706,8 @@ export const api = {
     }).catch(() => { /* 失败不写入本地 */ });
     return p;
   },
-  deleteNote: (id: string) => request(`/notes/${id}`, { method: "DELETE" }),
+  // Permanent deletion requires an explicit prior move to trash.
+  deleteNote: (id: string) => request(`/notes/${id}/permanent`, { method: "DELETE" }),
 
   // BACKLINKS-02: 获取笔记的反向链接（哪些笔记引用了当前笔记）
   getBacklinks: (noteId: string, limit = 50) =>

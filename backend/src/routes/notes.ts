@@ -694,6 +694,9 @@ app.post("/", async (c) => {
     return c.json({ error: "无效的笔记颜色标记", code: "INVALID_NOTE_COLOR_MARK" }, 400);
   }
   const initialColorMark = body.colorMark === undefined ? null : normalizeNoteColorMark(body.colorMark);
+  if (typeof body.notebookId !== "string" || !body.notebookId.trim()) {
+    return c.json({ error: "创建笔记需要笔记本 ID", code: "NOTEBOOK_ID_REQUIRED" }, 400);
+  }
 
   // 如果指定了 notebookId，必须对其有 write 权限，并从笔记本继承 workspaceId
   let inheritedWorkspaceId: string | null = null;
@@ -765,8 +768,12 @@ app.post("/", async (c) => {
   try {
     legacyNoteCreateTx();
   } catch (e: any) {
-    if (String(e?.code || "").startsWith("SQLITE_CONSTRAINT")) {
+    if (["SQLITE_CONSTRAINT_PRIMARYKEY", "SQLITE_CONSTRAINT_UNIQUE"].includes(e?.code)
+      && e?.message === "UNIQUE constraint failed: notes.id") {
       return c.json({ error: "笔记 ID 已存在", code: "NOTE_ID_CONFLICT" }, 409);
+    }
+    if (String(e?.code || "").startsWith("SQLITE_CONSTRAINT")) {
+      return c.json({ error: "笔记数据不满足保存约束", code: "NOTE_CONSTRAINT_VIOLATION" }, 400);
     }
     throw e;
   }
@@ -1759,8 +1766,8 @@ app.post("/:id/yjs/subdocuments/:sectionId", async (c) => {
   }
 });
 
-// 删除笔记（永久）：保留原接口，复用回收站生命周期服务。
-app.delete("/:id", (c) => {
+// 两个永久删除入口都要求先进入回收站；旧入口保留兼容且不会隐式软删。
+app.on("DELETE", ["/:id/permanent", "/:id"], (c) => {
   try {
     permanentlyDeleteNote(c.req.param("id"), c.req.header("X-User-Id") || "");
     return c.json({ success: true });

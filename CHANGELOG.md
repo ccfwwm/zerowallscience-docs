@@ -14,6 +14,10 @@
 
 ## 未发布 / Unreleased
 
+- **data safety**：永久删除笔记必须先进入回收站且具备管理权限；旧 DELETE 入口保留但拒绝活动笔记，SDK/MCP/CLI 使用显式永久端点，Android 失败导入清理先软删。Permanent note deletion now requires trash membership and management permission; active notes return `NOTE_NOT_TRASHED`. SDK/MCP/CLI use the explicit endpoint; failed Android import cleanup trashes first.
+- **plugins**：Plugin Studio 拒绝硬链接，并以校验过身份的文件句柄读取/导出，阻止检查与打开之间的链接替换读取。Reject Studio hard links and read/export through verified file handles; deployment directory permissions remain part of the trust boundary.
+- **fixes**：修复登录地址自动聚焦后恢复显示为空、创建笔记约束错误被误报 ID 冲突，以及过时的测试初始化/Mock/源码契约。Fix restored login addresses under autofocus and misleading note-creation constraint errors; update test initialization, mocks and contracts without removing behavior checks.
+
 - **sync**：普通个人文件夹支持 Native 离线移入回收站和按删除批次恢复，保留子文档正文、原有队列与稳定 mutationId；并发子树变化进入冲突处理，旧设备正文不能隐式复活仍在回收站的目录。恢复上传前，无密码 owner 父链中的正文可立即打开，并继续执行真实 ACL/密码校验。Persist native personal folder trash/restore atomically with deletion cohorts, durable bodies, stable intents and lifecycle-aware receipts; protect against concurrent subtree changes and stale-device resurrection. Retained ordinary owned bodies reopen before restore ACK without bypassing live ACL or folder-password checks.
 - **sync**：普通个人文件夹支持 Native 离线新建、嵌套创建和已有文档下创建，业务/结构 Outbox 同事务落库并依赖有序重放；新文件夹内可继续创建文档，重启与丢失 ACK 保留资源身份，快照重建期间新建目录不会误记为远端删除。Persist native personal folder creation/nesting and document parents atomically, replay ordered business/structure intents across restarts and lost ACKs, and preserve creations made during Snapshot rebuilding. 验收见 `docs/sync-v2-native-folder-create-validation.md`。
 - **sync**：个人普通文件夹的移动、批量移动与排序可先事务保存到 Native SQLite/Outbox，支持重启后上传和结构冲突选择；schema 7 无损升级队列，远端目录墓碑先保留本机位置与子正文。Persist ordinary personal folder moves and sorting atomically, replay after restart, and recover structural conflicts without cascading over retained child bodies. Document/mindmap/file moves and folder trash/restore retain their existing online paths. 验收见 `docs/sync-v2-native-tree-writes-validation.md`。
