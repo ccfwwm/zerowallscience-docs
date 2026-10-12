@@ -5161,11 +5161,8 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
 
     // 获取选区在屏幕上的位置
     const coords = editor.view.coordsAtPos(from);
-    const editorRect = editor.view.dom.getBoundingClientRect();
-    setAiPosition({
-      top: Math.min(coords.top + 28, window.innerHeight - 500),
-      left: Math.min(coords.left, window.innerWidth - 420),
-    });
+    // The shared assistant clamps the anchor to the visual viewport.
+    setAiPosition({ top: coords.top + 28, left: coords.left });
     setShowAI(true);
   }, [editor]);
 

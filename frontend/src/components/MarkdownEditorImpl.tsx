@@ -872,10 +872,8 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     // ���꣺����ѡ����㣬�䵽��Ļ��
     const coords = view.coordsAtPos(sel.from);
     if (coords) {
-      setAiPosition({
-        top: Math.min(coords.top + 24, window.innerHeight - 500),
-        left: Math.min(coords.left, window.innerWidth - 420),
-      });
+      // Shared assistant owns viewport clamping (including mobile keyboards).
+      setAiPosition({ top: coords.top + 24, left: coords.left });
     }
     setAiOpen(true);
   }, [isGuest, onAIAssistant]);
