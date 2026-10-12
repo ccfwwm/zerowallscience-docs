@@ -58,6 +58,10 @@ async function initializeOnce(config: Config) {
       const note = await api.getNote(id);
       await api.updateNote(id, { contentText: text, content: note?.contentFormat === "markdown" ? text : JSON.stringify({ type: "doc", content: [{ type: "paragraph", content: [{ type: "text", text }] }] }) });
     },
+    async tryPermanentDelete(id: string) {
+      try { await api.deleteNote(id); return { success: true }; }
+      catch (error) { return { code: (error as { code?: string }).code }; }
+    },
     start() { setMobileSyncEnabled(true); dispose = installMobileSyncRealtime(engine); engine.start(); },
     stop() { dispose?.(); dispose = undefined; engine.stop(); setMobileSyncEnabled(false); realtime.disconnect(); },
     async sync() { await engine.syncOnce(); },

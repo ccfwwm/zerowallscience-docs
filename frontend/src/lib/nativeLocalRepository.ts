@@ -599,9 +599,17 @@ export class NativeLocalRepository implements LocalRepository {
     const scope = this.scopeFromWorkspace(current.workspaceId);
     await this.assertWritable(scope.scopeKey);
     await this.db.transaction(async (tx) => {
+      const latest = await this.getNote(id, tx, scope.scopeKey);
+      if (!latest) return;
+      if (latest.isLocked === 1) {
+        throw Object.assign(new Error("Note is locked"), { code: "NOTE_LOCKED", status: 403 });
+      }
+      if (latest.isTrashed !== 1) {
+        throw Object.assign(new Error("请先将笔记移入回收站，再永久删除"), { code: "NOTE_NOT_TRASHED", status: 409 });
+      }
       await tx.run("DELETE FROM notes WHERE scopeKey=? AND id=?", [scope.scopeKey, id]);
       await tx.run("DELETE FROM native_runtime_meta WHERE key=?", [unsentLocalNoteKey(scope.scopeKey, id)]);
-      await this.enqueue(tx, "note", id, "delete", undefined, current?.version ?? null, scope.scopeKey);
+      await this.enqueue(tx, "note", id, "delete", undefined, latest.version, scope.scopeKey);
     });
     notifyMobileSyncStatusChanged();
   }

@@ -138,6 +138,22 @@
       "status": "covered",
       "checks": [
         {
+          "file": "frontend/src/lib/__tests__/nativeLocalNoteOrigin.test.ts",
+          "case": "refuses permanent removal of an active or locked note without losing body, provenance or outbox"
+        },
+        {
+          "file": "backend/tests/knowledge-policy-initialization.test.ts",
+          "case": "rolled-back lazy ACL schema initialization is retried before the next permission check"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/apiDeletionQueueReconciliation.test.ts",
+          "case": "removes a conflicted update after the server acknowledges permanent deletion"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/apiDeletionQueueReconciliation.test.ts",
+          "case": "retains edits when the permanent deletion request cannot reach the server"
+        },
+        {
           "file": "backend/tests/note-delete-attachments.test.ts",
           "case": "permanent endpoint"
         },
