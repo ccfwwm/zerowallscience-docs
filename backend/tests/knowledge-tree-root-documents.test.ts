@@ -28,11 +28,18 @@ test("moving folders and documents into root documents retains hidden containers
     const root = createKnowledgeChild({actorUserId:"move-owner",workspaceId,parentId:null,nodeType:"markdown",title:"Target root",db});
     const folder = createKnowledgeChild({actorUserId:"move-owner",workspaceId,parentId:null,nodeType:"folder",title:"Moving folder",db});
     const child = createKnowledgeChild({actorUserId:"move-owner",workspaceId,parentId:folder.id,nodeType:"note",title:"Moving document",db});
+    const readChild = () => db.prepare("SELECT version,content,contentFormat FROM notes WHERE id=?").get(child.resourceId) as {version:number;content:string;contentFormat:string};
+    const beforeMove = readChild();
     const hiddenId = (db.prepare("SELECT notebookId FROM notes WHERE id=?").get(root.resourceId) as {notebookId:string}).notebookId;
     assert.throws(() => moveKnowledgeNode({actorUserId:"stranger",nodeId:folder.id,parentId:root.id,db}));
+    assert.throws(() => moveKnowledgeNode({actorUserId:"stranger",nodeId:child.id,parentId:root.id,db}));
+    assert.deepEqual(readChild(),beforeMove);
     assert.equal((db.prepare("SELECT isDeleted FROM notebooks WHERE id=?").get(hiddenId) as {isDeleted:number}).isDeleted,1);
     assert.equal(moveKnowledgeNode({actorUserId:"move-owner",nodeId:folder.id,parentId:root.id,db}).parentId,root.id);
     assert.equal(moveKnowledgeNode({actorUserId:"move-owner",nodeId:child.id,parentId:root.id,db}).parentId,root.id);
+    assert.deepEqual(readChild(),{...beforeMove,version:beforeMove.version+1});
+    moveKnowledgeNode({actorUserId:"move-owner",nodeId:child.id,parentId:root.id,sortOrder:8,db});
+    assert.deepEqual(readChild(),{...beforeMove,version:beforeMove.version+1});
     assert.equal((db.prepare("SELECT isDeleted FROM notebooks WHERE id=?").get(hiddenId) as {isDeleted:number}).isDeleted,1);
     assert.equal(db.prepare("SELECT id FROM knowledge_tree_nodes WHERE id=?").get(`notebook:${hiddenId}`),undefined);
     assert.ok(hiddenId.startsWith(ROOT_DOCUMENT_NOTEBOOK_PREFIX));

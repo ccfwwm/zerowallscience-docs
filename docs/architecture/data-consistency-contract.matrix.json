@@ -82,6 +82,10 @@
       "checks": [
         {
           "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "remote document moves reject stale body metadata without losing the offline edit"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
           "case": "a remote folder tombstone retains pending native structure and child bodies until an explicit remote choice"
         },
         {
@@ -305,6 +309,7 @@
       "status": "covered",
       "checks": [
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "three independent SQLite clients converge bidirectionally" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "remote document moves reject stale body metadata without losing the offline edit" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "remote permanent deletion preserves offline body" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline create survives database close/reopen" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "missing or invalid successful ACK version cannot claim cloud confirmation" },

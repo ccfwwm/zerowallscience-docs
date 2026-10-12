@@ -146,6 +146,29 @@ test("offline folder trash and restore preserve bodies and replay their deletion
   assert.equal((await peer.repository.notes.get(old))?.isTrashed,1);
 });
 
+test("remote document moves reject stale body metadata without losing the offline edit",async()=>{
+  const {c,node,left}=await movableTree("document-move-body"),note=randomUUID();
+  await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Before move"},node.slice(9));
+  await c.sync();
+  const original=serverDb.prepare("SELECT version FROM notes WHERE id=?").get(note) as {version:number};
+  await c.repository.notes.update(note,{content:"Retained offline edit",contentText:"Retained offline edit"});
+  const {moveKnowledgeNode}=await import("../src/services/knowledgeTree");
+  moveKnowledgeNode({db:serverDb,actorUserId:USER,nodeId:`note:${note}`,parentId:left});
+  await c.sync();
+  const remote=serverDb.prepare("SELECT notebookId,content,version FROM notes WHERE id=?").get(note) as {notebookId:string;content:string;version:number};
+  assert.equal(remote.notebookId,left.slice(9),"a stale body must not undo the remote container move");
+  assert.equal(remote.content,"Before move");
+  assert.equal(remote.version,original.version+1);
+  assert.equal((await c.repository.notes.get(note))?.content,"Retained offline edit");
+  const conflict=(await c.db.query<{id:string;localPayload:string;remotePayload:string}>("SELECT id,localPayload,remotePayload FROM sync_conflicts WHERE entityType='note' AND entityId=? AND status='unresolved'",[note]))[0];
+  assert.ok(conflict);
+  assert.equal(JSON.parse(conflict.localPayload).content,"Retained offline edit");
+  assert.equal(JSON.parse(conflict.remotePayload).notebookId,left.slice(9));
+  await c.engine.resolveLocalConflict(conflict.id,"keep-remote");await c.sync();
+  assert.equal((await c.repository.notes.get(note))?.notebookId,left.slice(9));
+  assert.equal((await conflicts(c)).length,0);
+});
+
 test("folder lifecycle rolls back the entire local subtree when Outbox persistence fails",async()=>{
   const {c,node}=await movableTree("folder-trash-rollback"), note=randomUUID();
   await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Keep"},node.slice(9));
@@ -732,6 +755,10 @@ test("authorized hydration persists a remote body without creation mutations and
   await c.repository.hydrateAuthorizedNote(remote, notebook);
   assert.equal((await c.repository.notes.get(id))?.content, "new local body");
   assert.equal((await pending(c))[0].baseVersion, 4);
+  await assert.rejects(c.repository.notes.remove(id), { code: "NOTE_NOT_TRASHED" });
+  assert.equal((await c.repository.notes.get(id))?.content, "new local body");
+  assert.equal((await pending(c)).length, 1);
+  await c.repository.notes.update(id, { isTrashed: 1, trashedAt: new Date().toISOString() });
   await c.repository.notes.remove(id);
   await assert.rejects(c.repository.hydrateAuthorizedNote(remote, notebook), /本机.*删除/);
   assert.equal(await c.repository.notes.get(id), null);
@@ -759,6 +786,8 @@ test("create then permanent delete between Pulls advances the cursor without a m
   await a.repository.notebooks.create({ id: book, name: "Book" });
   await a.sync(); await b.sync();
   await a.repository.notes.create({ id, notebookId: book, content: "temporary" });
+  await a.sync();
+  await a.repository.notes.update(id, { isTrashed: 1, trashedAt: new Date().toISOString() });
   await a.sync();
   await a.repository.notes.remove(id);
   await a.sync();
@@ -801,6 +830,8 @@ test("remote permanent deletion preserves offline body, pending mutation and rec
   await a.repository.notes.create({ id, notebookId: book, content: "base", contentFormat: "markdown" });
   await a.sync(); await b.sync();
   await b.repository.notes.update(id, { content: "offline recovery body" });
+  await a.repository.notes.update(id, { isTrashed: 1, trashedAt: new Date().toISOString() });
+  await a.sync();
   await a.repository.notes.remove(id); await a.sync();
   const pull = b.engine as unknown as { pull(scope: typeof scope): Promise<void> };
   await pull.pull(scope);
@@ -843,6 +874,8 @@ test("an old offline update cannot resurrect a permanently deleted server note",
   await a.repository.notes.create({ id, notebookId: book, content: "base", contentFormat: "markdown" });
   await a.sync(); await b.sync();
   await b.repository.notes.update(id, { content: "offline retained" });
+  await a.repository.notes.update(id, { isTrashed: 1, trashedAt: new Date().toISOString() });
+  await a.sync();
   await a.repository.notes.remove(id); await a.sync();
   await b.sync();
   assert.equal(serverDb.prepare("SELECT id FROM notes WHERE id=?").get(id), undefined);

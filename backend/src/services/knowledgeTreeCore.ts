@@ -397,8 +397,11 @@ function syncBusinessParent(db: Database.Database, node: NodeRow, treeParentId: 
     if (!notebookContainer) {
       throw new KnowledgeTreeError("KNOWLEDGE_TREE_NOTE_CONTAINER_REQUIRED", 400, "文档必须位于可承载文档的目录中");
     }
-    db.prepare("UPDATE notes SET notebookId = ?, workspaceId = ?, updatedAt = datetime('now') WHERE id = ?")
-      .run(notebookContainer, node.workspaceId, node.resourceId);
+    db.prepare(`
+      UPDATE notes SET notebookId = ?, workspaceId = ?,
+        version = version + CASE WHEN notebookId IS NOT ? OR workspaceId IS NOT ? THEN 1 ELSE 0 END,
+        updatedAt = datetime('now') WHERE id = ?
+    `).run(notebookContainer, node.workspaceId, notebookContainer, node.workspaceId, node.resourceId);
   } else if (node.resourceType === "notebook") {
     db.prepare("UPDATE notebooks SET parentId = ?, updatedAt = datetime('now') WHERE id = ?")
       .run(notebookContainer, node.resourceId);
