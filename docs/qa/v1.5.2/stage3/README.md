@@ -1,6 +1,6 @@
 # v1.5.2 第三阶段：修复、候选产物与验收
 
-> 后续已按用户授权合并到本地 `release/v1.5.2`；见 [集成记录](integration.md)。下文保留测试阶段基准与执行边界，正式 NO-GO 状态不变。
+> 后续已按用户授权合并到本地 `release/v1.5.2`；见 [集成记录](integration.md)。剩余同步改动复核发现，后端测试还导入了 Native 前端源码，不能仅按 backend tree 相同外推全量结果；更正与复测见 [第四阶段](../stage4/README.md)。正式 NO-GO 状态不变。
 
 **NO-GO · 正式发版；允许内部验证。** 本阶段修复已实现并有回归证据，但新审计确认 Sync V2 的独立删除协议仍可永久删除活动笔记（BUG-11 / P1）。正式 Android GUI、广域网、附件跨端与安装升级门禁也未全部完成。自动化全绿不是发版许可。
 
@@ -22,8 +22,8 @@
 | --- | --- | --- |
 | 前端最终全量 | **657 文件 / 3,630 PASS / 0 FAIL / 0 SKIP** | `evidence/frontend-full-release.json`；Node 24.19.0，按 assertionResults 统计 |
 | 后端全量 | **343 文件 PASS / 0 文件 FAIL / 0 TIMEOUT** | `evidence/backend-full-final.log`；Electron Node 20.18.0 / ABI 130；这是文件级口径，未宣称全部内部子例无 skip |
-| 后端证据适用性 | 通过 | 全量执行于 `d7e0f9f6`；与最终 `98d1ddf5` 的整个 backend Git tree 完全相同，后端 bundle 也相同，记录于候选 manifest |
-| DCC 映射校验 | 12 契约 / 116 引用通过 | `evidence/dcc-verify-final.log`；所引用行为由对应全量执行覆盖；映射校验本身不是行为证明 |
+| 后端证据适用性 | **已更正：不能外推到最终 Native 代码** | 全量执行于 `d7e0f9f6`；backend tree/bundle 相同，但测试导入的 `nativeLocalRepository.ts` 后续改变。干净 `f07fbe13` 上 4 个旧删除步骤真实失败；保留全量原始日志，最终代码的限定复测见第四阶段 |
+| DCC 映射校验 | 历史 12 契约 / 116 引用通过 | `evidence/dcc-verify-final.log`；映射校验本身不是行为证明，不能替代最终 Native 源码变更后的行为复测 |
 | 历史 crypto 复跑 | 最终 5 轮，55 PASS | `evidence/crypto-final-r*.json`；另有完整全量；旧缺失日志的特定失败原因仍无法反向确定 |
 | SDK / MCP / CLI | 构建通过；SDK 6、MCP 11 通过 | 保留第一次 MCP 启动目录错误及修正日志；未宣称用户配置下的 CLI 安装验收 |
 | 硬化服务 HTTP | 通过 | JWT 伪造/跨用户/锁定拒绝；活动删除保护正文、历史、树、文件、Outbox；拒绝和永久删除均重启回读 |

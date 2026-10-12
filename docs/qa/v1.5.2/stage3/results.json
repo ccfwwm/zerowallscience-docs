@@ -25,6 +25,8 @@
     "filesTimeout": 0,
     "finalBackendTree": "54ba3bcb0ce117f0aa846ec90f5c8442a87426ac",
     "exactBackendTreeEqual": true,
+    "fullRunApplicableToFinalNativeImports": false,
+    "applicabilityCorrection": "Backend tests import frontend Native sources. The final Native deletion guard changes four old test prerequisites despite the identical backend tree. See ../stage4/README.md for isolated baseline failures and current scoped reruns.",
     "internalSkippedCaseCount": "not aggregated"
   },
   "dcc": {
