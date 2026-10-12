@@ -134,6 +134,7 @@ test("malformed stored event payloads are quarantined and do not crash automatio
     if (
       repository.getRun(invalidRun.id)?.status === "failed"
       && repository.listRuns(workflow.id).some((run) => run.eventId === healthy.id && run.status === "completed")
+      && automationRuntime.status().active === 0
     ) break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
