@@ -14,7 +14,8 @@
 
 ## 未发布 / Unreleased
 
-- **data safety**：永久删除笔记必须先进入回收站且具备管理权限；旧 DELETE 入口保留但拒绝活动笔记，SDK/MCP/CLI 使用显式永久端点，Android 失败导入清理先软删。Permanent note deletion now requires trash membership and management permission; active notes return `NOTE_NOT_TRASHED`. SDK/MCP/CLI use the explicit endpoint; failed Android import cleanup trashes first.
+- **data safety**：HTTP 永久删除笔记必须先进入回收站且具备管理权限；旧 DELETE 入口保留但拒绝活动笔记，SDK/MCP/CLI 使用显式永久端点，Android Native 也拒绝活动/锁定笔记，失败导入清理先软删。HTTP permanent deletion requires trash membership and management permission; Native deletion rejects active/locked notes. SDK/MCP/CLI use the explicit endpoint; failed Android import cleanup trashes first. Sync V2 独立删除协议仍有发版门禁，见 `docs/qa/v1.5.2/stage3/`；the separate Sync V2 delete protocol remains a release blocker.
+- **sync / acl**：永久删除成功 ACK 才清理冲突队列，拒绝和断网保留草稿；修复权限表初始化在事务回滚后仍被缓存的问题。Reconcile deletion queues only after successful ACKs and retry lazy ACL initialization after rollback.
 - **plugins**：Plugin Studio 拒绝硬链接，并以校验过身份的文件句柄读取/导出，阻止检查与打开之间的链接替换读取。Reject Studio hard links and read/export through verified file handles; deployment directory permissions remain part of the trust boundary.
 - **fixes**：修复登录地址自动聚焦后恢复显示为空、创建笔记约束错误被误报 ID 冲突，以及过时的测试初始化/Mock/源码契约。Fix restored login addresses under autofocus and misleading note-creation constraint errors; update test initialization, mocks and contracts without removing behavior checks.
 

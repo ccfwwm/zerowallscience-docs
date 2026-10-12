@@ -1,5 +1,7 @@
 # Android 最终候选真机验收矩阵
 
+> 后续已执行独立 QA APK 的 Native/API Bridge 真机验收，见 [第三阶段状态映射](stage3/android-status.md)。下文 NOT_TESTED 是第二阶段记录；完整 GUI/跨端矩阵仍未全部通过。
+
 状态：**本轮全部 NOT_TESTED，未执行当前正式候选 APK 真机验收**。初始 ADB 为空；收尾 PJZ110 已连接，只读查询正式包 versionName=1.5.1，另有历史验收包。没有安装或运行能证明来自目标 SHA 的候选包，不能再用无设备解释门禁。不得用后端、Vitest、构建、设备连接成功或历史模拟器 API Bridge 结果填 PASS。本轮仅执行设备/包名/版本只读查询，未访问私人笔记、启动/强杀或修改已安装 App。证据见 evidence/android-device-state.json。
 
 已有证据应保留：`docs/test-results/sync-v2-android-2026-10-11.json` 与 native-tree 系列记录为 API 35 模拟器、`com.nowen.note.syncacceptance` 测试入口，限定源 SHA/APK。原记录自己明确没有完整 EditorPane、真实附件字节、生产 JWT 或真实 WAN 覆盖；一些后续新增保护更晚于其 APK。它们可以帮助设计复测，不是本矩阵执行结果。

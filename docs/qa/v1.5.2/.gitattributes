@@ -1,2 +1,2 @@
-evidence/** -text
-stage3/evidence/** -text
+# Preserve bytes of checksummed reports, scripts and raw evidence on all hosts.
+* -text

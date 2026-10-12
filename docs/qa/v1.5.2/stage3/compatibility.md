@@ -2,6 +2,8 @@
 
 本阶段在 `codex/release-152-hardening` 的独立检出实施，起点为 `99dbdef9`；原回归报告、失败 JSON、TAP 与附件原字节单独归档，原用户工作区不纳入本阶段修复。
 
+后续已对齐发布 HEAD `65eda826`，最终被测代码 `98d1ddf5`。Native Repository 同样强制回收站/锁定条件。但 Sync V2 delete mutation 的协议仍可直接删除活动笔记，已动态复现并列为 P1 OPEN，不能把下面的 HTTP 外部契约泛化为全部同步入口。详见 [本阶段结果](README.md) 与 [协议设计](sync-delete-contract.md)。
+
 ## 删除契约
 
 | 调用方 | 旧行为 | 本阶段行为及迁移 |
