@@ -628,7 +628,7 @@ function reconcileAcknowledgedDeletion(
   requestBody: BodyInit | null | undefined,
   responseData: unknown,
 ): void {
-  const data = responseData as { noteIds?: unknown; trashedNoteIds?: unknown } | null;
+  const data = responseData as { success?: unknown; noteIds?: unknown; trashedNoteIds?: unknown } | null;
 
   if (method === "PUT" && /^\/notes\/[^/]+$/.test(url) && typeof requestBody === "string") {
     try {
@@ -647,7 +647,7 @@ function reconcileAcknowledgedDeletion(
 
   if (method !== "DELETE") return;
 
-  if (/^\/notes\/[^/]+$/.test(url)) {
+  if (/^\/notes\/[^/]+(?:\/permanent)?$/.test(url) && data?.success === true) {
     discardNoteQueueItems([_extractNoteId(url)]);
     return;
   }
