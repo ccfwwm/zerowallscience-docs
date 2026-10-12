@@ -127,11 +127,16 @@ test("malformed stored event payloads are quarantined and do not crash automatio
   repository.setEnabled(workflow.id, true);
   // A queued run may predate corruption or have been enqueued on another instance.
   const invalidRun = repository.createRun(workflow, invalid.id);
-  await automationRuntime.tick();
-  for (let attempt = 0; attempt < 60 && (
-    repository.getRun(invalidRun.id)?.status !== "failed"
-    || !repository.listRuns(workflow.id).some((run) => run.eventId === healthy.id && run.status === "completed")
-  ); attempt++) await new Promise((resolve) => setTimeout(resolve, 20));
+  // One tick can claim only one run per workflow; a later tick must start
+  // the healthy run after the malformed run is marked failed.
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await automationRuntime.tick();
+    if (
+      repository.getRun(invalidRun.id)?.status === "failed"
+      && repository.listRuns(workflow.id).some((run) => run.eventId === healthy.id && run.status === "completed")
+    ) break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 
   const failed = repository.getRun(invalidRun.id)!;
   assert.equal(failed.status, "failed");
