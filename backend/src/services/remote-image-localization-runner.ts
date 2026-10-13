@@ -82,6 +82,8 @@ function errorDetails(error: unknown): { code: string; message: string } {
 function finishSkipped(job: LocalizationJob, result: LocalizationNoteResult): void {
   job.summary.processedNotes += 1;
   job.summary.skippedNotes += 1;
+  job.summary.processedImageOperations = (job.summary.processedImageOperations || 0) + result.uniqueRemoteUrlCount;
+  job.summary.skippedImageOperations = (job.summary.skippedImageOperations || 0) + result.uniqueRemoteUrlCount;
   if (result.status === "conflict") job.summary.conflictNotes += 1;
   persistJob(job);
 }
@@ -191,7 +193,10 @@ async function runLocalizationJob(jobId: string): Promise<void> {
       for (const url of scan.remoteUrls) {
         if (job.cancelRequested) {
           cancelledAfterCurrent = true;
-          result.skippedUrls += scan.remoteUrls.length - result.localizedUrls - result.failedUrls;
+          const remaining = scan.remoteUrls.length - result.localizedUrls - result.failedUrls;
+          result.skippedUrls += remaining;
+          job.summary.processedImageOperations += remaining;
+          job.summary.skippedImageOperations += remaining;
           break;
         }
         job.currentUrl = url;
@@ -222,8 +227,11 @@ async function runLocalizationJob(jobId: string): Promise<void> {
           const details = errorDetails(error);
           result.failedUrls += 1;
           pushFailure(job, result, { noteId: current.id, url, code: details.code, message: details.message });
+        } finally {
+          // Download completion is an operation, not a successful note commit.
+          job.summary.processedImageOperations += 1;
+          persistJob(job);
         }
-        persistJob(job);
       }
 
       if (replacements.size > 0) {
@@ -242,6 +250,7 @@ async function runLocalizationJob(jobId: string): Promise<void> {
             result.deduplicatedAttachments = 0;
             result.status = "conflict";
             result.skippedUrls += replacements.size;
+            job.summary.skippedImageOperations += replacements.size;
             pushFailure(job, result, {
               noteId: current.id,
               code: "VERSION_CONFLICT",
@@ -291,6 +300,8 @@ async function runLocalizationJob(jobId: string): Promise<void> {
         for (const queued of job.noteResults.filter((entry) => entry.status === "queued")) {
           queued.status = "skipped";
           queued.skippedUrls = queued.uniqueRemoteUrlCount;
+          job.summary.processedImageOperations += queued.uniqueRemoteUrlCount;
+          job.summary.skippedImageOperations += queued.uniqueRemoteUrlCount;
           job.summary.processedNotes += 1;
           job.summary.skippedNotes += 1;
         }

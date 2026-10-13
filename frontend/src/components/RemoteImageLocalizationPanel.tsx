@@ -27,7 +27,7 @@ import {
   type RemoteImageLocalizationScan,
 } from "@/lib/remoteImageLocalizationApi";
 
-type ScopeMode = "current" | "selected" | "notebook";
+type ScopeMode = "current" | "selected" | "notebook" | "all_personal";
 
 function formatBytes(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0 B";
@@ -104,6 +104,7 @@ export default function RemoteImageLocalizationPanel() {
       if (ids.length === 0) return null;
       return { noteIds: ids, expectedVersions: expectedVersions(ids) };
     }
+    if (mode === "all_personal") return { allPersonal: true };
     if (!notebookId) return null;
     return { notebookId };
   }, [expectedVersions, mode, notebookId, selectedIds, state.activeNote]);
@@ -251,8 +252,16 @@ export default function RemoteImageLocalizationPanel() {
     });
   }, [visibleNotes]);
 
-  const progress = job?.summary.totalNotes
-    ? Math.min(100, Math.round(job.summary.processedNotes / job.summary.totalNotes * 100))
+  const imageTotal = job?.summary.totalImageOperations ?? job?.summary.uniqueRemoteUrlCount ?? 0;
+  const imageDone = job?.summary.processedImageOperations
+    ?? (job?.summary.localizedUrls ?? 0) + (job?.summary.failedUrls ?? 0);
+  const progress = imageTotal
+    ? Math.min(100, Math.round(imageDone / imageTotal * 100))
+    : job?.summary.totalNotes
+      ? Math.min(100, Math.round(job.summary.processedNotes / job.summary.totalNotes * 100))
+      : 0;
+  const noteProgress = job?.summary.totalNotes
+    ? Math.round(job.summary.processedNotes / job.summary.totalNotes * 100)
     : 0;
   const retryable = Boolean(job && terminalStatus(job.status) && job.noteResults.some(
     (result) => ["failed", "partial", "conflict", "parse_error"].includes(result.status),
@@ -266,7 +275,7 @@ export default function RemoteImageLocalizationPanel() {
             <Image size={20} className="text-accent-primary" />
             <div>
               <h2 className="font-semibold text-tx-primary">
-                {tr("remoteImageLocalization.title", "网络图片本地化", "Remote image localization")}
+                {tr("remoteImageLocalization.title", "外链图片安全转存", "Remote image protection")}
               </h2>
               <p className="text-xs text-tx-tertiary">
                 {tr(
@@ -283,11 +292,12 @@ export default function RemoteImageLocalizationPanel() {
         </div>
 
         <div className="overflow-y-auto p-4 md:p-5">
-          <div className="mb-4 grid grid-cols-3 gap-2 rounded-lg bg-app-bg p-1">
+          <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg bg-app-bg p-1 md:grid-cols-4">
             {([
               ["current", tr("remoteImageLocalization.current", "当前笔记", "Current note"), FileText],
               ["selected", tr("remoteImageLocalization.multiple", "选择多篇", "Select notes"), CheckCircle2],
               ["notebook", tr("remoteImageLocalization.notebook", "整个笔记本", "Notebook"), Folder],
+              ["all_personal", tr("remoteImageLocalization.allPersonal", "个人全部笔记", "All personal notes"), Image],
             ] as const).map(([value, label, Icon]) => (
               <button
                 key={value}
@@ -316,6 +326,12 @@ export default function RemoteImageLocalizationPanel() {
                 </div>
               )}
             </div>
+          )}
+
+          {mode === "all_personal" && (
+            <p className="rounded-lg border border-app-border bg-app-bg p-3 text-xs text-tx-secondary">
+              {tr("remoteImageLocalization.allPersonalHint", "扫描个人空间中所有未删除的笔记，不包含他人工作区内容；单次处理仍受服务器数量和容量上限保护。", "Scan your personal, non-trashed notes; server-side batch limits still apply.")}
+            </p>
           )}
 
           {mode === "selected" && (
@@ -431,7 +447,14 @@ export default function RemoteImageLocalizationPanel() {
                     {isRemoteImageLocalizationJobActive(job) && <Loader2 size={16} className="animate-spin text-accent-primary" />}
                     {!isRemoteImageLocalizationJobActive(job) && job.status === "completed" && <CheckCircle2 size={16} className="text-green-500" />}
                     {!isRemoteImageLocalizationJobActive(job) && job.status !== "completed" && <AlertTriangle size={16} className="text-amber-500" />}
-                    {job.status}
+                    {({
+                      queued: tr("remoteImageLocalization.queued", "排队中", "Queued"),
+                      running: tr("remoteImageLocalization.running", "正在转存", "Running"),
+                      completed: tr("remoteImageLocalization.completed", "转存完成", "Completed"),
+                      completed_with_errors: tr("remoteImageLocalization.partial", "部分转存成功", "Partially completed"),
+                      cancelled: tr("remoteImageLocalization.cancelled", "任务已取消", "Cancelled"),
+                      failed: tr("remoteImageLocalization.failed", "任务失败", "Failed"),
+                    } as Record<RemoteImageLocalizationJob["status"], string>)[job.status]}
                   </div>
                   <div className="mt-1 text-xs text-tx-tertiary">
                     {job.currentNoteTitle || tr("remoteImageLocalization.waiting", "等待处理", "Waiting")}
@@ -460,15 +483,20 @@ export default function RemoteImageLocalizationPanel() {
                 <div className="h-full rounded-full bg-accent-primary transition-all" style={{ width: `${progress}%` }} />
               </div>
               <div className="mt-1 text-right text-xs text-tx-tertiary">
-                {job.summary.processedNotes} / {job.summary.totalNotes} · {progress}%
+                {imageDone} / {imageTotal} {tr("remoteImageLocalization.imagesDone", "张图片已处理", "image operations processed")} · {progress}%
               </div>
 
               <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
-                <Stat label={tr("remoteImageLocalization.updatedNotes", "已更新笔记", "Updated notes")} value={job.summary.updatedNotes} />
-                <Stat label={tr("remoteImageLocalization.localizedImages", "已替换引用", "Localized references")} value={job.summary.localizedReferences} />
+                <Stat label={tr("remoteImageLocalization.successImages", "已保存图片", "Saved images")} value={job.summary.localizedUrls} />
+                <Stat label={tr("remoteImageLocalization.failures", "失败图片", "Failed images")} value={job.summary.failedUrls} />
+                <Stat label={tr("remoteImageLocalization.skippedImages", "跳过图片", "Skipped images")} value={job.summary.skippedImageOperations ?? 0} />
                 <Stat label={tr("remoteImageLocalization.deduplicated", "附件去重", "Deduplicated")} value={job.summary.deduplicatedAttachments} />
-                <Stat label={tr("remoteImageLocalization.failures", "失败 URL", "Failed URLs")} value={job.summary.failedUrls} />
               </div>
+              <p className="mt-2 text-xs text-tx-tertiary">
+                {tr("remoteImageLocalization.noteProgress", "笔记处理进度", "Notes processed")}: {job.summary.processedNotes}/{job.summary.totalNotes} ({noteProgress}%) ·
+                {tr("remoteImageLocalization.references", "已替换引用", "Replaced references")}: {job.summary.localizedReferences} ·
+                {tr("remoteImageLocalization.savedHint", "仅成功写回笔记的图片计入已保存", "Only images committed to notes count as saved")}
+              </p>
               <div className="mt-2 text-xs text-tx-tertiary">
                 {tr("remoteImageLocalization.downloaded", "已下载", "Downloaded")}: {formatBytes(job.summary.downloadedBytes)} ·
                 {tr("remoteImageLocalization.reusedDownloads", "任务内复用", "Task download reuse")}: {job.summary.reusedDownloads}
@@ -509,7 +537,7 @@ export default function RemoteImageLocalizationPanel() {
           </span>
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              {tr("remoteImageLocalization.trigger", "网络图片保护", "Protect remote images")}
+              {tr("remoteImageLocalization.trigger", "外链图片安全转存", "Protect remote images")}
               {job && isRemoteImageLocalizationJobActive(job) && (
                 <Loader2 size={13} className="animate-spin text-accent-primary" aria-label={tr("remoteImageLocalization.running", "任务进行中", "Job in progress")} />
               )}
@@ -517,7 +545,7 @@ export default function RemoteImageLocalizationPanel() {
             <p className="mt-0.5 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
               {tr(
                 "remoteImageLocalization.settingsDesc",
-                "将历史笔记中的网络图片保存为本地附件，避免原图失效",
+                "一键保存笔记中的外链图片到 Nowen 附件库，防止源站关闭导致图片失效",
                 "Save remote images as local attachments to prevent broken images",
               )}
             </p>

@@ -131,6 +131,38 @@ test("notebook scope includes descendants and deduplicates task URLs", async () 
   assert.equal(scan.remoteReferenceCount, 2);
 });
 
+test("personal scope includes owned notes only and enforces exclusive selectors", async () => {
+  await seed();
+  const { localization } = await modules();
+  const scan = localization.scanLocalizationScope(USER_ID, { allPersonal: true });
+  assert.ok(scan.notes.some((note) => note.noteId === NOTE_ID));
+  assert.ok(scan.notes.some((note) => note.noteId === SECOND_NOTE_ID));
+  assert.ok(!scan.notes.some((note) => note.noteId === OTHER_NOTE_ID));
+  assert.ok(!scan.notes.some((note) => note.noteId === TRASHED_NOTE_ID));
+  assert.equal(scan.uniqueRemoteUrlCount, 1);
+  assert.throws(
+    () => localization.scanLocalizationScope(USER_ID, { allPersonal: true, noteIds: [NOTE_ID] }),
+    /必须且只能提供一个/,
+  );
+});
+
+test("image-level progress initializes by per-note URLs, not note count", async () => {
+  await seed();
+  const { localization } = await modules();
+  const created = localization.createLocalizationJob(USER_ID, {
+    noteIds: [NOTE_ID, SECOND_NOTE_ID, LOCKED_NOTE_ID],
+  });
+  assert.equal(created.summary.totalImageOperations, 2);
+  // Cancel before the scheduled runner starts: no external network access needed.
+  localization.cancelLocalizationJob(USER_ID, created.id);
+  const completed = await waitForJob(USER_ID, created.id);
+  assert.equal(completed.status, "cancelled");
+  assert.equal(completed.summary.totalImageOperations, 2);
+  assert.equal(completed.summary.processedImageOperations, 2);
+  assert.equal(completed.summary.skippedImageOperations, 2);
+  assert.equal(completed.summary.downloadedUniqueUrls, 0);
+});
+
 test("expected version mismatch is recorded without downloading or overwriting", async () => {
   await seed();
   const { localization, getDb } = await modules();
