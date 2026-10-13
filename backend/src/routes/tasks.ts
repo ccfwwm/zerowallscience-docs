@@ -935,6 +935,10 @@ tasks.post("/batch", async (c) => {
     }
 
     const ph = allowedIds.map(() => "?").join(",");
+    // Reject mixed archived/active completion atomically; archived trees stay read-only.
+    if (action === "complete" && db.prepare(`SELECT 1 FROM tasks WHERE id IN (${ph}) AND archivedAt IS NOT NULL LIMIT 1`).get(...allowedIds)) {
+      return c.json({ error: "请先恢复已归档任务", code: "TASK_ARCHIVED" }, 409);
+    }
     if (action === "complete") {
       const tasksBefore = db.prepare("SELECT * FROM tasks WHERE id IN (" + ph + ")").all(...allowedIds) as any[];
       const toComplete = tasksBefore.filter((t) => t.isCompleted === 0);

@@ -26,6 +26,8 @@ test.before(async () => {
   notebookId = createKnowledgeChild({ actorUserId:"owner",workspaceId:null,parentId:null,nodeType:"folder",title:"Snapshots",db }).resourceId;
   storage = await import("../src/services/attachment-storage.js");
   app = new Hono(); app.route("/tasks",(await import("../src/routes/tasks.js")).default);
+  app.route("/task-reminders",(await import("../src/routes/task-reminders.js")).default);
+  app.route("/task-dependencies",(await import("../src/routes/task-dependencies.js")).default);
 });
 test.after(() => { closeDb?.(); fs.rmSync(directory,{recursive:true,force:true}); });
 function create(parentId: string | null = null, completed = true) {
@@ -103,4 +105,31 @@ test("snapshot refuses inaccessible or missing attachments and leaves no partial
   assert.equal((await request(`/tasks/${task}/note`,"POST",body)).status,409);
   assert.equal((await request(`/tasks/${task}/note`,"POST",body,"stranger")).status,403);
   assert.equal((db.prepare("SELECT COUNT(*) AS count FROM notes").get() as any).count,before);
+});
+
+test("archived tasks reject mixed batch completion without changing active tasks", async () => {
+  const archived = create(), active = create(null, false);
+  assert.equal((await request(`/tasks/${archived}/archive`,"PATCH",{archived:true})).status,200);
+  const result = await request("/tasks/batch","POST",{ids:[archived,active],action:"complete"});
+  assert.equal(result.status,409); assert.equal(result.body.code,"TASK_ARCHIVED");
+  assert.equal((db.prepare("SELECT isCompleted FROM tasks WHERE id=?").get(active) as any).isCompleted,0);
+});
+
+test("archived trees retain reminders and dependencies while preventing their modification", async () => {
+  const root = create(), other = create();
+  const reminder = await request(`/task-reminders/${root}`,"POST",{offsetMinutes:30});
+  assert.equal(reminder.status,201);
+  const link = await request("/task-dependencies","POST",{predecessorTaskId:root,successorTaskId:other});
+  assert.equal(link.status,201);
+  assert.equal((await request(`/tasks/${root}/archive`,"PATCH",{archived:true})).status,200);
+  assert.equal((await request(`/task-reminders/${root}`,"POST",{offsetMinutes:60})).status,409);
+  assert.equal((await request(`/task-reminders/${reminder.body.id}`,"PUT",{enabled:false})).status,409);
+  assert.equal((await request(`/task-reminders/${reminder.body.id}`,"DELETE")).status,409);
+  assert.equal((await request("/task-dependencies","POST",{predecessorTaskId:other,successorTaskId:root})).status,409);
+  assert.equal((await request(`/task-dependencies/${link.body.id}`,"DELETE")).status,409);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM task_reminders WHERE id=?").get(reminder.body.id) as any).count,1);
+  assert.equal((db.prepare("SELECT COUNT(*) AS count FROM task_dependencies WHERE id=?").get(link.body.id) as any).count,1);
+  assert.equal((await request(`/tasks/${root}/archive`,"PATCH",{archived:false})).status,200);
+  assert.equal((await request(`/task-reminders/${reminder.body.id}`,"DELETE")).status,200);
+  assert.equal((await request(`/task-dependencies/${link.body.id}`,"DELETE")).status,200);
 });
