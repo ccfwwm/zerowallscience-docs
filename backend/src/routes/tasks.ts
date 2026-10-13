@@ -345,7 +345,7 @@ tasks.get("/:id", (c) => {
 // 的这一行报 TS2769 "No overload matches this call"。统一 async/await 后，所有分支都
 // 走同一条 Promise 路径，返回类型收敛为 Promise<Response>，类型校验即通过。
 class TaskCreateError extends Error {
-  constructor(public payload: { error: string; code?: string }, public status: 400 | 403 | 404) { super(payload.error); }
+  constructor(public payload: { error: string; code?: string }, public status: 400 | 403 | 404 | 409) { super(payload.error); }
 }
 
 // The normal endpoint and AI batch share the same creation validation and SQL.
