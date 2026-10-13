@@ -18,7 +18,7 @@ interface TaskRow {
   title: string;
   estimatedMinutes: number | null;
   archivedAt: string | null;
-
+}
 
 interface TimeBlockRow {
   id: string;
