@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { URL as NodeURL } from "node:url";
 import { openNativeDatabase } from "../nativeDatabase";
+import { api } from "../api";
 import { cacheConfirmedNativeTasks } from "../nativeTaskComposerCache";
 import type { Task } from "@/types";
 import { installMobileLocalModuleBridge } from "../mobileLocalModuleBridge";
