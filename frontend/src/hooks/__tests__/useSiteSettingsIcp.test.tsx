@@ -118,6 +118,55 @@ describe("SiteSettingsProvider ICP 备案号", () => {
     expect(host.textContent).toBe("");
   });
 
+  it("公开读取分享宽度，管理员保存后更新并在重新加载时恢复", async () => {
+    let storedWidth: "standard" | "wide" | "full" = "wide";
+    const response = () => ({ site_title: "nowen-note", site_favicon: "", editor_font_family: "", site_share_page_width: storedWidth });
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify(response()), {
+      status: 200, headers: { "Content-Type": "application/json" },
+    }));
+    const updateMock = vi.spyOn(api, "updateSiteSettings").mockImplementation(async (data) => {
+      storedWidth = data.site_share_page_width!;
+      return response();
+    });
+    let save!: () => Promise<void>;
+    function WidthStatus() {
+      const { siteConfig, updateSiteConfig } = useSiteSettings();
+      save = () => updateSiteConfig(siteConfig.title, siteConfig.favicon, undefined, "full");
+      return <span>{siteConfig.sharePageWidth}</span>;
+    }
+    await act(async () => root.render(<SiteSettingsProvider><WidthStatus /></SiteSettingsProvider>));
+    expect(host.textContent).toBe("wide");
+    await act(async () => save());
+    expect(updateMock).toHaveBeenLastCalledWith(expect.objectContaining({ site_share_page_width: "full" }));
+    expect(host.textContent).toBe("full");
+    await act(async () => root.render(null));
+    await act(async () => root.render(<SiteSettingsProvider><WidthStatus /></SiteSettingsProvider>));
+    expect(host.textContent).toBe("full");
+  });
+
+  it("移动端本地保存分享宽度，重新挂载后恢复且不请求服务器", async () => {
+    Object.assign(window, { Capacitor: { isNativePlatform: () => true, getPlatform: () => "android" } });
+    localStorage.setItem("nowen-mobile-force-local-mode", "1");
+    let save!: () => Promise<void>;
+    function WidthStatus() {
+      const { siteConfig, updateSiteConfig } = useSiteSettings();
+      save = () => updateSiteConfig(siteConfig.title, siteConfig.favicon, undefined, "wide");
+      return <span>{siteConfig.sharePageWidth}</span>;
+    }
+    try {
+      await act(async () => root.render(<SiteSettingsProvider><WidthStatus /></SiteSettingsProvider>));
+      expect(host.textContent).toBe("standard");
+      await act(async () => save());
+      expect(JSON.parse(localStorage.getItem("nowen-mobile-local-site-config")!).sharePageWidth).toBe("wide");
+      await act(async () => root.render(null));
+      await act(async () => root.render(<SiteSettingsProvider><WidthStatus /></SiteSettingsProvider>));
+      expect(host.textContent).toBe("wide");
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      Reflect.deleteProperty(window, "Capacitor");
+    }
+  });
+
   it("把公开站点名称和图标应用到浏览器标签页", async () => {
     const favicon = "data:image/png;base64,AA==";
     fetchMock.mockImplementation(async () => new Response(JSON.stringify({

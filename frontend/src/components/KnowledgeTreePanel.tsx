@@ -49,6 +49,7 @@ import { choose, confirm, prompt } from "@/components/ui/confirm";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useMobileSidebarControlsCollapsed } from "@/hooks/useMobileSidebarControlsCollapsed";
 import { useSidebarTextStyle } from "@/hooks/useSidebarTextStyle";
+import { useKnowledgeTreeDisplaySize } from "@/hooks/useKnowledgeTreeDisplaySize";
 import { api } from "@/lib/api";
 import { getCurrentMindMapAppId, pushMindMapAppPath, subscribeMindMapAppPath } from "@/lib/mindMapDeepLink";
 import { pushSheetAppPath } from "@/lib/sheetDeepLink";
@@ -154,14 +155,14 @@ function buildChildren(nodes: KnowledgeTreeNode[]) {
 function nodeIcon(node: KnowledgeTreeNode) {
   if (node.nodeType === "folder") {
     return node.icon
-      ? <span className="w-[15px] shrink-0 text-center text-sm leading-none">{node.icon}</span>
-      : <Folder size={15} className="text-amber-500" />;
+      ? <span data-knowledge-tree-icon="" className="w-[15px] shrink-0 text-center text-sm leading-none">{node.icon}</span>
+      : <Folder data-knowledge-tree-icon="" size={15} className="text-amber-500" />;
   }
-  if (node.nodeType === "markdown") return <FileCode size={15} className="text-emerald-500" />;
-  if (node.nodeType === "mindmap") return <BrainCircuit size={15} className="text-accent-primary" />;
-  if (node.resourceType === "file") return <Paperclip size={15} className="text-amber-500" />;
-  if (node.noteType === "sheet") return <Table2 size={15} className="text-sky-500" />;
-  return <FileText size={15} className="text-accent-primary" />;
+  if (node.nodeType === "markdown") return <FileCode data-knowledge-tree-icon="" size={15} className="text-emerald-500" />;
+  if (node.nodeType === "mindmap") return <BrainCircuit data-knowledge-tree-icon="" size={15} className="text-accent-primary" />;
+  if (node.resourceType === "file") return <Paperclip data-knowledge-tree-icon="" size={15} className="text-amber-500" />;
+  if (node.noteType === "sheet") return <Table2 data-knowledge-tree-icon="" size={15} className="text-sky-500" />;
+  return <FileText data-knowledge-tree-icon="" size={15} className="text-accent-primary" />;
 }
 
 function draftIcon(kind: KnowledgeTreeInlineCreateKind) {
@@ -324,6 +325,7 @@ export function KnowledgeTreePanel({
   const activeMindMapId = useSyncExternalStore(subscribeMindMapAppPath, getCurrentMindMapAppId, () => null);
   const [mobileControlsCollapsed] = useMobileSidebarControlsCollapsed();
   const [sidebarTextStyle] = useSidebarTextStyle();
+  const [treeDisplaySize] = useKnowledgeTreeDisplaySize();
   const classicText = sidebarTextStyle === "classic";
   const controlsCollapsed = variant === "mobile" && mobileControlsCollapsed;
   const threeColumnFolderNavigation = usesThreeColumnFolderNavigation({
@@ -1421,7 +1423,7 @@ export function KnowledgeTreePanel({
             {nodeIcon(node)}
             {node.resourceType === "note" && <NoteColorMarkDot value={node.colorMark} />}
             <span className="flex min-w-0 flex-1 items-center gap-1">
-              <span className="min-w-0 truncate">{node.title}</span>
+              <span data-knowledge-tree-title="" className="min-w-0 truncate">{node.title}</span>
               {variant === "mobile" && firstLevelNoteCount !== null && (
                 <span
                   className="shrink-0 text-[10px] tabular-nums text-tx-tertiary"
@@ -1589,6 +1591,7 @@ export function KnowledgeTreePanel({
     <section
       ref={rootRef}
       className={cn("relative flex min-h-0 min-w-0 flex-1 flex-col", className)}
+      data-knowledge-tree-size={treeDisplaySize}
       data-nowen-knowledge-tree="embedded"
       data-knowledge-tree-variant={variant}
       data-knowledge-tree-compact-toolbar={compactToolbar ? "true" : "false"}

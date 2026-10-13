@@ -53,6 +53,7 @@ import { choose, confirm, prompt } from "@/components/ui/confirm";
 import { useContextMenu } from "@/hooks/useContextMenu";
 import { useMobileSidebarControlsCollapsed } from "@/hooks/useMobileSidebarControlsCollapsed";
 import { useSidebarTextStyle } from "@/hooks/useSidebarTextStyle";
+import { useKnowledgeTreeDisplaySize } from "@/hooks/useKnowledgeTreeDisplaySize";
 import { api, getCurrentWorkspace } from "@/lib/api";
 import { formatKnowledgeTreeUpdatedAt } from "@/lib/noteListTime";
 import { getCurrentMindMapAppId, pushMindMapAppPath, subscribeMindMapAppPath } from "@/lib/mindMapDeepLink";
@@ -138,14 +139,14 @@ function emitTreeChanged(reason: string) {
 function nodeIcon(node: KnowledgeTreeNode) {
   if (node.nodeType === "folder") {
     return node.icon
-      ? <span className="w-5 shrink-0 text-center text-base leading-none">{node.icon}</span>
-      : <Folder size={18} className="shrink-0 text-amber-500" />;
+      ? <span data-knowledge-tree-icon="" className="w-5 shrink-0 text-center text-base leading-none">{node.icon}</span>
+      : <Folder data-knowledge-tree-icon="" size={18} className="shrink-0 text-amber-500" />;
   }
-  if (node.nodeType === "markdown") return <FileCode size={18} className="shrink-0 text-emerald-500" />;
-  if (node.nodeType === "mindmap") return <BrainCircuit size={18} className="shrink-0 text-accent-primary" />;
-  if (node.resourceType === "file") return <Paperclip size={18} className="shrink-0 text-amber-500" />;
-  if (node.noteType === "sheet") return <Table2 size={18} className="shrink-0 text-sky-500" />;
-  return <FileText size={18} className="shrink-0 text-accent-primary" />;
+  if (node.nodeType === "markdown") return <FileCode data-knowledge-tree-icon="" size={18} className="shrink-0 text-emerald-500" />;
+  if (node.nodeType === "mindmap") return <BrainCircuit data-knowledge-tree-icon="" size={18} className="shrink-0 text-accent-primary" />;
+  if (node.resourceType === "file") return <Paperclip data-knowledge-tree-icon="" size={18} className="shrink-0 text-amber-500" />;
+  if (node.noteType === "sheet") return <Table2 data-knowledge-tree-icon="" size={18} className="shrink-0 text-sky-500" />;
+  return <FileText data-knowledge-tree-icon="" size={18} className="shrink-0 text-accent-primary" />;
 }
 
 function descendantsOf(nodeId: string, nodes: KnowledgeTreeNode[]) {
@@ -260,6 +261,7 @@ export default function MobileKnowledgeTreePanel({
   const activeMindMapId = useSyncExternalStore(subscribeMindMapAppPath, getCurrentMindMapAppId, () => null);
   const [mobileControlsCollapsed] = useMobileSidebarControlsCollapsed();
   const [sidebarTextStyle] = useSidebarTextStyle();
+  const [treeDisplaySize] = useKnowledgeTreeDisplaySize();
   const classicText = sidebarTextStyle === "classic";
   const controlsCollapsed = variant === "mobile" && mobileControlsCollapsed;
   const [workspaceSurface] = useState(() => detectNoteWorkspaceSurface());
@@ -1104,7 +1106,7 @@ export default function MobileKnowledgeTreePanel({
           {node.resourceType === "note" && <NoteColorMarkDot value={node.colorMark} className="h-2.5 w-2.5" />}
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1.5">
-              <span className={cn("min-w-0 truncate", variant === "mobile" ? "text-[15px]" : classicText ? "text-xs" : "text-sm font-medium")}>{node.title}</span>
+              <span data-knowledge-tree-title="" className={cn("min-w-0 truncate", variant === "mobile" ? "text-[15px]" : classicText ? "text-xs" : "text-sm font-medium")}>{node.title}</span>
               {variant === "mobile" && firstLevelNoteCount !== null && (
                 <span
                   className="shrink-0 text-[10px] tabular-nums text-tx-tertiary"
@@ -1275,6 +1277,7 @@ export default function MobileKnowledgeTreePanel({
     <section
       ref={rootRef}
       className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+      data-knowledge-tree-size={treeDisplaySize}
       data-nowen-mobile-knowledge-tree={variant === "mobile" ? "flat-navigation" : undefined}
       data-nowen-desktop-knowledge-tree={variant === "desktop" ? "quick-navigation" : undefined}
       data-knowledge-tree-compact-toolbar={compactToolbar ? "true" : "false"}

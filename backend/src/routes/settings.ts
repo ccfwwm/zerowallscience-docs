@@ -21,6 +21,8 @@ export interface SiteSettings {
   site_favicon: string;
   /** 分享页底部标识文字；空串表示使用默认标识。 */
   site_share_footer_text: string;
+  /** 所有分享页的默认宽度。 */
+  site_share_page_width: "standard" | "wide" | "full";
   /** ICP 备案号由 Docker/运行时环境变量 NOWEN_ICP_BEIAN 驱动，设置页不可编辑。 */
   site_icp_beian: string;
   /** 访客最终打开的公开 Web 根地址；空串表示沿用当前浏览器 origin。 */
@@ -46,6 +48,7 @@ const DEFAULTS: SiteSettings = {
   site_title: "nowen-note",
   site_favicon: "",
   site_share_footer_text: "",
+  site_share_page_width: "standard",
   site_icp_beian: "",
   site_public_web_origin: "",
   site_public_web_origin_source: "current",
@@ -94,6 +97,7 @@ settings.put("/", async (c) => {
     body.site_title !== undefined ||
     body.site_favicon !== undefined ||
     body.site_share_footer_text !== undefined ||
+    body.site_share_page_width !== undefined ||
     body.site_public_web_origin !== undefined ||
     body.site_file_public_origin !== undefined;
   if (wantsSiteIdentity && !isSystemAdmin(userId)) {
@@ -107,6 +111,12 @@ settings.put("/", async (c) => {
   }
 
   const entries: Array<{ key: string; value: string }> = [];
+  if (body.site_share_page_width !== undefined) {
+    if (!["standard", "wide", "full"].includes(body.site_share_page_width)) {
+      return c.json({ error: "分享页宽度必须为标准、宽屏或全宽", code: "INVALID_SHARE_PAGE_WIDTH" }, 400);
+    }
+    entries.push({ key: "site_share_page_width", value: body.site_share_page_width });
+  }
   if (body.site_share_footer_text !== undefined) {
     if (typeof body.site_share_footer_text !== "string" || body.site_share_footer_text.trim().length > 100) {
       return c.json({ error: "分享页标识必须是最多 100 个字符的文字", code: "INVALID_SHARE_FOOTER_TEXT" }, 400);

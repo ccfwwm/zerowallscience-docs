@@ -31,6 +31,8 @@ import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { useApp, useAppActions } from "@/store/AppContext";
 import { useMobileRailHidden } from "@/hooks/useMobileRailHidden";
 import { useSidebarTextStyle } from "@/hooks/useSidebarTextStyle";
+import { useKnowledgeTreeDisplaySize } from "@/hooks/useKnowledgeTreeDisplaySize";
+import { normalizeSharePageWidth } from "@/lib/sharePageWidth";
 import { api } from "@/lib/api";
 import { isDesktop, checkForUpdates, onUpdaterStatus, getReleaseChannel, isPortableDesktop, getAppInfo, setDesktopHideMenuBar as setDesktopHideMenuBarPreference, type UpdaterPayload } from "@/lib/desktopBridge";
 import { CustomFont } from "@/types";
@@ -1328,9 +1330,12 @@ function AppearancePanel() {
   const { siteConfig, updateSiteConfig, updateEditorFont } = useSiteSettings();
   const { prefs: userPrefs, setPref: setUserPref } = useUserPreferences();
   const [sidebarTextStyle, setSidebarTextStyle] = useSidebarTextStyle();
+  const [treeDisplaySize, setTreeDisplaySize] = useKnowledgeTreeDisplaySize();
   const [title, setTitle] = useState(siteConfig.title);
   const [previewIcon, setPreviewIcon] = useState(siteConfig.favicon);
   const [shareFooterText, setShareFooterText] = useState(siteConfig.shareFooterText);
+  const [sharePageWidth, setSharePageWidth] = useState(siteConfig.sharePageWidth);
+  useEffect(() => setSharePageWidth(siteConfig.sharePageWidth), [siteConfig.sharePageWidth]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1403,7 +1408,7 @@ function AppearancePanel() {
     setIsSaving(true);
     setSaveMessage("");
     try {
-      await updateSiteConfig(title.trim(), previewIcon, shareFooterText.trim());
+      await updateSiteConfig(title.trim(), previewIcon, shareFooterText.trim(), sharePageWidth);
       setShareFooterText(shareFooterText.trim());
       setSaveMessage(t('settings.saveSuccess'));
       setTimeout(() => setSaveMessage(""), 2000);
@@ -1414,7 +1419,7 @@ function AppearancePanel() {
     }
   };
 
-  const hasChanges = title !== siteConfig.title || previewIcon !== siteConfig.favicon || shareFooterText !== siteConfig.shareFooterText;
+  const hasChanges = title !== siteConfig.title || previewIcon !== siteConfig.favicon || shareFooterText !== siteConfig.shareFooterText || sharePageWidth !== siteConfig.sharePageWidth;
 
   // 当前字体的显示名
   const currentFontName = (() => {
@@ -1561,6 +1566,22 @@ function AppearancePanel() {
               <p className="text-[10px] text-zinc-400 dark:text-zinc-500 text-right">{shareFooterText.length} / 100</p>
             </div>
 
+            <div className="space-y-1.5">
+              <label htmlFor="site-share-page-width" className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{t('settings.sharePageWidth')}</label>
+              <select
+                id="site-share-page-width"
+                value={sharePageWidth}
+                onChange={(e) => { setSharePageWidth(normalizeSharePageWidth(e.target.value)); setSaveMessage(""); }}
+                disabled={!isAdmin}
+                className="w-full px-3 py-2 bg-app-elevated border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-accent-primary/40 outline-none disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                {(["standard", "wide", "full"] as const).map(width => (
+                  <option key={width} value={width}>{t(`settings.sharePageWidth_${width}`)}</option>
+                ))}
+              </select>
+              <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('settings.sharePageWidthHint')}</p>
+            </div>
+
             {isAdmin && (
               <div className="flex items-center gap-3">
                 <button
@@ -1633,6 +1654,31 @@ function AppearancePanel() {
                 )}
               >
                 {t(style === "readable" ? 'settings.sidebarTextReadable' : 'settings.sidebarTextClassic')}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between gap-4 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/50 dark:bg-zinc-800/30 max-sm:flex-col max-sm:items-stretch">
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{t('settings.knowledgeTreeDisplaySize')}</span>
+            <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">{t('settings.knowledgeTreeDisplaySizeHint')}</p>
+          </div>
+          <div role="group" aria-label={t('settings.knowledgeTreeDisplaySize')} className="flex shrink-0 gap-1 rounded-lg bg-zinc-100 p-1 dark:bg-zinc-800">
+            {(["default", "large", "extra-large"] as const).map(size => (
+              <button
+                key={size}
+                type="button"
+                aria-pressed={treeDisplaySize === size}
+                onClick={() => setTreeDisplaySize(size)}
+                className={cn(
+                  "min-h-10 rounded-md px-3 py-1 text-sm transition-colors",
+                  treeDisplaySize === size
+                    ? "bg-white text-accent-primary shadow-sm dark:bg-zinc-700"
+                    : "text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-200",
+                )}
+              >
+                {t(`settings.knowledgeTreeDisplaySize_${size}`)}
               </button>
             ))}
           </div>

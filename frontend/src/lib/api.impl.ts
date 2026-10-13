@@ -1276,6 +1276,7 @@ export const api = {
     site_title: string;
     site_favicon: string;
     site_share_footer_text?: string;
+    site_share_page_width?: "standard" | "wide" | "full";
     site_icp_beian?: string;
     site_public_web_origin?: string;
     site_public_web_origin_source?: string;
@@ -1292,6 +1293,7 @@ export const api = {
         site_title: "nowen-note",
         site_favicon: "",
         site_share_footer_text: "",
+        site_share_page_width: "standard",
         site_icp_beian: "",
         site_public_web_origin: "",
         site_public_web_origin_source: "current",
@@ -2715,6 +2717,7 @@ export const api = {
       site_title: string;
       site_favicon: string;
       site_share_footer_text?: string;
+      site_share_page_width?: "standard" | "wide" | "full";
       site_icp_beian?: string;
       site_public_web_origin?: string;
       site_public_web_origin_source?: string;
@@ -2731,6 +2734,7 @@ export const api = {
     site_title?: string;
     site_favicon?: string;
     site_share_footer_text?: string;
+    site_share_page_width?: "standard" | "wide" | "full";
     site_icp_beian?: string;
     site_public_web_origin?: string;
     site_file_public_origin?: string;
@@ -2746,6 +2750,7 @@ export const api = {
       site_title: string;
       site_favicon: string;
       site_share_footer_text?: string;
+      site_share_page_width?: "standard" | "wide" | "full";
       site_icp_beian?: string;
       site_public_web_origin?: string;
       site_public_web_origin_source?: string;

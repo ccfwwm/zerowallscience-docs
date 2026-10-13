@@ -29,6 +29,8 @@
 - **sync**：修复同页创建后删除、工作区 Snapshot 清理和冲突后继续编辑的数据保护问题。Protect pending descendants, attachment bytes and newer local edits during recovery.
 - 验收范围与未完成平台见 `docs/sync-v2-reliability-validation.md`；这些改动尚未正式发布。See the validation record for evidence and remaining acceptance gaps; these changes are not released.
 
+- **appearance / sharing**：知识树新增本设备文字与图标大小档位，分享页新增管理员控制的标准、宽屏和全宽设置；笔记图标复用完整离线 emoji 库并支持具体名称搜索（#739）。Add local knowledge tree display sizes, administrator-controlled shared page widths, and offline emoji name search.
+
 ## v1.5.1 - 2026-10-08
 
 ### ✨ 新增

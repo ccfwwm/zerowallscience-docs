@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import i18n from "i18next";
 import { api, SERVER_URL_CHANGED_EVENT } from "@/lib/api";
 import { setRuntimePublicWebOrigin } from "@/lib/publicWebOrigin";
+import { normalizeSharePageWidth, type SharePageWidth } from "@/lib/sharePageWidth";
 import { isMobileLocalMode } from "@/lib/mobileLocalMode";
 
 export interface SiteConfig {
@@ -9,6 +10,7 @@ export interface SiteConfig {
   favicon: string;
   /** 分享页底部标识文字；空串表示使用默认标识。 */
   shareFooterText: string;
+  sharePageWidth: SharePageWidth;
   /** ICP 备案号；由 Docker/运行时环境变量 NOWEN_ICP_BEIAN 提供。 */
   icpBeian: string;
   /** 公开分享最终使用的 Web 根地址；空串表示继续走构建变量/当前 origin 兜底。 */
@@ -26,6 +28,7 @@ const DEFAULT_CONFIG: SiteConfig = {
   title: "nowen-note",
   favicon: "",
   shareFooterText: "",
+  sharePageWidth: "standard",
   icpBeian: "",
   publicWebOrigin: "",
   publicWebOriginSource: "current",
@@ -50,7 +53,7 @@ export function getBuiltinFontName(font: typeof BUILTIN_FONTS[number]): string {
 
 interface SiteSettingsContextValue {
   siteConfig: SiteConfig;
-  updateSiteConfig: (title: string, favicon: string, shareFooterText?: string) => Promise<void>;
+  updateSiteConfig: (title: string, favicon: string, shareFooterText?: string, sharePageWidth?: SharePageWidth) => Promise<void>;
   updatePublicWebOrigin: (origin: string) => Promise<void>;
   updateFilePublicOrigin: (origin: string) => Promise<void>;
   updateEditorFont: (fontId: string) => Promise<void>;
@@ -132,6 +135,7 @@ function toSiteConfig(data: any, previous: SiteConfig = DEFAULT_CONFIG): SiteCon
     title: data?.site_title || "nowen-note",
     favicon: data?.site_favicon || "",
     shareFooterText: data?.site_share_footer_text || "",
+    sharePageWidth: normalizeSharePageWidth(data?.site_share_page_width),
     icpBeian: data?.site_icp_beian || previous.icpBeian || "",
     publicWebOrigin: data?.site_public_web_origin || "",
     publicWebOriginSource: data?.site_public_web_origin_source || "current",
@@ -153,6 +157,7 @@ function readMobileLocalConfig(): SiteConfig {
     return {
       ...DEFAULT_CONFIG,
       ...parsed,
+      sharePageWidth: normalizeSharePageWidth(parsed.sharePageWidth),
       publicWebOrigin: "",
       publicWebOriginSource: "current",
       filePublicOrigin: "",
@@ -169,6 +174,7 @@ function writeMobileLocalConfig(config: SiteConfig): void {
       title: config.title,
       favicon: config.favicon,
       shareFooterText: config.shareFooterText,
+      sharePageWidth: config.sharePageWidth,
       editorFontFamily: config.editorFontFamily,
     }));
   } catch {
@@ -229,15 +235,15 @@ export function SiteSettingsProvider({ children }: { children: React.ReactNode }
     return () => window.removeEventListener(SERVER_URL_CHANGED_EVENT, handleServerUrlChanged);
   }, [loadSiteSettings]);
 
-  const updateSiteConfig = useCallback(async (title: string, favicon: string, shareFooterText?: string) => {
+  const updateSiteConfig = useCallback(async (title: string, favicon: string, shareFooterText?: string, sharePageWidth?: SharePageWidth) => {
     if (isMobileLocalMode()) {
-      const config = { ...siteConfig, title: title || "nowen-note", favicon, shareFooterText: shareFooterText?.trim() ?? siteConfig.shareFooterText };
+      const config = { ...siteConfig, title: title || "nowen-note", favicon, shareFooterText: shareFooterText?.trim() ?? siteConfig.shareFooterText, sharePageWidth: sharePageWidth ?? siteConfig.sharePageWidth };
       setSiteConfig(config);
       writeMobileLocalConfig(config);
       applyToDOM(config.title, config.favicon);
       return;
     }
-    const data = await api.updateSiteSettings({ site_title: title, site_favicon: favicon, site_share_footer_text: shareFooterText });
+    const data = await api.updateSiteSettings({ site_title: title, site_favicon: favicon, site_share_footer_text: shareFooterText, site_share_page_width: sharePageWidth });
     const config = toSiteConfig(data, siteConfig);
     applyRuntimePublicOrigin(config);
     setSiteConfig(config);
