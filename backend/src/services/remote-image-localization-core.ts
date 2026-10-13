@@ -205,6 +205,21 @@ function loadJobs(): void {
       if (!parsed?.id || !parsed?.userId) continue;
       if (parsed.status === "queued" || parsed.status === "running") {
         parsed.status = "failed";
+        // The note commit may not have happened when the service stopped.
+        // Mark unfinished notes as retryable; the retry path rescans actual persisted content.
+        for (const note of parsed.noteResults || []) {
+          if (note.status === "queued") {
+            note.status = "failed";
+            note.failures = note.failures || [];
+            note.failures.push({
+              noteId: note.noteId,
+              code: "JOB_INTERRUPTED",
+              message: "服务中断，需重新扫描该笔记后重试",
+            });
+            note.localizedUrls = 0;
+            note.localizedReferences = 0;
+          }
+        }
         parsed.error = "服务在任务执行期间重启；可使用重试重新扫描未完成笔记";
         parsed.completedAt = nowIso();
         parsed.currentNoteId = null;
