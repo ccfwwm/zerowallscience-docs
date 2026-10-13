@@ -81,7 +81,7 @@ it("upgrades schema 7 task rows without inventing archives or losing pending mut
   const task=fixture.raw.prepare("SELECT * FROM tasks").get();
   const outbox=fixture.raw.prepare("SELECT * FROM sync_outbox").all();
   const db=await openNativeDatabase("task-migration-fixture");
-  expect(fixture.raw.prepare("SELECT * FROM tasks").get()).toEqual({...task,archivedAt:null});
+  expect(fixture.raw.prepare("SELECT * FROM tasks").get()).toMatchObject({...task,archivedAt:null,repeatRule:"none",repeatInterval:1});
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(outbox);
   expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version:8});
   await db.close();
