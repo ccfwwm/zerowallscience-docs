@@ -115,6 +115,8 @@ export interface LocalizationJob {
 export interface LocalizationScopeInput {
   noteIds?: unknown;
   notebookId?: unknown;
+  /** Only the requesting user's personal notes. Enforced server-side, bounded by maxNotes. */
+  allPersonal?: unknown;
   expectedVersions?: unknown;
 }
 
