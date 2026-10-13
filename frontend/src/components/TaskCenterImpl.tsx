@@ -6,7 +6,7 @@ import {
   Search, X as XIcon, GripVertical,
   CheckSquare, Trash2, Square,
   LayoutGrid, LayoutList, Calendar as CalendarIcon, BarChart3, FolderOpen, Plus, ChevronRight, Bell, Maximize2, Minimize2,
-  Archive, MoreHorizontal, Trash2 as TrashIcon, FileText, ClipboardPlus, Sun, CalendarClock,
+  Archive, MoreHorizontal, FileText, ClipboardPlus, Sun, CalendarClock,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";

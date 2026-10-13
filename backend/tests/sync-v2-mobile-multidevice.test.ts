@@ -13,6 +13,7 @@ import { MobileSyncEngine } from "../../frontend/src/lib/mobileSyncEngine";
 import type { NativeDatabase } from "../../frontend/src/lib/nativeDatabase";
 import { nativeReceiptKey, readNativeNoteSyncReceipt } from "../../frontend/src/lib/mobileNoteSyncReceipt";
 import { applyNativePersonalTree } from "../../frontend/src/lib/nativeKnowledgeTreeSync";
+import { NATIVE_TASK_REPEAT_COLUMNS } from "../../frontend/src/lib/nativeTaskFields";
 
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nowen-sync-multidevice-"));
 process.env.DB_PATH = path.join(tmpDir, "server.db");
@@ -41,6 +42,12 @@ function openClientDb(file: string): NativeDatabase {
   const entityTypes = source.match(/const ENTITY_TYPE_CHECK = `([\s\S]*?)`;/)![1];
   for (const [, sql] of source.matchAll(/`(CREATE TABLE IF NOT EXISTS [\s\S]*?)`/g)) {
     raw.exec(sql.replaceAll("${SCOPE_CHECK}", scopeCheck).replaceAll("${ENTITY_TYPE_CHECK}", entityTypes));
+  }
+  // The production native initializer adds recurrence columns after CREATE TABLE.
+  // This test adapter executes the extracted schema directly, so mirror that step.
+  const nativeColumns = new Set((raw.pragma("table_info(tasks)") as Array<{ name: string }>).map(row => row.name));
+  for (const [name, type] of Object.entries(NATIVE_TASK_REPEAT_COLUMNS)) {
+    if (!nativeColumns.has(name)) raw.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
   }
   let queue = Promise.resolve();
   const schedule = <T>(work: () => Promise<T>): Promise<T> => {
