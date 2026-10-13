@@ -368,6 +368,8 @@ app.get("/api/settings", (c) => {
     site_favicon: "",
     site_share_footer_text: "",
     site_share_page_width: "standard",
+    site_share_banner_enabled: "false",
+    site_share_banner_image: "",
     site_icp_beian: "",
     site_public_web_origin: "",
     site_public_web_origin_source: "current",

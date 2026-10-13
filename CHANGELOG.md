@@ -31,6 +31,8 @@
 
 - **appearance / sharing**：知识树新增本设备文字与图标大小档位，分享页新增管理员控制的标准、宽屏和全宽设置；笔记图标复用完整离线 emoji 库并支持具体名称搜索（#739）。Add local knowledge tree display sizes, administrator-controlled shared page widths, and offline emoji name search.
 
+- **sharing**：新增管理员统一设置的分享页顶部横幅，支持图片裁切、预览、关闭和删除，默认关闭并适配窄屏（#739）。Add an optional site-wide shared page banner with image cropping, preview, removal and responsive display.
+
 ## v1.5.1 - 2026-10-08
 
 ### ✨ 新增

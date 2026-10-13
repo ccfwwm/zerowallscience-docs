@@ -1277,6 +1277,8 @@ export const api = {
     site_favicon: string;
     site_share_footer_text?: string;
     site_share_page_width?: "standard" | "wide" | "full";
+    site_share_banner_enabled?: boolean | string;
+    site_share_banner_image?: string;
     site_icp_beian?: string;
     site_public_web_origin?: string;
     site_public_web_origin_source?: string;
@@ -1294,6 +1296,8 @@ export const api = {
         site_favicon: "",
         site_share_footer_text: "",
         site_share_page_width: "standard",
+        site_share_banner_enabled: "false",
+        site_share_banner_image: "",
         site_icp_beian: "",
         site_public_web_origin: "",
         site_public_web_origin_source: "current",
@@ -2718,6 +2722,8 @@ export const api = {
       site_favicon: string;
       site_share_footer_text?: string;
       site_share_page_width?: "standard" | "wide" | "full";
+      site_share_banner_enabled?: boolean | string;
+      site_share_banner_image?: string;
       site_icp_beian?: string;
       site_public_web_origin?: string;
       site_public_web_origin_source?: string;
@@ -2735,6 +2741,8 @@ export const api = {
     site_favicon?: string;
     site_share_footer_text?: string;
     site_share_page_width?: "standard" | "wide" | "full";
+    site_share_banner_enabled?: boolean | string;
+    site_share_banner_image?: string;
     site_icp_beian?: string;
     site_public_web_origin?: string;
     site_file_public_origin?: string;
@@ -2751,6 +2759,8 @@ export const api = {
       site_favicon: string;
       site_share_footer_text?: string;
       site_share_page_width?: "standard" | "wide" | "full";
+      site_share_banner_enabled?: boolean | string;
+      site_share_banner_image?: string;
       site_icp_beian?: string;
       site_public_web_origin?: string;
       site_public_web_origin_source?: string;

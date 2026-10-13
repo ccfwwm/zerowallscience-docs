@@ -9,6 +9,7 @@ import qqGroupQr from "@/assets/feedback/qq-group.jpg";
 import communityQr from "@/assets/community/nowen-lab-wechat.jpg";
 import ThemeToggle from "@/components/ThemeToggle";
 import SkinSwitcher from "@/components/SkinSwitcher";
+import ShareBannerEditor from "@/components/settings/ShareBannerEditor";
 import SecuritySettings from "@/components/SecuritySettings";
 import TokenManagement from "@/components/TokenManagement";
 import DataManager from "@/components/DataManager";
@@ -1327,7 +1328,7 @@ function SwitchesPanel() {
 
 function AppearancePanel() {
   const { t, i18n } = useTranslation();
-  const { siteConfig, updateSiteConfig, updateEditorFont } = useSiteSettings();
+  const { siteConfig, updateSiteConfig, updateEditorFont, isLoaded } = useSiteSettings();
   const { prefs: userPrefs, setPref: setUserPref } = useUserPreferences();
   const [sidebarTextStyle, setSidebarTextStyle] = useSidebarTextStyle();
   const [treeDisplaySize, setTreeDisplaySize] = useKnowledgeTreeDisplaySize();
@@ -1335,9 +1336,18 @@ function AppearancePanel() {
   const [previewIcon, setPreviewIcon] = useState(siteConfig.favicon);
   const [shareFooterText, setShareFooterText] = useState(siteConfig.shareFooterText);
   const [sharePageWidth, setSharePageWidth] = useState(siteConfig.sharePageWidth);
+  const [shareBanner, setShareBanner] = useState({ enabled: siteConfig.shareBannerEnabled, image: siteConfig.shareBannerImage });
+  useEffect(() => setShareBanner({ enabled: siteConfig.shareBannerEnabled, image: siteConfig.shareBannerImage }), [siteConfig.shareBannerEnabled, siteConfig.shareBannerImage]);
   useEffect(() => setSharePageWidth(siteConfig.sharePageWidth), [siteConfig.sharePageWidth]);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
+  // 等待真实配置填充表单，避免仅修改横幅时把原品牌覆盖为初始占位值。
+  useEffect(() => {
+    if (!isLoaded) return;
+    setTitle(siteConfig.title);
+    setPreviewIcon(siteConfig.favicon);
+    setShareFooterText(siteConfig.shareFooterText);
+  }, [isLoaded, siteConfig.title, siteConfig.favicon, siteConfig.shareFooterText]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // 站点标识属于全站共享配置，只有系统管理员能改。
@@ -1351,6 +1361,8 @@ function AppearancePanel() {
       .catch(() => { if (!cancelled) setIsAdmin(false); });
     return () => { cancelled = true; };
   }, []);
+
+  const canEditSiteIdentity = isAdmin && isLoaded && !isSaving;
 
   // 字体状态
   const [customFonts, setCustomFonts] = useState<CustomFont[]>([]);
@@ -1408,7 +1420,7 @@ function AppearancePanel() {
     setIsSaving(true);
     setSaveMessage("");
     try {
-      await updateSiteConfig(title.trim(), previewIcon, shareFooterText.trim(), sharePageWidth);
+      await updateSiteConfig(title.trim(), previewIcon, shareFooterText.trim(), sharePageWidth, shareBanner);
       setShareFooterText(shareFooterText.trim());
       setSaveMessage(t('settings.saveSuccess'));
       setTimeout(() => setSaveMessage(""), 2000);
@@ -1419,7 +1431,7 @@ function AppearancePanel() {
     }
   };
 
-  const hasChanges = title !== siteConfig.title || previewIcon !== siteConfig.favicon || shareFooterText !== siteConfig.shareFooterText || sharePageWidth !== siteConfig.sharePageWidth;
+  const hasChanges = title !== siteConfig.title || previewIcon !== siteConfig.favicon || shareFooterText !== siteConfig.shareFooterText || sharePageWidth !== siteConfig.sharePageWidth || shareBanner.enabled !== siteConfig.shareBannerEnabled || shareBanner.image !== siteConfig.shareBannerImage;
 
   // 当前字体的显示名
   const currentFontName = (() => {
@@ -1479,6 +1491,7 @@ function AppearancePanel() {
       <div>
         <h3 className="text-lg font-bold text-zinc-900 dark:text-zinc-100 mb-1">{t('settings.siteIdentity')}</h3>
         <p className="text-sm text-zinc-500 dark:text-zinc-400 mb-2">{t('settings.siteIdentityDesc')}</p>
+        {!isLoaded && <p className="mb-2 text-sm text-zinc-500">{t("settings.siteIdentityLoading")}</p>}
         {!isAdmin && (
           <p className="text-xs text-amber-600 dark:text-amber-400 mb-4">
             {t('settings.siteIdentityAdminOnly')}
@@ -1493,11 +1506,11 @@ function AppearancePanel() {
             <div
               className={cn(
                 "relative w-20 h-20 rounded-2xl border-2 border-dashed border-zinc-300 dark:border-zinc-700 flex items-center justify-center overflow-hidden group transition-colors",
-                isAdmin
+                canEditSiteIdentity
                   ? "cursor-pointer hover:border-accent-primary"
                   : "cursor-not-allowed opacity-60"
               )}
-              onClick={() => { if (isAdmin) fileInputRef.current?.click(); }}
+              onClick={() => { if (canEditSiteIdentity) fileInputRef.current?.click(); }}
             >
               {previewIcon ? (
                 <img src={previewIcon} alt="Site Icon" className="w-full h-full object-cover" />
@@ -1519,14 +1532,15 @@ function AppearancePanel() {
               onChange={handleImageChange}
               accept="image/png,image/jpeg,image/svg+xml,image/x-icon,image/webp"
               className="hidden"
-              disabled={!isAdmin}
+              disabled={!canEditSiteIdentity}
             />
             <div className="flex items-center gap-2">
               <span className="text-[10px] text-zinc-400 dark:text-zinc-500">PNG/SVG/ICO · &lt;1MB</span>
               {previewIcon && isAdmin && (
                 <button
                   onClick={handleRemoveIcon}
-                  className="text-[10px] text-red-500 hover:text-red-400 transition-colors"
+                  disabled={!canEditSiteIdentity}
+                  className="text-[10px] text-red-500 hover:text-red-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {t('settings.remove')}
                 </button>
@@ -1543,7 +1557,7 @@ function AppearancePanel() {
                 value={title}
                 onChange={(e) => { setTitle(e.target.value); setSaveMessage(""); }}
                 maxLength={20}
-                disabled={!isAdmin}
+                disabled={!canEditSiteIdentity}
                 className="w-full px-3 py-2 bg-transparent border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-accent-primary/40 focus:border-accent-primary outline-none transition-all placeholder:text-zinc-400 disabled:opacity-60 disabled:cursor-not-allowed"
                 placeholder={t('settings.siteNamePlaceholder')}
               />
@@ -1558,7 +1572,7 @@ function AppearancePanel() {
                 value={shareFooterText}
                 onChange={(e) => { setShareFooterText(e.target.value); setSaveMessage(""); }}
                 maxLength={100}
-                disabled={!isAdmin}
+                disabled={!canEditSiteIdentity}
                 className="w-full px-3 py-2 bg-transparent border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-accent-primary/40 focus:border-accent-primary outline-none transition-all placeholder:text-zinc-400 disabled:opacity-60 disabled:cursor-not-allowed"
                 placeholder="通过 Nowen Note 分享"
               />
@@ -1572,7 +1586,7 @@ function AppearancePanel() {
                 id="site-share-page-width"
                 value={sharePageWidth}
                 onChange={(e) => { setSharePageWidth(normalizeSharePageWidth(e.target.value)); setSaveMessage(""); }}
-                disabled={!isAdmin}
+                disabled={!canEditSiteIdentity}
                 className="w-full px-3 py-2 bg-app-elevated border border-zinc-200 dark:border-zinc-800 rounded-lg text-sm text-zinc-900 dark:text-zinc-100 focus:ring-2 focus:ring-accent-primary/40 outline-none disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {(["standard", "wide", "full"] as const).map(width => (
@@ -1582,11 +1596,13 @@ function AppearancePanel() {
               <p className="text-xs text-zinc-400 dark:text-zinc-500">{t('settings.sharePageWidthHint')}</p>
             </div>
 
+            <ShareBannerEditor value={shareBanner} onChange={value => { setShareBanner(value); setSaveMessage(""); }} disabled={!canEditSiteIdentity} />
+
             {isAdmin && (
               <div className="flex items-center gap-3">
                 <button
                   onClick={handleSave}
-                  disabled={isSaving || !title.trim() || !hasChanges}
+                  disabled={!canEditSiteIdentity || !title.trim() || !hasChanges}
                   className="flex items-center justify-center gap-1.5 px-4 py-1.5 bg-accent-primary hover:bg-accent-primary/90 text-white rounded-lg text-xs font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {isSaving ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}

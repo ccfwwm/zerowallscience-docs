@@ -1189,6 +1189,14 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
         )}
       </header>
 
+      {siteConfig.shareBannerEnabled && siteConfig.shareBannerImage && (
+        <div className={cn(sharePageWidthClass(siteConfig.sharePageWidth), "mx-auto px-4 pt-6")} data-shared-note-banner="">
+          <div className="aspect-[3/1] sm:aspect-[4/1] overflow-hidden rounded-xl">
+            <img src={siteConfig.shareBannerImage} alt="" className="h-full w-full object-cover" />
+          </div>
+        </div>
+      )}
+
       {/* 笔记内容：edit / edit_auth + isEditing 时走 TiptapEditor；否则继续走只读 HTML 渲染 */}
       <main
         className={cn(
