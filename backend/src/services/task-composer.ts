@@ -157,7 +157,7 @@ export function createComposerBatch(userId: string, workspaceId: string | null, 
     if (previous.length) {
       if (previous.some(row => row.payloadHash !== hash)) throw new TaskComposerError("IDEMPOTENCY_CONFLICT", 409);
       const ids: string[] = JSON.parse(previous[0].taskIdsJson);
-      const tasks = ids.map(id => db.prepare("SELECT * FROM tasks WHERE id=?").get(id)).filter(Boolean);
+      const tasks = ids.map(id => db.prepare("SELECT * FROM tasks WHERE id=? AND workspaceId IS ? AND (? IS NOT NULL OR userId=?)").get(id, workspaceId, workspaceId, userId)).filter(Boolean);
       return { tasks, createdCount: ids.length, replayed: true };
     }
     const seen = new Set<string>();

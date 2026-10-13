@@ -118,6 +118,13 @@ test("parallel confirmations with different IDs do not create exact duplicates",
   assert.deepEqual(results.map(r => r.status).sort(), [201, 409]);
   assert.equal(db.prepare("SELECT count(*) AS n FROM tasks").get().n, 1);
 });
+test("replay never returns task content that has left the authorized batch scope", async () => {
+  const result = await (await batch([task()])).json();
+  db.prepare("UPDATE tasks SET userId='composer-b',title='Other account content' WHERE id=?").run(result.tasks[0].id);
+  const replay = await (await batch([task()])).json();
+  assert.equal(replay.replayed, true); assert.deepEqual(replay.tasks, []);
+  assert.ok(!JSON.stringify(replay).includes("Other account content"));
+});
 test("duplicate overrides are explicit and distinct dates are allowed", async () => {
   await batch([task()]);
   const ids = { requestId: "66666666-6666-4666-8666-666666666666", previewId: "77777777-7777-4777-8777-777777777777" };
