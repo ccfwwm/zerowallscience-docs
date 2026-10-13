@@ -276,6 +276,19 @@ test("task payload 完整携带业务字段，不丢截止日期与优先级", (
   assert.ok(last.baseUpdatedAt, "UPDATE 必须携带 baseUpdatedAt");
 });
 
+test("task archive and details survive old-client upserts and local pull", () => {
+  resetAll(); enableSync(); const id = createTask(); const archivedAt = new Date().toISOString();
+  db().prepare("UPDATE tasks SET isCompleted=1,status='done',description='Keep details',dueAt='2026-10-13T18:00',archivedAt=? WHERE id=?").run(archivedAt,id);
+  const out = outboxFor("task");const captured = JSON.parse(out[out.length-1].payload as string);
+  assert.equal(captured.archivedAt,archivedAt);assert.equal(captured.description,"Keep details");
+  applyMutation(db(),{mutationId:randomUUID(),entityType:"task",entityId:id,operation:"upsert",userId:USER_ID,deviceId:"old-client",payload:{title:"Old client rename",isCompleted:1}});
+  const row = db().prepare("SELECT * FROM tasks WHERE id=?").get(id) as any;
+  assert.equal(row.archivedAt,archivedAt);assert.equal(row.description,"Keep details");assert.equal(row.dueAt,"2026-10-13T18:00");
+  runWithOutboxSuppressed(() => runChangeFeedSuppressed(db(),() => applyRemoteChanges(db(),[{entityType:"task",entityId:id,operation:"upsert",payload:{title:"Old pull",isCompleted:1}}],{userId:USER_ID})));
+  const pulled = db().prepare("SELECT * FROM tasks WHERE id=?").get(id) as any;
+  assert.equal(pulled.archivedAt,archivedAt);assert.equal(pulled.description,"Keep details");
+});
+
 test("task 删除进入 Outbox，删除操作能同步到其他设备", () => {
   resetAll();
   enableSync();

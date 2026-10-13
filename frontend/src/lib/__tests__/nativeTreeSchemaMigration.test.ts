@@ -50,7 +50,7 @@ it("migrates schema 6 queues without losing mutation identity, retries, versions
   const db = await openNativeDatabase("tree-migration-fixture");
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
   expect(fixture.raw.prepare("SELECT * FROM sync_conflicts").all()).toEqual(history);
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version:7});
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version:8});
   await db.run(`INSERT INTO sync_outbox(id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,createdAt)
     VALUES ('tree','tree-mutation','p','d','personal','knowledge_tree_node','note:n','upsert','now')`);
   expect(fixture.raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -65,4 +65,17 @@ it("rolls back both queue rebuilds and schema version when the second rebuild fa
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
   expect(fixture.raw.prepare("SELECT * FROM sync_conflicts").all()).toEqual(history);
   expect(fixture.raw.prepare("SELECT sql FROM sqlite_master WHERE name='sync_outbox'").get()?.sql).not.toContain("knowledge_tree_node");
+});
+
+it("upgrades schema 7 task rows without inventing archives or losing pending mutations",async () => {
+  fixture.raw.exec("ALTER TABLE tasks DROP COLUMN archivedAt; PRAGMA user_version=7");
+  fixture.raw.exec(`INSERT INTO tasks (id,userId,title,isCompleted,completedAt,status,createdAt,updatedAt)
+    VALUES ('task','u','Historical task',1,'2026-10-12T10:00:00Z','done','created','updated')`);
+  const task=fixture.raw.prepare("SELECT * FROM tasks").get();
+  const outbox=fixture.raw.prepare("SELECT * FROM sync_outbox").all();
+  const db=await openNativeDatabase("task-migration-fixture");
+  expect(fixture.raw.prepare("SELECT * FROM tasks").get()).toEqual({...task,archivedAt:null});
+  expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(outbox);
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version:8});
+  await db.close();
 });

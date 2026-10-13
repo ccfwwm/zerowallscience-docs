@@ -1,3 +1,5 @@
+import { localDayCompletionFilter, validTaskTimezone } from "../lib/taskLifecycle";
+import { saveTaskNoteSnapshot, TaskSnapshotError } from "../services/taskNoteSnapshot";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import { getDb } from "../db/schema";
@@ -103,6 +105,7 @@ tasks.get("/", requireWorkspaceFeature("tasks"), (c) => {
   const params: any[] = [];
   if (scope.scope === "workspace") {
     sql = `SELECT tasks.*, users.username AS creatorName,
+                  (SELECT parent.title FROM tasks parent WHERE parent.id=tasks.parentId) AS parentTitle,
                   (SELECT COUNT(*) FROM task_reminders tr
                    WHERE tr.taskId = tasks.id AND tr.userId = ? AND tr.enabled = 1) AS activeReminderCount
            FROM tasks LEFT JOIN users ON users.id = tasks.userId
@@ -111,6 +114,7 @@ tasks.get("/", requireWorkspaceFeature("tasks"), (c) => {
     params.push(scope.workspaceId);
   } else {
     sql = `SELECT tasks.*, users.username AS creatorName,
+                  (SELECT parent.title FROM tasks parent WHERE parent.id=tasks.parentId) AS parentTitle,
                   (SELECT COUNT(*) FROM task_reminders tr
                    WHERE tr.taskId = tasks.id AND tr.userId = ? AND tr.enabled = 1) AS activeReminderCount
            FROM tasks LEFT JOIN users ON users.id = tasks.userId
@@ -133,6 +137,9 @@ tasks.get("/", requireWorkspaceFeature("tasks"), (c) => {
     sql += ` AND projectId IS NULL`;
   }
 
+  if (filter === "archived") sql += " AND archivedAt IS NOT NULL";
+  else if (filter !== "history" && filter !== "completed-today") sql += " AND archivedAt IS NULL";
+
   if (filter === "today") {
     sql += ` AND ${taskTodayConditionSql()}`;
   } else if (filter === "week") {
@@ -145,8 +152,50 @@ tasks.get("/", requireWorkspaceFeature("tasks"), (c) => {
 
   sql += ` ORDER BY isCompleted ASC, priority DESC, sortOrder ASC, tasks.createdAt DESC`;
 
-  const rows = db.prepare(sql).all(...params);
+  const rows = db.prepare(sql).all(...params) as any[];
+  if (filter === "completed-today") {
+    const timezone = validTaskTimezone(c.req.query("timezone"));
+    if (!timezone) return c.json({ error: "Invalid timezone" }, 400);
+    return c.json(rows.filter(localDayCompletionFilter(timezone)).sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt)));
+  }
   return c.json(rows);
+});
+
+tasks.patch("/:id/archive", requireWorkspaceFeature("tasks"), async (c) => {
+  const db = getDb();
+  const userId = c.req.header("X-User-Id")!;
+  const body = await c.req.json().catch(() => null);
+  if (!body || typeof body.archived !== "boolean") return c.json({ error: "archived must be boolean" }, 400);
+  const result = db.transaction(() => {
+    const root = db.prepare("SELECT * FROM tasks WHERE id=?").get(c.req.param("id")) as any;
+    if (!root) return { error: "任务不存在", status: 404 as const };
+    if (!canManageResource(root.userId, root.workspaceId, userId)) return { error: "无权归档任务", status: 403 as const };
+    if (root.parentId) return { error: "请从顶层任务归档或恢复整个任务树", status: 409 as const };
+    const ids = collectDescendantIds(db, [root.id]);
+    const rows = ids.map((id) => db.prepare("SELECT * FROM tasks WHERE id=?").get(id) as any);
+    if (rows.some((task) => task.workspaceId !== root.workspaceId || !canManageResource(task.userId, task.workspaceId, userId))) {
+      return { error: "无权归档部分子任务", status: 403 as const };
+    }
+    const pending = rows.filter((task) => !task.isCompleted).length;
+    if (body.archived && pending) return { error: `仍有 ${pending} 项任务未完成`, code: "TASK_TREE_NOT_COMPLETED", status: 409 as const };
+    const archivedAt = body.archived ? (root.archivedAt || new Date().toISOString()) : null;
+    const update = db.prepare("UPDATE tasks SET archivedAt=?,updatedAt=? WHERE id=? AND archivedAt IS NOT ?");
+    const updatedAt = new Date().toISOString();
+    for (const id of ids) update.run(archivedAt, updatedAt, id, archivedAt);
+    return { success: true, affected: ids.length };
+  })();
+  if ("error" in result) return c.json(result, result.status!);
+  return c.json(result);
+});
+
+tasks.post("/:id/note", requireWorkspaceFeature("tasks"), async (c) => {
+  try {
+    const note = await saveTaskNoteSnapshot(c.req.header("X-User-Id")!, c.req.param("id"), await c.req.json());
+    return c.json(note, 201);
+  } catch (error) {
+    if (error instanceof TaskSnapshotError) return c.json({ error: error.message, code: error.code }, error.status);
+    throw error;
+  }
 });
 
 // 获取任务统计（必须在 /:id 之前注册）
@@ -172,7 +221,7 @@ tasks.get("/stats/summary", requireWorkspaceFeature("tasks"), (c) => {
       SUM(CASE WHEN ${taskOverdueConditionSql()} THEN 1 ELSE 0 END)                     AS overdue,
       SUM(CASE WHEN isCompleted = 0 AND ${taskWeekConditionSql()} THEN 1 ELSE 0 END)    AS week
     FROM tasks
-    WHERE ${whereSql}
+    WHERE ${whereSql} AND archivedAt IS NULL
   `).get(whereArg) as any;
 
   const total     = row.total     ?? 0;
@@ -181,7 +230,12 @@ tasks.get("/stats/summary", requireWorkspaceFeature("tasks"), (c) => {
   const overdue   = row.overdue   ?? 0;
   const week      = row.week      ?? 0;
 
-  return c.json({ total, completed, pending: total - completed, today, overdue, week });
+  const timezone = validTaskTimezone(c.req.query("timezone"));
+  if (!timezone) return c.json({ error: "Invalid timezone" }, 400);
+  const history = db.prepare(`SELECT isCompleted,completedAt,archivedAt FROM tasks WHERE ${whereSql}`).all(whereArg) as any[];
+  return c.json({ total, completed, pending: total - completed, today, overdue, week,
+    completedToday: history.filter(localDayCompletionFilter(timezone)).length,
+    archived: history.filter((task) => task.archivedAt).length });
 });
 
 // ---------------------------------------------------------------------------
@@ -226,8 +280,8 @@ tasks.put("/reorder/batch", (c) => {
 
     const placeholders = ids.map(() => "?").join(",");
     const rows = db.prepare(
-      `SELECT id, userId, workspaceId, parentId FROM tasks WHERE id IN (${placeholders})`,
-    ).all(...ids) as Array<{ id: string; userId: string; workspaceId: string | null; parentId: string | null }>;
+      `SELECT id, userId, workspaceId, parentId, archivedAt FROM tasks WHERE id IN (${placeholders})`,
+    ).all(...ids) as Array<{ id: string; userId: string; workspaceId: string | null; parentId: string | null; archivedAt: string | null }>;
 
     if (rows.length !== ids.length) {
       return c.json({ error: "Task not found", code: "TASK_NOT_FOUND" }, 404);
@@ -236,6 +290,7 @@ tasks.put("/reorder/batch", (c) => {
       return c.json({ error: "Forbidden", code: "FORBIDDEN" }, 403);
     }
 
+    if (rows.some((row) => row.archivedAt)) return c.json({error:"请先恢复已归档任务",code:"TASK_ARCHIVED"},409);
     const parentKey = rows[0].parentId ?? "";
     const workspaceKey = rows[0].workspaceId ?? "";
     if (rows.some((row) => (row.parentId ?? "") !== parentKey || (row.workspaceId ?? "") !== workspaceKey)) {
@@ -350,8 +405,8 @@ tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
   let effectiveWorkspaceId: string | null = scope.workspaceId;
   if (parentId) {
     const parent = db
-      .prepare("SELECT userId, workspaceId FROM tasks WHERE id = ?")
-      .get(parentId) as { userId: string; workspaceId: string | null } | undefined;
+      .prepare("SELECT userId, workspaceId, archivedAt FROM tasks WHERE id = ?")
+      .get(parentId) as { userId: string; workspaceId: string | null; archivedAt: string | null } | undefined;
     if (!parent) return c.json({ error: "父任务不存在" }, 404);
     if (!canReadTask(parent, userId)) {
       return c.json({ error: "无权在该父任务下创建子任务", code: "FORBIDDEN" }, 403);
@@ -362,6 +417,7 @@ tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
         400,
       );
     }
+    if (parent.archivedAt) return c.json({ error: "请先恢复已归档任务", code: "TASK_ARCHIVED" }, 409);
     effectiveWorkspaceId = parent.workspaceId;
   }
 
@@ -385,7 +441,12 @@ tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
   }
 
   const effectiveIsCompleted = status === "done" ? 1 : 0;
-  const effectiveCompletedAt = effectiveIsCompleted ? new Date().toISOString() : null;
+  let effectiveCompletedAt = effectiveIsCompleted ? new Date().toISOString() : null;
+  if (effectiveIsCompleted && Object.prototype.hasOwnProperty.call(body,"completedAt")) {
+    if (body.completedAt === null) effectiveCompletedAt = null;
+    else if (typeof body.completedAt === "string" && Number.isFinite(Date.parse(body.completedAt))) effectiveCompletedAt = new Date(body.completedAt).toISOString();
+    else return c.json({error:"Invalid completion time",code:"INVALID_COMPLETED_AT"},400);
+  }
 
   const effectiveRepeatEndDate = repeatRule === "none" ? null : repeatEndDate;
   const repeatSequenceIndex = repeatRule === "none" ? null : 1;
@@ -416,6 +477,11 @@ tasks.put("/:id", (c) => {
       return c.json({ error: "无权修改该任务", code: "FORBIDDEN" }, 403);
     }
 
+    if (existing.archivedAt) return c.json({ error: "请先恢复已归档任务", code: "TASK_ARCHIVED" }, 409);
+    if (body.parentId) {
+      const parent = db.prepare("SELECT archivedAt FROM tasks WHERE id=?").get(body.parentId) as any;
+      if (parent?.archivedAt) return c.json({ error: "不能移动到已归档任务", code: "TASK_ARCHIVED" }, 409);
+    }
     const title = body.title ?? existing.title;
     const priority = body.priority ?? existing.priority;
     const dueDate = body.dueDate !== undefined ? body.dueDate : existing.dueDate;
@@ -775,6 +841,7 @@ tasks.patch("/:id/toggle", (c) => {
     return c.json({ error: "无权修改该任务", code: "FORBIDDEN" }, 403);
   }
 
+  if (task.archivedAt) return c.json({ error: "请先恢复已归档任务", code: "TASK_ARCHIVED" }, 409);
   const newStatus = task.isCompleted ? 0 : 1;
   const newTaskStatus = newStatus === 1 ? "done" : "todo";
   const completedAt = newStatus === 1 ? new Date().toISOString() : null;

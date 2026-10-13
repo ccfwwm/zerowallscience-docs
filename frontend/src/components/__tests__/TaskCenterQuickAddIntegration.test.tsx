@@ -612,7 +612,7 @@ describe("TaskCenter quick-add integration", () => {
         let workspacePhase = 0;
 
         apiMocks.getTasks.mockImplementation(async (filter?: string) => {
-            if (filter === "all") {
+            if (filter === "all" || filter === "history") {
                 return workspacePhase === 0
                     ? [makeTask({ id: "task-old", title: "旧工作区任务", completedAt: "2026-07-08T09:00:00" })]
                     : [makeTask({ id: "task-new", title: "新工作区任务", completedAt: "2026-07-09T09:00:00" })];

@@ -1639,6 +1639,28 @@
     }
   },
   "tasks": {
+    "lifecycle": {
+      "scopeChanged": "账号或服务器已切换，请重新打开任务后保存",
+      "waitAttachments": "附件仍在上传，请完成后再保存为笔记",
+      "noCompletedToday": "今天还没有完成任务",
+      "noArchived": "还没有归档的任务",
+      "completedToday": "今日完成",
+      "archived": "已归档",
+      "archive": "归档任务树",
+      "restore": "恢复任务树",
+      "archiveSuccess": "任务树已归档",
+      "restoreSuccess": "任务树已恢复",
+      "archiveFailed": "归档失败，请重试",
+      "saveNote": "保存为笔记",
+      "openNote": "打开笔记",
+      "noteSaved": "笔记已保存，原任务仍保留。",
+      "snapshotHint": "保存当前标题、详情和附件。笔记与原任务之后独立编辑。",
+      "destination": "保存位置",
+      "noDestination": "没有可写的文件夹",
+      "completedAt": "完成时间",
+      "todayHint": "按实际完成时间统计，包含已归档任务。",
+      "archiveHint": "已归档任务保留详情、附件和完成记录；恢复后可以继续编辑。"
+    },
     "title": "待办事项",
     "quickCaptureToInbox": "快速捕获到收集箱",
     "inbox": "收集箱",

@@ -1,3 +1,4 @@
+import { taskLifecycleMigration } from "./taskLifecycleMigration.js";
 import { wechatAssistantQueueColumnsMigration } from "./wechatAssistantQueueColumnsMigration.js";
 import { wechatAssistantMigration } from "./wechatAssistantMigration.js";
 import { pluginInboundMigration } from "./pluginInboundMigration.js";
@@ -417,6 +418,7 @@ export const MIGRATIONS: Migration[] = [
   wechatAssistantMigration,
   wechatAssistantQueueColumnsMigration,
   encryptedContentV2Migration,
+  taskLifecycleMigration,
 ].sort((a, b) => a.version - b.version);
 
 export const CURRENT_SCHEMA_VERSION: number = MIGRATIONS.reduce(

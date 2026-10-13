@@ -41,7 +41,7 @@ const ENTITY_TABLES: Array<{
  * 统一带上 baseUpdatedAt：那是冲突检测的依据。
  * 对 UPDATE 用 OLD.updatedAt —— 它正是"本次修改所基于的版本"。
  */
-function payloadExpr(entityType: string, alias: string, baseAlias?: string): string {
+function payloadExpr(entityType: string, alias: string, baseAlias?: string, archived = false): string {
   const base = baseAlias
     ? `'baseUpdatedAt', ${baseAlias}.updatedAt,`
     : "";
@@ -53,6 +53,7 @@ function payloadExpr(entityType: string, alias: string, baseAlias?: string): str
         'title', ${alias}.title,
         'isCompleted', ${alias}.isCompleted,
         'completedAt', ${alias}.completedAt,
+        ${archived ? `'archivedAt', ${alias}.archivedAt, 'description', ${alias}.description, 'dueAt', ${alias}.dueAt, 'startDate', ${alias}.startDate, 'projectId', ${alias}.projectId, 'status', ${alias}.status,` : ""}
         'priority', ${alias}.priority,
         'dueDate', ${alias}.dueDate,
         'noteId', ${alias}.noteId,
@@ -152,6 +153,7 @@ export function installSyncPersonalEntitiesTriggers(
       ? scopeChanged
       : `${oldWorkspace} IS NULL AND (${scopeChanged})`;
     const baseArg = hasUpdatedAt(entityType) ? "OLD" : undefined;
+    const archived = entityType === "task" && (db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>).some((column) => column.name === "archivedAt");
 
     db.exec(`
       DROP TRIGGER IF EXISTS sync_v2_${table}_feed_insert;
@@ -212,7 +214,7 @@ export function installSyncPersonalEntitiesTriggers(
           (SELECT profileId FROM sync_v2_outbox_target)${scopeValue(newWorkspace)},
           (SELECT deviceId FROM sync_v2_local_device),
           '${entityType}', NEW.id, 'upsert', NULL,
-          ${payloadExpr(entityType, "NEW")},
+          ${payloadExpr(entityType, "NEW", undefined, archived)},
           'pending', 0, datetime('now')
         );
       END;
@@ -241,7 +243,7 @@ export function installSyncPersonalEntitiesTriggers(
           (SELECT profileId FROM sync_v2_outbox_target)${scopeValue(newWorkspace)},
           (SELECT deviceId FROM sync_v2_local_device),
           '${entityType}', NEW.id, 'upsert', NULL,
-          ${payloadExpr(entityType, "NEW", baseArg)},
+          ${payloadExpr(entityType, "NEW", baseArg, archived)},
           'pending', 0, datetime('now')
         WHERE ${newScopeCondition};
       END;

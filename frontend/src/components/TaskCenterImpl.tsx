@@ -6,7 +6,7 @@ import {
   Search, X as XIcon, GripVertical,
   CheckSquare, Trash2, Square,
   LayoutGrid, LayoutList, Calendar as CalendarIcon, BarChart3, FolderOpen, Plus, ChevronRight, Bell, Maximize2, Minimize2,
-  MoreHorizontal, Trash2 as TrashIcon, FileText, ClipboardPlus, Sun, CalendarClock,
+  Archive, MoreHorizontal, Trash2 as TrashIcon, FileText, ClipboardPlus, Sun, CalendarClock,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";
@@ -97,6 +97,8 @@ export default function TaskCenter() {
     { key: "week", label: t("tasks.next7Days"), icon: <Calendar size={16} /> },
     { key: "overdue", label: t("tasks.overdue"), icon: <AlertTriangle size={16} /> },
     { key: "completed", label: t("tasks.completed"), icon: <CheckCheck size={16} /> },
+    { key: "completed-today", label: t("tasks.lifecycle.completedToday"), icon: <CheckCheck size={16} /> },
+    { key: "archived", label: t("tasks.lifecycle.archived"), icon: <Archive size={16} /> },
   ];
 
   const selectTaskFilter = (nextFilter: TaskFilter) => {
@@ -277,6 +279,7 @@ export default function TaskCenter() {
   // filtered tasks by search query
   const displayTasks = useMemo(() => {
     const source = searchQuery.trim() ? tasks.filter((t) => taskMatchesSearch(t, searchQuery)) : tasks;
+    if (filter === "completed-today") return [...source].sort((a,b) => Date.parse(b.completedAt || "") - Date.parse(a.completedAt || ""));
     if (viewMode !== "list") {
       return sortByDueTime ? [...source].sort(compareTasksByDueTime) : source;
     }
@@ -284,7 +287,7 @@ export default function TaskCenter() {
       source,
       sortByDueTime ? compareTasksByDueTime : undefined,
     );
-  }, [tasks, searchQuery, sortByDueTime, viewMode]);
+  }, [tasks, searchQuery, sortByDueTime, viewMode, filter]);
 
   // recompute flatOrdered for display (search-filtered)
   const displayFlatOrdered = useMemo(() => {
@@ -307,6 +310,15 @@ export default function TaskCenter() {
     }
   }, [filter, selectedProjectId, workspaceVersion]);
 
+  useEffect(() => {
+    let day = formatLocalDateKey();
+    const timer = window.setInterval(() => {
+      const next = formatLocalDateKey();
+      if (next !== day) { day = next; void loadTasks(); }
+    }, 30000);
+    return () => window.clearInterval(timer);
+  }, [loadTasks]);
+
   const loadHabits = useCallback(async () => {
     try {
       const checkinDate = formatLocalDateKey();
@@ -327,7 +339,7 @@ export default function TaskCenter() {
       setStatsLoading(true);
       const checkinDate = formatLocalDateKey();
       const [taskList, taskStatsData, habitList, habitStatsData, habitCheckins] = await Promise.all([
-        api.getTasks("all"),
+        api.getTasks("history"),
         api.getTaskStats(),
         api.getHabits(true, checkinDate),
         api.getHabitStats(true, checkinDate),
@@ -335,7 +347,8 @@ export default function TaskCenter() {
       ]);
       if (generation !== statsLoadGenerationRef.current) return;
       setStatsTasks(taskList);
-      setStats(taskStatsData);
+      const completed = taskList.filter((task) => task.isCompleted).length;
+      setStats({...taskStatsData,total:taskList.length,completed,pending:taskList.length-completed});
       setStatsHabits(habitList);
       setHabitStats(habitStatsData);
       setStatsHabitCheckins(habitCheckins);
@@ -468,6 +481,7 @@ export default function TaskCenter() {
 
   // === CRUD Handlers ===
   const handleToggle = async (id: string) => {
+    if (tasks.find((task) => task.id === id)?.archivedAt) return;
     setTasks((prev) =>
       prev.map((t) => (t.id === id ? { ...t, isCompleted: t.isCompleted ? 0 : 1, status: t.isCompleted ? "todo" : "done" } : t))
     );
@@ -570,6 +584,14 @@ export default function TaskCenter() {
       setStats(s);
       refreshCounts();
     } catch { toast.error(t("tasks.toast.deleteFailed")); loadTasks(); }
+  };
+
+  const handleArchive = async (id: string, archived: boolean) => {
+    try {
+      await api.archiveTask(id, archived);
+      setSelectedTaskId(null); await loadTasks(); refreshCounts();
+      toast.success(t(archived ? "tasks.lifecycle.archiveSuccess" : "tasks.lifecycle.restoreSuccess"));
+    } catch (error) { toast.error(error instanceof Error ? error.message : t("tasks.lifecycle.archiveFailed")); }
   };
 
   const handleUpdate = async (id: string, data: Partial<Task>) => {
@@ -806,6 +828,8 @@ export default function TaskCenter() {
       case "week": return stats.week;
       case "overdue": return stats.overdue;
       case "completed": return stats.completed;
+      case "completed-today": return stats.completedToday ?? 0;
+      case "archived": return stats.archived ?? 0;
       default: return 0;
     }
   };
@@ -1266,8 +1290,13 @@ export default function TaskCenter() {
           </div>
         ) : null}
 
+        {centerMode === "tasks" && (filter === "completed-today" || filter === "archived") && <div className="border-b border-app-border px-4 py-3 text-sm text-tx-secondary">
+          <strong className="text-tx-primary">{filter === "completed-today" ? `${t("tasks.lifecycle.completedToday")} ${displayTasks.length}` : t("tasks.lifecycle.archived")}</strong>
+          <p className="mt-1 text-xs">{t(filter === "completed-today" ? "tasks.lifecycle.todayHint" : "tasks.lifecycle.archiveHint")}</p>
+        </div>}
+
         {/* Quick Add */}
-        {centerMode === "tasks" && (
+        {centerMode === "tasks" && filter !== "archived" && filter !== "completed-today" && (
           <div className="px-4 md:px-5 py-2 border-b border-app-border">
             <TaskQuickAdd
               value={newTitle}
@@ -1384,19 +1413,19 @@ export default function TaskCenter() {
               </div>
             )}
           </div>
-        ) : viewMode === "board" && !isLoading && displayTasks.length > 0 ? (
+        ) : filter !== "archived" && filter !== "completed-today" && viewMode === "board" && !isLoading && displayTasks.length > 0 ? (
           <TaskBoardView
             tasks={displayTasks}
             onSelect={(task) => setSelectedTaskId(task.id)}
             onStatusChange={handleStatusChange}
           />
-        ) : viewMode === "calendar" && !isLoading ? (
+        ) : filter !== "archived" && filter !== "completed-today" && viewMode === "calendar" && !isLoading ? (
           <TaskCalendarView
             tasks={displayTasks}
             onSelect={(task) => setSelectedTaskId(task.id)}
             onMoveTaskDate={handleMoveTaskDate}
           />
-        ) : viewMode === "timeline" && !isLoading ? (
+        ) : filter !== "archived" && filter !== "completed-today" && viewMode === "timeline" && !isLoading ? (
           <TaskGanttView
             tasks={displayTasks}
             projects={projects}
@@ -1415,7 +1444,9 @@ export default function TaskCenter() {
                 {searchQuery ? (
                   <TaskEmptyState type="no-search" compact onAction={() => setSearchQuery("")} />
                 ) : (
-                  <TaskEmptyState type="no-tasks" onAction={() => inputRef.current?.focus()} />
+                  filter === "archived" || filter === "completed-today"
+                    ? <TaskEmptyState type="no-tasks" title={t(filter === "archived" ? "tasks.lifecycle.noArchived" : "tasks.lifecycle.noCompletedToday")} description={t(filter === "archived" ? "tasks.lifecycle.archiveHint" : "tasks.lifecycle.todayHint")} />
+                    : <TaskEmptyState type="no-tasks" onAction={() => inputRef.current?.focus()} />
                 )}
               </div>
             ) : (
@@ -1429,7 +1460,7 @@ export default function TaskCenter() {
                           "relative",
                           dragOverId === item.node.id && dragId !== item.node.id && "before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-accent-primary before:rounded-full before:-translate-y-1"
                         )}
-                        draggable={!selectMode && !sortByDueTime && !isMobile}
+                        draggable={filter !== "archived" && filter !== "completed-today" && !selectMode && !sortByDueTime && !isMobile}
                         onDragStart={(e) => handleDragStart(item.node.id, e)}
                         onDragOver={(e) => handleDragOver(item.node.id, e)}
                         onDrop={() => handleDrop(item.node.id)}
@@ -1467,7 +1498,7 @@ export default function TaskCenter() {
                           "relative",
                           dragOverId === task.id && dragId !== task.id && "before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-accent-primary before:rounded-full before:-translate-y-1"
                         )}
-                        draggable={!selectMode && !sortByDueTime && !isMobile}
+                        draggable={filter !== "archived" && filter !== "completed-today" && !selectMode && !sortByDueTime && !isMobile}
                         onDragStart={(e) => handleDragStart(task.id, e)}
                         onDragOver={(e) => handleDragOver(task.id, e)}
                         onDrop={() => handleDrop(task.id)}
@@ -1483,6 +1514,7 @@ export default function TaskCenter() {
                               : <Square size={16} className="text-tx-tertiary" />}
                           </button>
                         )}
+                        {filter === "completed-today" && <div className="px-3 pt-2 text-xs text-tx-tertiary">{task.parentTitle ? `${task.parentTitle} · ` : ""}{task.completedAt ? new Date(task.completedAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : ""}</div>}
                         <FlatTaskRow
                           task={task}
                           onToggle={handleToggle}
@@ -1575,6 +1607,7 @@ export default function TaskCenter() {
           onClose={() => setSelectedTaskId(null)}
           onUpdate={handleUpdate}
           onDelete={handleDelete}
+          onArchive={handleArchive}
           allTasks={tasks}
           onToggle={handleToggle}
           onSelectTask={(taskId) => setSelectedTaskId(taskId)}

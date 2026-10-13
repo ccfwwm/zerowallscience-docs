@@ -1632,6 +1632,28 @@
     }
   },
   "tasks": {
+    "lifecycle": {
+      "scopeChanged": "Account or server changed. Reopen the task before saving.",
+      "waitAttachments": "Attachments are uploading. Wait before saving as a note.",
+      "noCompletedToday": "No tasks completed today",
+      "noArchived": "No archived tasks yet",
+      "completedToday": "Completed today",
+      "archived": "Archived",
+      "archive": "Archive task tree",
+      "restore": "Restore task tree",
+      "archiveSuccess": "Task tree archived",
+      "restoreSuccess": "Task tree restored",
+      "archiveFailed": "Archive failed. Please retry.",
+      "saveNote": "Save as note",
+      "openNote": "Open note",
+      "noteSaved": "Note saved. The original task is preserved.",
+      "snapshotHint": "Save the current title, details and attachments. The note and task can then be edited independently.",
+      "destination": "Save location",
+      "noDestination": "No writable folders",
+      "completedAt": "Completed at",
+      "todayHint": "Based on completion time, including archived tasks.",
+      "archiveHint": "Archived tasks retain details, attachments and completion history. Restore to edit."
+    },
     "title": "Tasks",
     "quickCaptureToInbox": "Quick capture to Inbox",
     "inbox": "Inbox",

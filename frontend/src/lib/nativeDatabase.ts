@@ -33,7 +33,7 @@ type NativeDatabaseGlobal = typeof globalThis & {
   __nowenNoteNativeDatabaseState?: NativeDatabaseGlobalState;
 };
 
-const SCHEMA_VERSION = 7;
+const SCHEMA_VERSION = 8;
 const DATABASE_PREFIX = "nowen_local_";
 
 const ENTITY_TYPE_CHECK = `
@@ -60,6 +60,7 @@ const MOBILE_MODULE_SCHEMA_STATEMENTS = [
     description TEXT NOT NULL DEFAULT '',
     isCompleted INTEGER NOT NULL DEFAULT 0 CHECK (isCompleted IN (0, 1)),
     completedAt TEXT,
+    archivedAt TEXT,
     priority INTEGER NOT NULL DEFAULT 2,
     dueDate TEXT,
     dueAt TEXT,
@@ -309,6 +310,7 @@ const SCHEMA_V1_STATEMENTS = [
     description TEXT NOT NULL DEFAULT '',
     isCompleted INTEGER NOT NULL DEFAULT 0 CHECK (isCompleted IN (0, 1)),
     completedAt TEXT,
+    archivedAt TEXT,
     priority INTEGER NOT NULL DEFAULT 2,
     dueDate TEXT,
     dueAt TEXT,
@@ -763,6 +765,12 @@ class NativeDatabaseImpl implements NativeDatabase {
         if (version < 6) {
           await executeSchemaStatements(this.raw, KNOWLEDGE_TREE_SCHEMA_STATEMENTS);
         }
+        if (version < 8) {
+          const columns = await this.raw.query("PRAGMA table_info(tasks)");
+          if (!columns.values?.some((column: { name: string }) => column.name === "archivedAt")) {
+            await this.raw.execute("ALTER TABLE tasks ADD COLUMN archivedAt TEXT", false);
+          }
+        }
         if (version < 7) {
           // Preserve mutation IDs, payloads, retries and conflict history while
           // widening the entity CHECK. Both rebuilds share the migration TX.
@@ -770,6 +778,7 @@ class NativeDatabaseImpl implements NativeDatabase {
           await executeSchemaStatements(this.raw, SYNC_CONFLICTS_V2_STATEMENTS);
           await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
         }
+        await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
       });
     });
   }
