@@ -207,6 +207,7 @@ function requiredScope(pathname: string, method: string): string | null {
   if (pathname === "/api/me") return null;
   if (pathname.startsWith("/api/tokens")) return "__login_only__";
   if (pathname.startsWith("/api/task-digest")) return "__login_only__";
+  if (pathname.startsWith("/api/ai/task-plan")) return "__login_only__";
   if (pathname === "/api/tasks" || pathname.startsWith("/api/tasks/")) return write ? "tasks:write" : "tasks:read";
   if (pathname.startsWith("/api/notebooks")) return write ? "notebooks:write" : "notebooks:read";
   if (pathname.startsWith("/api/note-templates")) return write ? "notes:write" : "notes:read";

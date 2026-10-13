@@ -4,6 +4,14 @@ import type { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { URL as NodeURL } from "node:url";
 import { openNativeDatabase } from "../nativeDatabase";
+import { cacheConfirmedNativeTasks } from "../nativeTaskComposerCache";
+import type { Task } from "@/types";
+import { installMobileLocalModuleBridge } from "../mobileLocalModuleBridge";
+import { api } from "../api";
+import { updateRepeatingTaskOnline } from "../taskComposerApi";
+
+vi.mock("../taskComposerApi", () => ({ registerTaskComposerCache: () => () => undefined, updateRepeatingTaskOnline: vi.fn(), getTaskComposerContext: () => ({}), isTaskComposerContextCurrent: () => true, TaskComposerApiError: class extends Error {} }));
+vi.mock("../mobileLocalMode", () => ({ isMobileLocalMode: () => false }));
 
 const fixture = vi.hoisted(() => ({ raw: undefined as unknown as DatabaseSync, fail: false }));
 const { DatabaseSync: SQLiteDatabase } = createRequire(import.meta.url)("node:sqlite") as typeof import("node:sqlite");
@@ -50,7 +58,7 @@ it("migrates schema 6 queues without losing mutation identity, retries, versions
   const db = await openNativeDatabase("tree-migration-fixture");
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
   expect(fixture.raw.prepare("SELECT * FROM sync_conflicts").all()).toEqual(history);
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version:7});
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version:8});
   await db.run(`INSERT INTO sync_outbox(id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,createdAt)
     VALUES ('tree','tree-mutation','p','d','personal','knowledge_tree_node','note:n','upsert','now')`);
   expect(fixture.raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -65,4 +73,54 @@ it("rolls back both queue rebuilds and schema version when the second rebuild fa
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
   expect(fixture.raw.prepare("SELECT * FROM sync_conflicts").all()).toEqual(history);
   expect(fixture.raw.prepare("SELECT sql FROM sqlite_master WHERE name='sync_outbox'").get()?.sql).not.toContain("knowledge_tree_node");
+});
+
+it("upgrades schema 7 task recurrence and caches confirmed batches without overwriting edits or Outbox", async () => {
+  fixture.raw.exec("PRAGMA user_version=7; INSERT INTO tasks(id,userId,title,createdAt,updatedAt) VALUES ('old','local','Preserved','now','now')");
+  const before = fixture.raw.prepare("SELECT * FROM sync_outbox").all();
+  const db = await openNativeDatabase("task-composer-fixture");
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 8 });
+  expect(fixture.raw.prepare("SELECT title,repeatRule FROM tasks WHERE id='old'").get()).toEqual({ title: "Preserved", repeatRule: "none" });
+  const task = { id: "confirmed", workspaceId: null, userId: "remote", title: "Daily study", description: "Practice", priority: 2, isCompleted: 0, dueDate: "2026-12-31", dueAt: "2026-12-31T09:00", repeatRule: "daily", repeatInterval: 1, repeatEndCount: 7, createdAt: "now", updatedAt: "now" } as Task;
+  await cacheConfirmedNativeTasks(db, "local", [task], [{ id: "remote-project", userId: "remote", workspaceId: null, name: "Server project", icon: "", color: "#123456", sortOrder: 0, createdAt: "now", updatedAt: "now" }]);
+  expect(await db.query("SELECT name,userId FROM mobile_local_task_projects WHERE id='remote-project'")).toEqual([{ name: "Server project", userId: "local" }]);
+  const row = fixture.raw.prepare("SELECT title,dueAt,repeatRule,repeatEndCount,userId FROM tasks WHERE id='confirmed'").get();
+  expect(row).toEqual({ title: "Daily study", dueAt: "2026-12-31T09:00", repeatRule: "daily", repeatEndCount: 7, userId: "local" });
+  await db.run("UPDATE tasks SET title='Local edit' WHERE id='confirmed'");
+  await cacheConfirmedNativeTasks(db, "local", [task]);
+  expect(fixture.raw.prepare("SELECT title FROM tasks WHERE id='confirmed'").get()).toEqual({ title: "Local edit" });
+  expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
+  await db.close();
+});
+
+it("native recurring completion uses the canonical online route, caches its successor and preserves pending edits", async () => {
+  vi.mocked(updateRepeatingTaskOnline).mockReset();
+  Object.defineProperty(navigator, "onLine", { configurable: true, value: true });
+  const db = await openNativeDatabase("task-repeat-fixture");
+  const task = { id: "repeat", workspaceId: null, userId: "local", title: "Study", priority: 2, isCompleted: 0, dueDate: "2026-12-31", repeatRule: "daily", repeatInterval: 1, repeatEndCount: 7, createdAt: "now", updatedAt: "now" } as Task;
+  await cacheConfirmedNativeTasks(db, "local", [task]);
+  const successor = { ...task, id: "next", dueDate: "2027-01-01", repeatSequenceIndex: 2 };
+  vi.mocked(updateRepeatingTaskOnline).mockResolvedValue({ task: { ...task, isCompleted: 1, status: "done", repeatNextGeneratedId: "next" }, generatedTask: successor });
+  const restore = installMobileLocalModuleBridge({} as never, db, "local");
+  try {
+    const result = await api.toggleTask("repeat");
+    expect(result.generatedTask?.id).toBe("next");
+    expect(await db.query("SELECT dueDate,repeatEndCount FROM tasks WHERE id='next'")).toEqual([{ dueDate: "2027-01-01", repeatEndCount: 7 }]);
+    expect(await db.query("SELECT id FROM sync_outbox WHERE entityType='task'")).toEqual([]);
+    Object.defineProperty(navigator, "onLine", { value: false });
+    await expect(api.toggleTask("next")).rejects.toThrow();
+    expect((await db.query<Task>("SELECT * FROM tasks WHERE id='next'"))[0].isCompleted).toBe(0);
+    Object.defineProperty(navigator, "onLine", { value: true });
+    await db.run("INSERT INTO sync_outbox(id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,createdAt) VALUES ('task-pending','task-pending','p','d','personal','task','next','upsert','now')");
+    await expect(api.toggleTask("next")).rejects.toThrow();
+    expect(updateRepeatingTaskOnline).toHaveBeenCalledOnce();
+    expect(await db.query("SELECT id FROM sync_outbox WHERE id='task-pending'")).toHaveLength(1);
+    vi.mocked(updateRepeatingTaskOnline).mockImplementationOnce(async () => {
+      await db.run("UPDATE tasks SET title='Concurrent edit' WHERE id='repeat'");
+      await db.run("INSERT INTO sync_outbox(id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,createdAt) VALUES ('concurrent','concurrent','p','d','personal','task','repeat','upsert','now')");
+      return { task: { ...task, isCompleted: 0 }, generatedTask: null };
+    });
+    expect((await api.toggleTask("repeat")).task?.title).toBe("Concurrent edit");
+    expect(await db.query("SELECT id FROM sync_outbox WHERE id='concurrent'")).toHaveLength(1);
+  } finally { restore(); await db.close(); }
 });

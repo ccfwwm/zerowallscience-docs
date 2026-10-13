@@ -55,6 +55,7 @@ import journalsRouter from "./routes/journals";
 import urlImportRouter from "./routes/url-import";
 
 import aiRouter from "./routes/ai";
+import aiTaskPlanRouter from "./routes/ai-task-plan";
 import voiceRouter from "./routes/voice";
 import pluginsRouter from "./routes/plugins";
 import pluginStudioRouter from "./routes/plugin-studio";
@@ -627,6 +628,7 @@ app.route("/api/diary", diaryRouter);
 app.route("/api/journals", journalsRouter);
 app.route("/api/url-import", urlImportRouter);
 app.route("/api/ai", aiRouter);
+app.route("/api/ai/task-plan", aiTaskPlanRouter);
 app.route("/api/voice", voiceRouter);
 app.route("/api/plugins/studio", pluginStudioRouter);
 app.route("/api/plugins", pluginsRouter);

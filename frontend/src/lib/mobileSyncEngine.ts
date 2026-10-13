@@ -7,6 +7,7 @@ import { SERVER_ENDPOINT_CHANGED_EVENT } from "./serverEndpointState";
 import { forgetUnsentLocalNotes } from "./nativeLocalNoteOrigin";
 import { notifyMobileSyncStatusChanged, type MobileSyncAppliedDetail } from "./mobileSyncStatus";
 import { nativeReceiptKey } from "./mobileNoteSyncReceipt";
+import { NATIVE_TASK_REPEAT_FIELDS, nativeTaskRepeatValues } from "./nativeTaskFields";
 import { validateEncryptedNoteWrite } from "./encryptedNotes/noteDocument";
 import { applyNativePersonalTree, assertNativePersonalTreeEntry, NATIVE_TREE_ENTITY_SET, NATIVE_TREE_PENDING_SUBSCRIPTION, nativeTreeSubscriptionKey, type NativeTreeEntry } from "./nativeKnowledgeTreeSync";
 import { nativeTreeMutationPayload, readNativePersonalTreeNode, sameNativeTreePosition, syncNativeNotebookMoveParents, writeNativePersonalTreeMoves } from "./nativePersonalTreeWrites";
@@ -1054,15 +1055,17 @@ export class MobileSyncEngine {
     }
     if(entry.entityType==="task"){
       if(deleting){await db.run("DELETE FROM tasks WHERE scopeKey=? AND id=?",[key,entry.entityId]);return;}
+      const current = (await db.query<Record<string, unknown>>("SELECT * FROM tasks WHERE scopeKey=? AND id=?", [key,entry.entityId]))[0] || {};
+      const repeat = nativeTaskRepeatValues({ ...current, ...p } as Partial<import("@/types").Task>);
       await db.run(`INSERT INTO tasks (
-        id,scopeKey,workspaceId,userId,title,description,isCompleted,completedAt,priority,dueDate,dueAt,startDate,noteId,parentId,sortOrder,projectId,status,createdAt,updatedAt
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+        id,scopeKey,workspaceId,userId,title,description,isCompleted,completedAt,priority,dueDate,dueAt,startDate,noteId,parentId,sortOrder,projectId,status,createdAt,updatedAt,${NATIVE_TASK_REPEAT_FIELDS.join(",")}
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,${NATIVE_TASK_REPEAT_FIELDS.map(() => "?").join(",")}) ON CONFLICT(id) DO UPDATE SET
         title=excluded.title,description=excluded.description,isCompleted=excluded.isCompleted,completedAt=excluded.completedAt,
         priority=excluded.priority,dueDate=excluded.dueDate,dueAt=excluded.dueAt,startDate=excluded.startDate,noteId=excluded.noteId,
-        parentId=excluded.parentId,sortOrder=excluded.sortOrder,projectId=excluded.projectId,status=excluded.status,updatedAt=excluded.updatedAt`,[
-        entry.entityId,key,ws,p.userId||this.options.userId,p.title||"新任务",p.description||"",p.isCompleted?1:0,p.completedAt||null,
-        p.priority||2,p.dueDate||null,p.dueAt||null,p.startDate||null,p.noteId||null,p.parentId||null,p.sortOrder||0,p.projectId||null,
-        p.status||(p.isCompleted?"done":"todo"),p.createdAt||now(),p.updatedAt||now(),
+        parentId=excluded.parentId,sortOrder=excluded.sortOrder,projectId=excluded.projectId,status=excluded.status,updatedAt=excluded.updatedAt,${NATIVE_TASK_REPEAT_FIELDS.map(field => `${field}=excluded.${field}`).join(",")}`,[
+        entry.entityId,key,ws,p.userId||this.options.userId,p.title||"新任务",p.description??current.description??"",p.isCompleted?1:0,p.completedAt||null,
+        p.priority||2,p.dueDate||null,p.dueAt===undefined?current.dueAt||null:p.dueAt,p.startDate===undefined?current.startDate||null:p.startDate,p.noteId||null,p.parentId||null,p.sortOrder||0,p.projectId===undefined?current.projectId||null:p.projectId,
+        p.status||(p.isCompleted?"done":"todo"),p.createdAt||now(),p.updatedAt||now(),...repeat,
       ]);return;
     }
     if(entry.entityType==="diary"){

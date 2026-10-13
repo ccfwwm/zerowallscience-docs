@@ -4,6 +4,8 @@ import { getDb } from "../db/schema";
 import { callAIChat } from "../services/ai-client";
 import { getUserAISettings } from "../services/user-ai-settings";
 import crypto from "crypto";
+import { bodyLimit } from "hono/body-limit";
+import { batchInputSchema, createComposerBatch, TaskComposerError } from "../services/task-composer.js";
 import {
   getUserWorkspaceRole,
   canManageResource,
@@ -287,14 +289,12 @@ tasks.get("/:id", (c) => {
 // Promise 分支内部还必须是 void 才被视作 "无返回"）不兼容，tsc 会在 tasks.post("/", ...)
 // 的这一行报 TS2769 "No overload matches this call"。统一 async/await 后，所有分支都
 // 走同一条 Promise 路径，返回类型收敛为 Promise<Response>，类型校验即通过。
-tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
-  const db = getDb();
-  const userId = c.req.header("X-User-Id")!;
+class TaskCreateError extends Error {
+  constructor(public payload: { error: string; code?: string }, public status: 400 | 403 | 404) { super(payload.error); }
+}
 
-  const scope = resolveTaskScope(c, userId);
-  if (scope.error) return c.json({ error: scope.error, code: "FORBIDDEN" }, 403);
-
-  const body: any = await c.req.json();
+// The normal endpoint and AI batch share the same creation validation and SQL.
+function createTaskRecord(db: ReturnType<typeof getDb>, userId: string, workspaceId: string | null, body: any): Record<string, unknown> {
   const id = crypto.randomUUID();
   const { title, priority = 2, dueDate = null, dueAt = null, startDate = null, noteId = null, parentId = null } = body;
   const description = typeof body.description === "string" ? body.description : "";
@@ -307,18 +307,18 @@ tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
   try {
     repeatEndCount = normalizeRepeatEndCount(body.repeatEndCount);
   } catch {
-    return c.json({ error: "repeatEndCount must be an integer between 1 and 999", code: "INVALID_REPEAT_END_COUNT" }, 400);
+    throw new TaskCreateError({ error: "repeatEndCount must be an integer between 1 and 999", code: "INVALID_REPEAT_END_COUNT" }, 400);
   }
 
   const VALID_REPEAT = ["none", "daily", "weekly", "monthly", "yearly", "custom"];
   if (!VALID_REPEAT.includes(repeatRule)) {
-    return c.json({ error: "Invalid repeatRule", code: "INVALID_REPEAT_RULE" }, 400);
+    throw new TaskCreateError({ error: "Invalid repeatRule", code: "INVALID_REPEAT_RULE" }, 400);
   }
   if (repeatRule === "none") {
     repeatEndCount = null;
   }
   if (repeatRule !== "none" && repeatRule !== "custom" && repeatInterval < 1) {
-    return c.json({ error: "repeatInterval must be >= 1", code: "INVALID_REPEAT_INTERVAL" }, 400);
+    throw new TaskCreateError({ error: "repeatInterval must be >= 1", code: "INVALID_REPEAT_INTERVAL" }, 400);
   }
   // TASK-RECURRENCE-CUSTOM-01: 解析自定义循环规则
   // TASK-RECURRENCE-CUSTOM-01-RV1: 增强校验
@@ -326,41 +326,38 @@ tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
   if (repeatRule === "custom") {
     const rj = body.repeatRuleJson;
     if (!rj || typeof rj !== "object" || !rj.frequency || !rj.interval) {
-      return c.json({ error: "repeatRuleJson required for custom repeat", code: "INVALID_REPEAT_RULE" }, 400);
+      throw new TaskCreateError({ error: "repeatRuleJson required for custom repeat", code: "INVALID_REPEAT_RULE" }, 400);
     }
     const vErr = validateRepeatRuleJson(rj);
-    if (vErr) return c.json({ error: vErr, code: "INVALID_REPEAT_RULE" }, 400);
+    if (vErr) throw new TaskCreateError({ error: vErr, code: "INVALID_REPEAT_RULE" }, 400);
     // 去重 weekdays
     if (rj.weekdays) rj.weekdays = [...new Set(rj.weekdays)].sort((a, b) => (a as number) - (b as number));
     repeatRuleJson = JSON.stringify(rj);
   }
   if (repeatRule !== "none" && !dueDate && !dueAt) {
-    return c.json({ error: "Repeating task requires dueDate or dueAt", code: "REPEAT_REQUIRES_DATE" }, 400);
+    throw new TaskCreateError({ error: "Repeating task requires dueDate or dueAt", code: "REPEAT_REQUIRES_DATE" }, 400);
   }
 
   if (isInvalidTaskDateRange(startDate, dueDate, dueAt)) {
-    return c.json({ error: "startDate cannot be after dueDate", code: "INVALID_DATE_RANGE" }, 400);
+    throw new TaskCreateError({ error: "startDate cannot be after dueDate", code: "INVALID_DATE_RANGE" }, 400);
   }
 
   if (!title || !title.trim()) {
-    return c.json({ error: "Title is required" }, 400);
+    throw new TaskCreateError({ error: "Title is required" }, 400);
   }
 
   // 父任务继承：子任务必须与父任务在同一 scope。
-  let effectiveWorkspaceId: string | null = scope.workspaceId;
+  let effectiveWorkspaceId: string | null = workspaceId;
   if (parentId) {
     const parent = db
       .prepare("SELECT userId, workspaceId FROM tasks WHERE id = ?")
       .get(parentId) as { userId: string; workspaceId: string | null } | undefined;
-    if (!parent) return c.json({ error: "父任务不存在" }, 404);
+    if (!parent) throw new TaskCreateError({ error: "父任务不存在" }, 404);
     if (!canReadTask(parent, userId)) {
-      return c.json({ error: "无权在该父任务下创建子任务", code: "FORBIDDEN" }, 403);
+      throw new TaskCreateError({ error: "无权在该父任务下创建子任务", code: "FORBIDDEN" }, 403);
     }
     if (effectiveWorkspaceId !== parent.workspaceId) {
-      return c.json(
-        { error: "子任务必须与父任务在同一工作区", code: "SCOPE_MISMATCH" },
-        400,
-      );
+      throw new TaskCreateError({ error: "子任务必须与父任务在同一工作区", code: "SCOPE_MISMATCH" }, 400);
     }
     effectiveWorkspaceId = parent.workspaceId;
   }
@@ -369,18 +366,18 @@ tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
   const status = body.status || "todo";
   const VALID_STATUSES = ["todo", "doing", "blocked", "done"];
   if (!VALID_STATUSES.includes(status)) {
-    return c.json({ error: "Invalid status, must be one of: todo, doing, blocked, done", code: "INVALID_STATUS" }, 400);
+    throw new TaskCreateError({ error: "Invalid status, must be one of: todo, doing, blocked, done", code: "INVALID_STATUS" }, 400);
   }
 
   // Validate projectId belongs to same scope
   if (projectId) {
     const project = db.prepare("SELECT userId, workspaceId FROM task_projects WHERE id = ?").get(projectId) as any;
-    if (!project) return c.json({ error: "Project not found", code: "PROJECT_NOT_FOUND" }, 400);
+    if (!project) throw new TaskCreateError({ error: "Project not found", code: "PROJECT_NOT_FOUND" }, 400);
     if (effectiveWorkspaceId && project.workspaceId !== effectiveWorkspaceId) {
-      return c.json({ error: "Project scope mismatch", code: "PROJECT_SCOPE_MISMATCH" }, 400);
+      throw new TaskCreateError({ error: "Project scope mismatch", code: "PROJECT_SCOPE_MISMATCH" }, 400);
     }
     if (!effectiveWorkspaceId && (project.userId !== userId || project.workspaceId !== null)) {
-      return c.json({ error: "Project scope mismatch", code: "PROJECT_SCOPE_MISMATCH" }, 400);
+      throw new TaskCreateError({ error: "Project scope mismatch", code: "PROJECT_SCOPE_MISMATCH" }, 400);
     }
   }
 
@@ -396,7 +393,36 @@ tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
   `).run(id, userId, effectiveWorkspaceId, title.trim(), description, effectiveIsCompleted, effectiveCompletedAt, priority, dueDate, dueAt, startDate, noteId, parentId, projectId, status, repeatRule, repeatInterval, effectiveRepeatEndDate, repeatGroupId, repeatGeneratedFromId, repeatEndCount, repeatSequenceIndex, repeatRuleJson);
 
   const task = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id);
-  return c.json(task, 201);
+  return task as Record<string, unknown>;
+}
+
+tasks.post("/", requireWorkspaceFeature("tasks"), async (c) => {
+  const userId = c.req.header("X-User-Id")!;
+  const scope = resolveTaskScope(c, userId);
+  if (scope.error) return c.json({ error: scope.error, code: "FORBIDDEN" }, 403);
+  const body = await c.req.json();
+  try { return c.json(createTaskRecord(getDb(), userId, scope.workspaceId, body), 201); }
+  catch (error) {
+    if (error instanceof TaskCreateError) return c.json(error.payload, error.status);
+    throw error;
+  }
+});
+
+tasks.post("/ai-batch-create", bodyLimit({ maxSize: 256000, onError: c => c.json({ code: "REQUEST_TOO_LARGE", error: "Request too large" }, 413) }), requireWorkspaceFeature("tasks"), async c => {
+  const userId = c.req.header("X-User-Id");
+  if (!userId) return c.json({ code: "UNAUTHENTICATED", error: "Authentication required" }, 401);
+  const scope = resolveTaskScope(c, userId);
+  if (scope.error) return c.json({ code: "FORBIDDEN", error: scope.error }, 403);
+  const parsed = batchInputSchema.safeParse(await c.req.json().catch(error => { if (error instanceof SyntaxError) return null; throw error; }));
+  if (!parsed.success) return c.json({ code: "INVALID_TASK_INPUT", error: "Invalid task input" }, 400);
+  try {
+    const result = createComposerBatch(userId, scope.workspaceId, parsed.data, task => createTaskRecord(getDb(), userId, scope.workspaceId, task));
+    return c.json(result, result.replayed ? 200 : 201);
+  } catch (error) {
+    if (error instanceof TaskCreateError) return c.json(error.payload, error.status);
+    if (error instanceof TaskComposerError) return c.json({ code: error.code, error: error.message, details: error.details }, error.status);
+    return c.json({ code: "TASK_BATCH_FAILED", error: "No tasks were created. Retry this batch." }, 500);
+  }
 });
 
 // 更新任务

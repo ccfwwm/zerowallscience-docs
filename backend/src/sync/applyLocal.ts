@@ -1,3 +1,4 @@
+import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
 import { withEncryptedBlockWrite } from "../lib/encryptedBlockWrites.js";
 import type Database from "better-sqlite3";
 import { runWithOutboxSuppressed } from "./context";
@@ -324,12 +325,13 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
   const parentId = typeof p.parentId === "string"
     && db.prepare("SELECT 1 FROM tasks WHERE id = ? AND workspaceId IS ?").get(p.parentId,workspaceId) ? p.parentId : null;
 
+  const current = db.prepare("SELECT * FROM tasks WHERE id=? AND workspaceId IS ?").get(item.entityId, workspaceId) as Record<string, unknown> | undefined;
   db.prepare(`
     INSERT INTO tasks (
       id, userId, title, isCompleted, completedAt, priority, dueDate,
-      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId
+      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId, ${TASK_SYNC_FIELDS.join(",")}
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), ?)
+              COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), ?, ${TASK_SYNC_FIELDS.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       isCompleted = excluded.isCompleted,
@@ -339,7 +341,8 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
       noteId = excluded.noteId,
       parentId = excluded.parentId,
       sortOrder = excluded.sortOrder,
-      updatedAt = excluded.updatedAt
+      updatedAt = excluded.updatedAt,
+      ${TASK_SYNC_FIELDS.map(field => `${field}=excluded.${field}`).join(",")}
   `).run(
     item.entityId,
     userId,
@@ -356,6 +359,7 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
     // 它是下一次 Push 的 baseUpdatedAt 依据，改写会导致误判冲突。
     p.updatedAt ?? null,
     workspaceId,
+    ...taskSyncValues(p, current),
   );
 }
 

@@ -1,3 +1,4 @@
+import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
 import { withEncryptedBlockWrite } from "../lib/encryptedBlockWrites.js";
 import type Database from "better-sqlite3";
 import { guardEncryptedNoteMutation, guardEncryptedBlockWriter } from "../lib/encryptedNotes.js";
@@ -436,10 +437,10 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
     throw new SyncError("MISSING_DEPENDENCY", "父任务尚未同步");
   }
   const existing = db.prepare(
-    `SELECT updatedAt FROM tasks WHERE id = ? AND workspaceId IS ?
+    `SELECT * FROM tasks WHERE id = ? AND workspaceId IS ?
       AND (? IS NOT NULL OR userId = ?)`,
   ).get(input.entityId, workspaceIdOf(input), workspaceIdOf(input), input.userId) as
-    | { updatedAt: string }
+    | ({ updatedAt: string } & Record<string, unknown>)
     | undefined;
 
   if (existing) {
@@ -454,8 +455,8 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
   db.prepare(`
     INSERT INTO tasks (
       id, userId, title, isCompleted, completedAt, priority, dueDate,
-      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'), ?)
+      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId, ${TASK_SYNC_FIELDS.join(",")}
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'), ?, ${TASK_SYNC_FIELDS.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       isCompleted = excluded.isCompleted,
@@ -465,7 +466,8 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
       noteId = excluded.noteId,
       parentId = excluded.parentId,
       sortOrder = excluded.sortOrder,
-      updatedAt = datetime('now')
+      updatedAt = datetime('now'),
+      ${TASK_SYNC_FIELDS.map(field => `${field}=excluded.${field}`).join(",")}
   `).run(
     input.entityId,
     input.userId,
@@ -479,6 +481,7 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
     Number.isFinite(p.sortOrder as number) ? Number(p.sortOrder) : 0,
     typeof p.createdAt === "string" ? p.createdAt : null,
     workspaceIdOf(input),
+    ...taskSyncValues(p, existing),
   );
   return null;
 }

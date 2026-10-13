@@ -19,6 +19,10 @@ import { isMobileLocalMode } from "./mobileLocalMode";
 import { ensureMobileLocalMindMapTree } from "./mobileLocalMindMapTree";
 import type { NativeDatabase } from "./nativeDatabase";
 import type { NativeLocalRepository } from "./nativeLocalRepository";
+import { getTaskComposerContext, isTaskComposerContextCurrent, registerTaskComposerCache, TaskComposerApiError, updateRepeatingTaskOnline } from "./taskComposerApi";
+import i18n from "@/i18n";
+import { cacheConfirmedNativeTasks } from "./nativeTaskComposerCache";
+import { NATIVE_TASK_REPEAT_FIELDS, nativeTaskRepeatValues } from "./nativeTaskFields";
 
 type SyncEntityType = "task" | "task_reminder" | "diary" | "mindmap" | "attachment";
 
@@ -46,6 +50,7 @@ export function installMobileLocalModuleBridge(
   db: NativeDatabase,
   userId: string,
 ): () => void {
+  const removeComposerCache = registerTaskComposerCache((tasks, projects) => cacheConfirmedNativeTasks(db, userId, tasks, projects));
   const target = api as unknown as Omit<typeof api, "updateTask" | "toggleTask" | "updateTaskReminder" | "dataFile"> & {
     updateTask: (id: string, patch: Partial<Task>) => Promise<{ task: Task }>;
     toggleTask: (id: string) => Promise<{ task: Task }>;
@@ -156,26 +161,43 @@ export function installMobileLocalModuleBridge(
       priority:data.priority || 2,dueDate:data.dueDate || null,dueAt:data.dueAt || null,startDate:data.startDate || null,
       noteId:data.noteId || null,parentId:data.parentId || null,sortOrder:data.sortOrder || 0,projectId:data.projectId || null,
       status:data.status || (data.isCompleted ? "done" : "todo"),createdAt,updatedAt:createdAt,
+      ...Object.fromEntries(NATIVE_TASK_REPEAT_FIELDS.map((field, index) => [field, nativeTaskRepeatValues(data)[index]])),
     };
     await db.run(`INSERT INTO tasks (
       id,scopeKey,workspaceId,userId,title,description,isCompleted,completedAt,priority,dueDate,dueAt,startDate,
-      noteId,parentId,sortOrder,projectId,status,createdAt,updatedAt
-    ) VALUES (?,'personal',NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      noteId,parentId,sortOrder,projectId,status,createdAt,updatedAt,${NATIVE_TASK_REPEAT_FIELDS.join(",")}
+    ) VALUES (?,'personal',NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,${NATIVE_TASK_REPEAT_FIELDS.map(() => "?").join(",")})`, [
       task.id,userId,task.title,task.description,task.isCompleted,task.completedAt,task.priority,task.dueDate,task.dueAt,
-      task.startDate,task.noteId,task.parentId,task.sortOrder,task.projectId,task.status,task.createdAt,task.updatedAt,
+      task.startDate,task.noteId,task.parentId,task.sortOrder,task.projectId,task.status,task.createdAt,task.updatedAt,...nativeTaskRepeatValues(task),
     ]);
     await enqueue("task",task.id,"upsert",task as unknown as Record<string, unknown>);
     return task;
   };
   target.updateTask = async (id: string, patch: Partial<Task>) => {
     const current = await target.getTask(id) as Task;
+    if (current.repeatRule && current.repeatRule !== "none" && patch.isCompleted !== undefined) {
+      const context = getTaskComposerContext();
+      if (isMobileLocalMode() || navigator.onLine === false) throw new Error(i18n.t("taskComposer.repeatNeedsOnline"));
+      const pending = await db.query("SELECT id FROM sync_outbox WHERE entityType='task' AND entityId=? AND status IN ('pending','inflight','failed') LIMIT 1", [id]);
+      if (pending.length) throw new Error(i18n.t("taskComposer.repeatNeedsSync"));
+      const result = await updateRepeatingTaskOnline(id, patch);
+      let visibleTask = result.task;
+      await db.transaction(async tx => {
+        const concurrent = await tx.query("SELECT id FROM sync_outbox WHERE entityType='task' AND entityId=? AND status IN ('pending','inflight','failed') LIMIT 1", [id]);
+        if (!concurrent.length) await tx.run("UPDATE tasks SET isCompleted=?,status=?,completedAt=?,repeatNextGeneratedId=?,updatedAt=? WHERE scopeKey='personal' AND id=?", [result.task.isCompleted,result.task.status,result.task.completedAt || null,result.task.repeatNextGeneratedId || null,result.task.updatedAt,id]);
+        else visibleTask = (await tx.query<Task>("SELECT * FROM tasks WHERE scopeKey='personal' AND id=?", [id]))[0] || result.task;
+      });
+      if (result.generatedTask) await cacheConfirmedNativeTasks(db, userId, [result.generatedTask]);
+      if (!isTaskComposerContextCurrent(context)) throw new TaskComposerApiError("CONTEXT_CHANGED");
+      return { ...result, task: visibleTask };
+    }
     const updatedAt = now();
     const task = { ...current,...patch,id,userId,workspaceId:null,updatedAt };
     if (patch.isCompleted !== undefined && patch.status === undefined) task.status = patch.isCompleted ? "done" : "todo";
     await db.run(`UPDATE tasks SET title=?,description=?,isCompleted=?,completedAt=?,priority=?,dueDate=?,dueAt=?,startDate=?,
-      noteId=?,parentId=?,sortOrder=?,projectId=?,status=?,updatedAt=? WHERE scopeKey='personal' AND id=?`, [
+      noteId=?,parentId=?,sortOrder=?,projectId=?,status=?,updatedAt=?,${NATIVE_TASK_REPEAT_FIELDS.map(field => `${field}=?`).join(",")} WHERE scopeKey='personal' AND id=?`, [
       task.title,task.description,task.isCompleted,task.completedAt,task.priority,task.dueDate,task.dueAt,task.startDate,
-      task.noteId,task.parentId,task.sortOrder,task.projectId,task.status,updatedAt,id,
+      task.noteId,task.parentId,task.sortOrder,task.projectId,task.status,updatedAt,...nativeTaskRepeatValues(task),id,
     ]);
     await enqueue("task",id,"upsert",task as unknown as Record<string, unknown>,current.updatedAt);
     return { task };
@@ -357,6 +379,7 @@ export function installMobileLocalModuleBridge(
   target.dataFile.cleanupOrphans = async()=>({totalRemovedItems:0,totalFreedBytes:0,removed:{databaseRows:0,contentReferences:0,diskFiles:0}});
 
   return () => {
+    removeComposerCache();
     Object.assign(target, originals);
     target.files = originals.files;
     target.attachmentFolders = originals.attachmentFolders;

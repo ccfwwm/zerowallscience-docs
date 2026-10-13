@@ -15,6 +15,8 @@
 ## 未发布 / Unreleased
 
 - **deployment**：新增可选 Caddy HTTPS Compose 模板，自动配置公开地址、持久化证书并取消主应用端口映射；补齐 Nginx / NAS 反代指引和部署验收步骤。Add an optional Caddy HTTPS Compose overlay with a public origin, persistent certificates, no direct application port mapping, and deployment/acceptance documentation.
+- **tasks / AI**：任务中心新增 AI 智能待办助手，支持自然语言生成、可编辑预览、多选和事务批量确认；服务端校验日期、项目权限和重复规则，以持久化幂等记录防止重试重复创建，复用用户 AI 设置和现有同步触发器。AI Task Composer adds editable drafts and atomic, idempotent batch confirmation with scoped duplicate checks, date/recurrence validation, existing AI settings and task sync.
+
 - **data safety**：HTTP 永久删除笔记必须先进入回收站且具备管理权限；旧 DELETE 入口保留但拒绝活动笔记，SDK/MCP/CLI 使用显式永久端点，Android Native 也拒绝活动/锁定笔记，失败导入清理先软删。HTTP permanent deletion requires trash membership and management permission; Native deletion rejects active/locked notes. SDK/MCP/CLI use the explicit endpoint; failed Android import cleanup trashes first. Sync V2 独立删除协议仍有发版门禁，见 `docs/qa/v1.5.2/stage3/`；the separate Sync V2 delete protocol remains a release blocker.
 - **sync / acl**：永久删除成功 ACK 才清理冲突队列，拒绝和断网保留草稿；修复权限表初始化在事务回滚后仍被缓存的问题。Reconcile deletion queues only after successful ACKs and retry lazy ACL initialization after rollback.
 - **plugins**：Plugin Studio 拒绝硬链接，并以校验过身份的文件句柄读取/导出，阻止检查与打开之间的链接替换读取。Reject Studio hard links and read/export through verified file handles; deployment directory permissions remain part of the trust boundary.
