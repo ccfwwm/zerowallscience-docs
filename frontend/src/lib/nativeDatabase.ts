@@ -1,5 +1,6 @@
 import { Capacitor } from "@capacitor/core";
 import { NATIVE_ENCRYPTED_NOTE_GUARDS } from "./encryptedNotes/nativeStorageGuards";
+import { NATIVE_TASK_REPEAT_COLUMNS } from "./nativeTaskFields";
 import {
   CapacitorSQLite,
   SQLiteConnection,
@@ -643,6 +644,14 @@ async function upgradeSchemaV2ToV3(raw: SQLiteDBConnection): Promise<void> {
   await raw.execute("CREATE INDEX IF NOT EXISTS idx_native_notes_color_mark ON notes(scopeKey, colorMark)", false);
 }
 
+async function upgradeTaskRecurrence(raw: SQLiteDBConnection): Promise<void> {
+  const rows = await raw.query("PRAGMA table_info(tasks)");
+  const columns = new Set((rows.values || []).map(row => String(row.name)));
+  for (const [field, type] of Object.entries(NATIVE_TASK_REPEAT_COLUMNS)) {
+    if (!columns.has(field)) await raw.execute(`ALTER TABLE tasks ADD COLUMN ${field} ${type}`, false);
+  }
+}
+
 function getGlobalState(): NativeDatabaseGlobalState {
   const root = globalThis as NativeDatabaseGlobal;
   if (!root.__nowenNoteNativeDatabaseState) {
@@ -725,6 +734,7 @@ class NativeDatabaseImpl implements NativeDatabase {
             await this.raw.execute(statement, false);
           }
           await executeSchemaStatements(this.raw, KNOWLEDGE_TREE_SCHEMA_STATEMENTS);
+          await upgradeTaskRecurrence(this.raw);
           for (const statement of NATIVE_ENCRYPTED_NOTE_GUARDS) await this.raw.execute(statement, false);
           await this.raw.run(
             `INSERT INTO native_runtime_meta (key, value, updatedAt)
@@ -776,6 +786,9 @@ class NativeDatabaseImpl implements NativeDatabase {
           // widening the entity CHECK. Both rebuilds share the migration TX.
           await executeSchemaStatements(this.raw, SYNC_OUTBOX_V2_STATEMENTS);
           await executeSchemaStatements(this.raw, SYNC_CONFLICTS_V2_STATEMENTS);
+        }
+        if (version < 8) {
+          await upgradeTaskRecurrence(this.raw);
           await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
         }
         await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);

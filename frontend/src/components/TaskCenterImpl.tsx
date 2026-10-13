@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { AnimatePresence } from "framer-motion";
 import {
-  Calendar, ListTodo,
+  Calendar, ListTodo, Sparkles,
   CalendarDays, AlertTriangle, CheckCheck, Inbox,
   Search, X as XIcon, GripVertical,
   CheckSquare, Trash2, Square,
@@ -56,6 +56,7 @@ import { consumePendingTaskNotificationTaskId } from "@/lib/taskNotifications";
 import { TASK_NOTIFICATION_OPEN_EVENT } from "@/lib/taskNotificationSchedule";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
 import { isTaskCenterModuleVisible } from "@/lib/navigationVisibility";
+const TaskComposer = React.lazy(() => import("./tasks/TaskComposer"));
 
 export function formatLocalDateKey(date = new Date()): string {
   const y = date.getFullYear();
@@ -110,6 +111,7 @@ export default function TaskCenter() {
   };
 
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [showTaskComposer, setShowTaskComposer] = useState(false);
   const [stats, setStats] = useState<TaskStats | null>(null);
   const [centerMode, setCenterMode] = useState<CenterMode>("tasks");
 
@@ -1095,6 +1097,7 @@ export default function TaskCenter() {
           {centerMode === "tasks" && (
             <>
               {/* Mobile project trigger */}
+              <button type="button" onClick={() => setShowTaskComposer(true)} className="flex shrink-0 items-center gap-1 rounded-full bg-accent-primary/10 px-3 py-1.5 text-xs text-accent-primary"><Sparkles size={14} />{t("taskComposer.entry")}</button>
               <MobileProjectTrigger
                 selectedProjectId={selectedProjectId}
                 projects={projects}
@@ -1131,7 +1134,7 @@ export default function TaskCenter() {
                 {t("tasks.visibleTaskCount", { count: displayTasks.length, defaultValue: `${displayTasks.length} 条任务` })}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-end gap-2">
               {selectMode ? (
                 <>
                   <span className="text-xs text-tx-tertiary">{t("tasks.selectedCount", { count: selectedIds.size })}</span>
@@ -1173,6 +1176,7 @@ export default function TaskCenter() {
                     <ClipboardPlus size={14} />
                     {t("tasks.quickCaptureToInbox", { defaultValue: "快速捕获" })}
                   </button>
+                  <button type="button" onClick={() => setShowTaskComposer(true)} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-app-border px-3 py-1.5 text-xs text-accent-primary hover:bg-app-hover"><Sparkles size={14} />{t("taskComposer.entry")}</button>
                   <label className="flex items-center gap-1.5 rounded-lg border border-app-border bg-app-bg px-2 py-1 text-xs text-tx-secondary">
                     <span className="text-tx-tertiary">{t("tasks.view", { defaultValue: "视图" })}</span>
                     <select
@@ -1599,6 +1603,7 @@ export default function TaskCenter() {
       )}
 
       {/* Right: Detail Panel — direct flex sibling, no AnimatePresence to avoid layout gap */}
+      {showTaskComposer && <React.Suspense fallback={null}><TaskComposer projects={projects} initialProjectId={selectedProjectId} onClose={() => setShowTaskComposer(false)} onCreated={() => { void loadTasks(); void refreshCounts(); }} onView={selectTaskFilter} /></React.Suspense>}
       {centerMode === "tasks" && selectedTask && (
         <TaskDetailPanel
           key={selectedTask.id}

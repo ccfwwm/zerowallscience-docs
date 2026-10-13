@@ -1,3 +1,4 @@
+import "./setup-db-isolation";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
@@ -368,6 +369,27 @@ test("task 本地 apply（下行）保留远端 updatedAt 供下次冲突判定"
   assert.equal(row.title, "他机任务");
   // 改写成 now() 会让下次 Push 的 base 与服务端不符，误判冲突
   assert.equal(row.updatedAt, "2026-08-01 10:00:00");
+});
+
+test("task schedule and recurrence survive Outbox, server apply and local apply, including older peers", () => {
+  resetAll(); enableSync();
+  const d = db(), id = createTask("Repeat study");
+  d.prepare("UPDATE tasks SET description='Practice',dueDate='2026-12-31',dueAt='2026-12-31T09:00',startDate='2026-12-31T08:00',repeatRule='daily',repeatInterval=1,repeatEndCount=7,repeatSequenceIndex=1 WHERE id=?").run(id);
+  const out = outboxFor("task");
+  const payload = JSON.parse(out.at(-1)!.payload as string);
+  assert.equal(payload.dueAt, "2026-12-31T09:00"); assert.equal(payload.repeatEndCount, 7);
+  const remoteId = randomUUID();
+  applyMutation(d, { mutationId: randomUUID(), entityType: "task", entityId: remoteId, operation: "upsert", userId: USER_ID, deviceId: "composer-peer", payload });
+  let row = d.prepare("SELECT * FROM tasks WHERE id=?").get(remoteId) as any;
+  assert.equal(row.description, "Practice"); assert.equal(row.repeatRule, "daily"); assert.equal(row.dueAt, payload.dueAt);
+  applyMutation(d, { mutationId: randomUUID(), entityType: "task", entityId: remoteId, operation: "upsert", userId: USER_ID, deviceId: "legacy-peer", payload: { title: "Older peer", dueDate: "2026-12-31" } });
+  row = d.prepare("SELECT * FROM tasks WHERE id=?").get(remoteId) as any;
+  assert.equal(row.repeatEndCount, 7); assert.equal(row.dueAt, payload.dueAt);
+  const localId = randomUUID();
+  applyRemoteChanges(d, [{ entityType: "task", entityId: localId, operation: "upsert", payload }], { userId: USER_ID });
+  applyRemoteChanges(d, [{ entityType: "task", entityId: localId, operation: "upsert", payload: { title: "Legacy pull", dueDate: "2026-12-31" } }], { userId: USER_ID });
+  const local = d.prepare("SELECT * FROM tasks WHERE id=?").get(localId) as any;
+  assert.equal(local.description, "Practice"); assert.equal(local.repeatRule, "daily"); assert.equal(local.dueAt, payload.dueAt);
 });
 
 test("task 下行时孤儿引用置空而非拒绝写入", () => {
