@@ -414,7 +414,7 @@ function createTaskRecord(db: ReturnType<typeof getDb>, userId: string, workspac
     if (effectiveWorkspaceId !== parent.workspaceId) {
       throw new TaskCreateError({ error: "子任务必须与父任务在同一工作区", code: "SCOPE_MISMATCH" }, 400);
     }
-    if (parent.archivedAt) return c.json({ error: "请先恢复已归档任务", code: "TASK_ARCHIVED" }, 409);
+    if (parent.archivedAt) throw new TaskCreateError({ error: "请先恢复已归档任务", code: "TASK_ARCHIVED" }, 409);
     effectiveWorkspaceId = parent.workspaceId;
   }
 
@@ -442,7 +442,7 @@ function createTaskRecord(db: ReturnType<typeof getDb>, userId: string, workspac
   if (effectiveIsCompleted && Object.prototype.hasOwnProperty.call(body,"completedAt")) {
     if (body.completedAt === null) effectiveCompletedAt = null;
     else if (typeof body.completedAt === "string" && Number.isFinite(Date.parse(body.completedAt))) effectiveCompletedAt = new Date(body.completedAt).toISOString();
-    else return c.json({error:"Invalid completion time",code:"INVALID_COMPLETED_AT"},400);
+    else throw new TaskCreateError({ error: "Invalid completion time", code: "INVALID_COMPLETED_AT" }, 400);
   }
 
   const effectiveRepeatEndDate = repeatRule === "none" ? null : repeatEndDate;
