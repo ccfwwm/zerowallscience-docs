@@ -60,7 +60,8 @@ import { withShareSessionHeader } from "@/lib/shareSession";
 import { clearFolderUnlockTokens, folderUnlockRequestHeaders } from "@/lib/knowledgeTreePassword";
 import { getServerTransportUrl, rememberServerInstanceId } from "./serverEndpointState";
 import { isRootDocumentNotebookId } from "@/lib/rootDocumentCreatePolicy";
-import { resolveUploadFetch } from "@/lib/uploadRequest";
+import { resolveUploadFetch, isNativeCapacitorUploadRuntime } from "@/lib/uploadRequest";
+import { fileUploadProgressFetch } from "@/lib/fileUploadProgress";
 import {
   registerAttachmentAccessUrls,
   resolveAttachmentAccessUrl,
@@ -2198,6 +2199,10 @@ export const api = {
         method: "PATCH",
         body: JSON.stringify({ name }),
       }),
+    move: (id: string, parentId: string | null) =>
+      request<{ id: string; name: string; parentId: string | null }>(`/attachment-folders/${id}${attachmentFolderScopeQuery()}`, {
+        method: "PATCH", body: JSON.stringify({ parentId }),
+      }),
     remove: (id: string) =>
       request<{ success: boolean }>(`/attachment-folders/${id}${attachmentFolderScopeQuery()}`, { method: "DELETE" }),
   },
@@ -3370,9 +3375,9 @@ export const api = {
   // note 兜底外键约束，用户看到的只是"未归档文件"。
   //
   files: {
-    move: (ids: string[], folderId: string | null) =>
+    move: (ids: string[], folderId: string | null, expectedFolderIds?: Record<string, string | null>) =>
       request<{ success: boolean; moved: number; folderId: string | null; folderName: string | null }>(
-        "/files/batch-move", { method: "POST", body: JSON.stringify({ ids, folderId }) },
+        "/files/batch-move", { method: "POST", body: JSON.stringify({ ids, folderId, expectedFolderIds }) },
       ),
     setExternalAccess: (id: string, enabled: boolean) =>
       request<{ success: boolean; externalAccessEnabled: boolean }>(
@@ -3396,6 +3401,8 @@ export const api = {
      */
     list: (params: {
       category?: FileCategory;
+      fileKind?: "document" | "video" | "audio" | "archive";
+      createdAfter?: string;
       filter?: FileFilter;
       myUploadsRef?: FileMyUploadsRef;
       mime?: string;
@@ -3415,6 +3422,8 @@ export const api = {
       // 调用方（FileManager）自己维护 "all" | FileCategory 的 UI 过滤，
       // 在传进来之前就会把 "all" 映射成 undefined，这里只需非空判断。
       if (params.category) qs.set("category", params.category);
+      if (params.fileKind) qs.set("fileKind", params.fileKind);
+      if (params.createdAfter) qs.set("createdAfter", params.createdAfter);
       if (params.filter) qs.set("filter", params.filter);
       // myUploadsRef 仅在 filter=myUploads 时才有意义；后端会忽略其他场景，
       // 但为了让 URL 干净，前端只在 filter 匹配时传。
@@ -3486,7 +3495,7 @@ export const api = {
      * Y4: 自动把 workspaceId 作为 query 传给后端；后端会把 holder note 与
      *     attachments.workspaceId 一起落到对应 scope。
      */
-    upload: async (file: File, opts: { noteId?: string; notebookId?: string; folderId?: string } = {}): Promise<FileItem> => {
+    upload: async (file: File, opts: { noteId?: string; notebookId?: string; folderId?: string; signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void } = {}): Promise<FileItem> => {
       const token = getToken();
       const form = new FormData();
       form.append("file", file);
@@ -3496,14 +3505,17 @@ export const api = {
       if (opts.folderId) form.append("folderId", opts.folderId);
       const ws = getCurrentWorkspace();
       const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
-      const res = await resolveUploadFetch(form)(`${getBaseUrl()}/files/upload${qs}`, {
+      const transport = opts.onProgress && !isNativeCapacitorUploadRuntime()
+        ? fileUploadProgressFetch(opts.onProgress, file.size) : resolveUploadFetch(form);
+      const res = await fetchWithAuthRefresh(`${getBaseUrl()}/files/upload${qs}`, {
         method: "POST",
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: form,
-      });
+        signal: opts.signal,
+      }, getBaseUrl(), transport);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `文件上传失败: ${res.status}`);
+        throw createHttpRequestError(res, err, `文件上传失败: ${res.status}`);
       }
       const payload = await res.json();
       registerAttachmentAccessResponse(payload);

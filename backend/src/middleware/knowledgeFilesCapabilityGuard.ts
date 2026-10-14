@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 
 import { getDb } from "../db/schema.js";
+import { fileExplorerFilters } from "../services/file-explorer-filters.js";
 import { createUserAttachmentAccessUrls } from "../lib/attachment-signed-url.js";
 import {
   hasKnowledgeCapability,
@@ -316,6 +317,9 @@ function visibleFileList(c: Context, userId: string) {
   const pageSize = normalizePositiveInteger(c.req.query("pageSize"), 50, 200);
   const whereParts: string[] = [];
   const params: Array<string | number> = [];
+  const explorer = fileExplorerFilters(c.req.query("fileKind"), c.req.query("createdAfter"));
+  whereParts.push(...explorer.conditions);
+  params.push(...explorer.params);
 
   if (scope.scope === "workspace") {
     whereParts.push("a.workspaceId = ?");
@@ -385,7 +389,7 @@ function visibleFileList(c: Context, userId: string) {
     ORDER BY ${resolveOrderBy(c.req.query("sort") || "created_desc")}
   `).all(...params) as FileListDbRow[];
 
-  const accessCache = new Map<string, { canView: boolean; canDownload: boolean }>();
+  const accessCache = new Map<string, { canView: boolean; canDownload: boolean; canWrite: boolean }>();
   const permissions = (row: FileListDbRow) => {
     const cached = accessCache.get(row.id);
     if (cached) return cached;
@@ -393,6 +397,7 @@ function visibleFileList(c: Context, userId: string) {
     const resolved = {
       canView: access.canView,
       canDownload: access.canDownload,
+      canWrite: row.userId === userId && access.canWrite,
     };
     accessCache.set(row.id, resolved);
     return resolved;
@@ -403,6 +408,7 @@ function visibleFileList(c: Context, userId: string) {
   const pageRows = visibleRows.slice(start, start + pageSize);
   const items = pageRows.map((row) => {
     const output = toFileOut(row);
+    output.canManage = permissions(row).canWrite;
     if (permissions(row).canDownload) return { ...output, downloadAllowed: true };
     delete output.url;
     delete output.thumbnailUrl;

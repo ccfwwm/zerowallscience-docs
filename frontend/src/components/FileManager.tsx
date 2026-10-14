@@ -247,7 +247,7 @@ function invalidateFileListCache(): void {
 
 
 
-export default function FileManager() {
+export function FileManagerAdvanced() {
   const { t } = useTranslation();
   const { state } = useApp();
   const actions = useAppActions();
@@ -2320,4 +2320,9 @@ function ListView({
       </table>
     </div>
   );
+}
+
+const FileExplorer = React.lazy(() => import("./fileExplorer/FileExplorer"));
+export default function FileManager() {
+  return <React.Suspense fallback={<div className="p-6 text-tx-secondary"><Loader2 className="animate-spin" /></div>}><FileExplorer /></React.Suspense>;
 }

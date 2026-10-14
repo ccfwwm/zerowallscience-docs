@@ -146,6 +146,24 @@ export function installMobileLocalAttachmentFolderBridge(
     return { success:true };
   };
 
+  target.attachmentFolders.move = async (id: string, parentId: string | null) => {
+    const folder = await readFolder(id);
+    await db.transaction(async (tx) => {
+      const seen = new Set([id]);
+      let ancestor = parentId;
+      while (ancestor) {
+        if (seen.has(ancestor)) throw Object.assign(new Error("不能移动到自身或子文件夹"), { code: "FOLDER_CYCLE" });
+        seen.add(ancestor);
+        const parent = (await tx.query<AttachmentFolder>("SELECT * FROM mobile_local_attachment_folders WHERE id=? AND userId=? LIMIT 1", [ancestor,userId]))[0];
+        if (!parent) throw new Error("目标文件夹不存在");
+        ancestor = parent.parentId;
+      }
+      await assertUniqueName(folder.name, parentId, id);
+      await tx.run("UPDATE mobile_local_attachment_folders SET parentId=?,updatedAt=? WHERE id=? AND userId=?", [parentId,now(),id,userId]);
+    });
+    return { id, name: folder.name, parentId };
+  };
+
   const folderMap = async (): Promise<Map<string,AttachmentFolder>> => {
     const { folders } = await listFolders();
     return new Map<string,AttachmentFolder>(
