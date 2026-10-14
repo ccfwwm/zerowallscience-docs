@@ -6,7 +6,7 @@ import {
   Search, X as XIcon, GripVertical,
   CheckSquare, Trash2, Square,
   LayoutGrid, LayoutList, Calendar as CalendarIcon, BarChart3, FolderOpen, Plus, ChevronRight, Bell, Maximize2, Minimize2,
-  Archive, MoreHorizontal, FileText, ClipboardPlus, Sun, CalendarClock,
+  Archive, MoreHorizontal, FileText, ClipboardPlus, Sun, CalendarClock, Download,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { api } from "@/lib/api";
@@ -52,6 +52,8 @@ import { TaskInboxPanel } from "./tasks/TaskInboxPanel";
 import { MyDayPanel } from "./tasks/MyDayPanel";
 import { TaskTimePlanner } from "./tasks/TaskTimePlanner";
 import { openTaskQuickCapture } from "@/lib/taskInboxApi";
+import { openTaskDataTransfer } from "@/lib/taskDataTransferBridge";
+import { exportTaskReport } from "@/lib/taskReportExport";
 import { consumePendingTaskNotificationTaskId } from "@/lib/taskNotifications";
 import { TASK_NOTIFICATION_OPEN_EVENT } from "@/lib/taskNotificationSchedule";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
@@ -873,6 +875,12 @@ export default function TaskCenter() {
     if (!task) return;
     if (action === "open") { setSelectedTaskId(task.id); return; }
     if (action === "save-note") { setContextNoteTask(task); return; }
+    if (action === "export:xlsx" || action === "export:md") {
+      const format = action === "export:xlsx" ? "xlsx" : "md";
+      void exportTaskReport(format, key => t(key), task.id)
+        .catch(error => toast.error(error instanceof Error ? error.message : t("tasks.report.exportFailed")));
+      return;
+    }
     if (action === "delete") {
       if (getDescendantIds(task.id, tasks).length === 1 && !window.confirm(t("tasks.contextMenu.confirmDelete", { title: task.title }))) return;
       void handleDelete(task.id); return;
@@ -1163,6 +1171,7 @@ export default function TaskCenter() {
             <>
               {/* Mobile project trigger */}
               <button type="button" onClick={() => setShowTaskComposer(true)} className="flex shrink-0 items-center gap-1 rounded-full bg-accent-primary/10 px-3 py-1.5 text-xs text-accent-primary"><Sparkles size={14} />{t("taskComposer.entry")}</button>
+              <button type="button" onClick={openTaskDataTransfer} className="flex shrink-0 items-center gap-1 rounded-full bg-app-hover/50 px-3 py-1.5 text-xs text-tx-secondary"><Download size={14} />{t("tasks.report.open")}</button>
               <MobileProjectTrigger
                 selectedProjectId={selectedProjectId}
                 projects={projects}
@@ -1242,6 +1251,7 @@ export default function TaskCenter() {
                     {t("tasks.quickCaptureToInbox", { defaultValue: "快速捕获" })}
                   </button>
                   <button type="button" onClick={() => setShowTaskComposer(true)} className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border border-app-border px-3 py-1.5 text-xs text-accent-primary hover:bg-app-hover"><Sparkles size={14} />{t("taskComposer.entry")}</button>
+                  <button type="button" onClick={openTaskDataTransfer} className="inline-flex items-center gap-1.5 rounded-lg border border-app-border px-3 py-1.5 text-xs text-tx-secondary hover:bg-app-hover"><Download size={14} />{t("tasks.report.open")}</button>
                   <label className="flex items-center gap-1.5 rounded-lg border border-app-border bg-app-bg px-2 py-1 text-xs text-tx-secondary">
                     <span className="text-tx-tertiary">{t("tasks.view", { defaultValue: "视图" })}</span>
                     <select

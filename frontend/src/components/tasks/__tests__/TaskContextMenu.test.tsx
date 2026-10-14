@@ -77,6 +77,15 @@ it("does not offer a child-only archive operation", async () => {
   expect(button("tasks.lifecycle.archive")).toBeUndefined();
 });
 
+it.each(["xlsx", "md"])("offers %s export for tasks, subtasks and archived subtasks", async format => {
+  const label = format === "xlsx" ? "tasks.report.exportExcel" : "tasks.report.exportMarkdown";
+  for (const task of [baseTask, { ...baseTask, parentId: "parent" }, { ...baseTask, parentId: "parent", archivedAt: "archived", isCompleted: 1 }]) {
+    await open(task);
+    await choose(label);
+    expect(action).toHaveBeenLastCalledWith(`export:${format}`);
+  }
+});
+
 it("opens the priority submenu and does not resubmit the existing priority", async () => {
   await open();
   await act(async () => button("tasks.priority").click());

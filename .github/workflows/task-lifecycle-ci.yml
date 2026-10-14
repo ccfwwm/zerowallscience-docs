@@ -17,6 +17,10 @@ on:
       - "backend/tests/task-time-planning.test.ts"
       - "frontend/src/components/tasks/**"
       - "frontend/src/components/TaskCenterImpl.tsx"
+      - "frontend/src/components/TaskDataTransferBridgeV2.tsx"
+      - "frontend/src/lib/taskReportExport.ts"
+      - "frontend/src/lib/sheetXlsx.ts"
+      - "frontend/src/lib/__tests__/taskReportExport.test.ts"
       - "frontend/src/components/ContextMenu.tsx"
       - "frontend/src/components/__tests__/TaskCenterQuickAddIntegration.test.tsx"
       - "frontend/src/components/tasks/TaskSaveNoteDialog.tsx"
@@ -39,6 +43,10 @@ on:
       - "backend/tests/task-time-planning.test.ts"
       - "frontend/src/components/tasks/**"
       - "frontend/src/components/TaskCenterImpl.tsx"
+      - "frontend/src/components/TaskDataTransferBridgeV2.tsx"
+      - "frontend/src/lib/taskReportExport.ts"
+      - "frontend/src/lib/sheetXlsx.ts"
+      - "frontend/src/lib/__tests__/taskReportExport.test.ts"
       - "frontend/src/components/ContextMenu.tsx"
       - "frontend/src/components/__tests__/TaskCenterQuickAddIntegration.test.tsx"
       - "frontend/src/components/tasks/TaskSaveNoteDialog.tsx"
@@ -85,4 +93,4 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
       - name: Task note and offline integration tests
-        run: npm run test:run -- src/components/tasks/__tests__/TaskSaveNoteDialog.test.tsx src/lib/__tests__/taskOfflineApi.test.ts src/components/tasks/__tests__/TaskContextMenu.test.tsx src/components/__tests__/TaskCenterQuickAddIntegration.test.tsx src/components/__tests__/ContextMenu.viewport.test.tsx
+        run: npm run test:run -- src/components/tasks/__tests__/TaskSaveNoteDialog.test.tsx src/lib/__tests__/taskOfflineApi.test.ts src/components/tasks/__tests__/TaskContextMenu.test.tsx src/components/__tests__/TaskCenterQuickAddIntegration.test.tsx src/components/__tests__/ContextMenu.viewport.test.tsx src/lib/__tests__/taskReportExport.test.ts src/lib/__tests__/sheetXlsx.test.ts

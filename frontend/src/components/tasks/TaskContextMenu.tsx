@@ -1,5 +1,5 @@
 import React, { useEffect } from "react";
-import { Archive, ArchiveRestore, CheckCircle2, Circle, FileText, Flag, FolderInput, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, CheckCircle2, Circle, FileText, FileSpreadsheet, Flag, FolderInput, Plus, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import ContextMenu, { type ContextMenuItem } from "@/components/ContextMenu";
 import type { ContextMenuState } from "@/hooks/useContextMenu";
@@ -40,6 +40,8 @@ export default function TaskContextMenu({ menu, menuRef, task, projects, canArch
   }
   items.push(
     { id: "save-note", label: t("tasks.lifecycle.saveNote"), icon: <FileText size={14} /> },
+    { id: "export:xlsx", label: t("tasks.report.exportExcel"), icon: <FileSpreadsheet size={14} /> },
+    { id: "export:md", label: t("tasks.report.exportMarkdown"), icon: <FileText size={14} /> },
   );
   if (!task.parentId) items.push({
     id: task.archivedAt ? "restore" : "archive",

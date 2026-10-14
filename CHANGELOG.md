@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **tasks**：任务中心新增导出入口，支持 Excel `.xlsx` 和 Markdown 报告，保留当前空间任务的状态、描述、层级和递归进度（#836）；任务及子任务右键菜单支持仅导出所选子树，包含已完成与已归档任务，超长 Excel 单元格明确提示改用 Markdown，避免静默截断。Export a space or selected task subtree with status, descriptions, hierarchy and recursive progress to Excel or Markdown, including completed and archived tasks, with explicit handling of Excel cell limits.
+
 - **editor**：修复网页图文粘贴时 `srcset`、协议相对地址和懒加载图片地址在清洗前丢失的问题；恢复的图片进入远程本地化流程，本地附件地址保持稳定，并保留 Word/WPS 的 RTF 图片占位。无法恢复的图片提示改为“未能粘贴”，不再断言原网页未加载完成。Recover webpage image sources before sanitization and remote localization, preserve local attachment URLs and Word/WPS RTF placeholders, and report unavailable images without assuming the source page was still loading.
 
 - **tasks**：新增按设备时区统计的今日完成清单、已完成任务树的归档与恢复，以及将最新任务详情和独立附件保存为笔记；补齐离线队列、Native 原子写入、同步字段和任务备份兼容回归。Add a local-day completion list, reversible completed-task-tree archiving, and independent note snapshots of task drafts and attachments, with offline, Native transaction, sync and backup regressions.

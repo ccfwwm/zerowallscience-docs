@@ -7,6 +7,7 @@ import http from "node:http";
 import { createRequire } from "node:module";
 import { spawn, type ChildProcess } from "node:child_process";
 import { pathToFileURL } from "node:url";
+import JSZip from "jszip";
 
 const root = path.resolve("..");
 const electron = createRequire(import.meta.url)("electron") as string;
@@ -40,6 +41,94 @@ const test = base.extend<{ product: { server: string; provider: string; director
 });
 
 for (const locale of ["zh-CN", "en"] as const) {
+  test(`task reports download full descriptions and progress on desktop and mobile (${locale})`, async ({ page, product }) => {
+    const chinese = locale === "zh-CN";
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const registered = await page.request.post(`${product.server}/api/auth/register`, { data: { username: "report_export", password: "report-export-test-password" } });
+    expect(registered.ok()).toBe(true);
+    const account = await registered.json();
+    const headers = { Authorization: `Bearer ${account.token}` };
+    const description = "完整任务描述 🚀\n\n**Review details** & <text>\n- first step\n- second step";
+    const create = async (data: Record<string, unknown>) => {
+      const response = await page.request.post(`${product.server}/api/tasks`, { headers, data });
+      expect(response.ok()).toBe(true); return response.json();
+    };
+    const parent = await create({ title: "Report parent 🚀", description, status: "doing" });
+    const child = await create({ title: "Completed child", parentId: parent.id });
+    expect((await page.request.patch(`${product.server}/api/tasks/${child.id}/toggle`, { headers })).ok()).toBe(true);
+    await create({ title: "Pending child", parentId: parent.id });
+    const archived = await create({ title: "Archived report fixture" });
+    expect((await page.request.patch(`${product.server}/api/tasks/${archived.id}/toggle`, { headers })).ok()).toBe(true);
+    expect((await page.request.patch(`${product.server}/api/tasks/${archived.id}/archive`, { headers, data: { archived: true } })).ok()).toBe(true);
+    const before = await (await page.request.get(`${product.server}/api/tasks?filter=history`, { headers })).json();
+    await page.goto(product.server);
+    await page.evaluate(language => { localStorage.setItem("i18nextLng", language); localStorage.setItem("nowen-seen-version", "1.5.1"); }, locale);
+    await page.reload();
+    await page.getByPlaceholder("admin", { exact: true }).fill("report_export");
+    await page.locator("input[type=password]").fill("report-export-test-password");
+    await page.locator("button[type=submit]").click();
+    await expect(page.getByRole("textbox", { name: chinese ? "笔记标题" : "Note Title", exact: true })).toHaveValue("欢迎使用 Nowen Note");
+    await page.getByRole("button", { name: chinese ? "待办事项" : "Tasks", exact: true }).click();
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 960 });
+      await page.getByRole("button", { name: chinese ? "导出任务" : "Export tasks", exact: true }).filter({ visible: true }).click();
+      const dialog = page.getByRole("dialog", { name: "待办数据导入导出", exact: true });
+      await expect(dialog).toBeVisible();
+      expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+      await dialog.screenshot({ path: test.info().outputPath(`task-export-${locale}-${width}.png`), animations: "disabled" });
+      for (const format of ["xlsx", "md"]) {
+        const downloadPromise = page.waitForEvent("download");
+        await dialog.getByRole("button", { name: new RegExp(format === "xlsx" ? "Excel .*xlsx" : "Markdown .*md") }).click();
+        const download = await downloadPromise;
+        expect(download.suggestedFilename()).toMatch(new RegExp(`\\.${format}$`));
+        const bytes = fs.readFileSync((await download.path())!);
+        if (format === "md") {
+          expect(bytes.toString()).toContain("- [x] **Completed child**");
+          expect(bytes.toString()).toContain("50%");
+          expect(bytes.toString()).toContain("**Review details** & <text>");
+          expect(bytes.toString()).toContain("Archived report fixture");
+        } else {
+          const zip = await JSZip.loadAsync(bytes);
+          const xml = await zip.file("xl/worksheets/sheet1.xml")!.async("string");
+          expect(xml).toContain("Report parent 🚀");
+          expect(xml).toContain("<v>50</v>");
+          expect(xml).toContain("**Review details** &amp; &lt;text&gt;");
+          expect(xml).toContain("Archived report fixture");
+        }
+      }
+      await dialog.getByRole("button", { name: "关闭", exact: true }).click();
+      const parentRow = page.locator(`[data-task-context-id="${parent.id}"]`).first();
+      for (const selected of [parent, child]) {
+        if (selected.id === child.id && await parentRow.getByTitle(chinese ? "展开" : "Expand", { exact: true }).count()) {
+          await parentRow.getByTitle(chinese ? "展开" : "Expand", { exact: true }).click();
+        }
+        for (const format of ["xlsx", "md"]) {
+          const row = page.locator(`[data-task-context-id="${selected.id}"]`).first();
+          if (width === 390) await row.getByRole("button", { name: chinese ? "任务操作" : "Task actions", exact: true }).click();
+          else await row.click({ button: "right", position: { x: 12, y: 12 } });
+          const menu = page.locator("[data-context-menu-id]").filter({ hasText: selected.title }).first();
+          await expect(menu).toBeVisible();
+          const downloadPromise = page.waitForEvent("download");
+          await menu.getByRole("button", { name: chinese ? format === "xlsx" ? "导出 Excel" : "导出 Markdown" : format === "xlsx" ? "Export Excel" : "Export Markdown", exact: true }).click();
+          const download = await downloadPromise;
+          expect(download.suggestedFilename()).toContain(`nowen-task-${selected.id}-`);
+          const bytes = fs.readFileSync((await download.path())!);
+          const content = format === "md" ? bytes.toString() : await (await JSZip.loadAsync(bytes)).file("xl/worksheets/sheet1.xml")!.async("string");
+          expect(content).toContain(selected.title);
+          expect(content).not.toContain("Archived report fixture");
+          if (selected.id === parent.id) {
+            expect(content).toContain("Completed child");
+            expect(content).toContain("Pending child");
+          } else {
+            expect(content).not.toContain("Report parent 🚀");
+            expect(content).not.toContain("Pending child");
+          }
+        }
+      }
+    }
+    expect(await (await page.request.get(`${product.server}/api/tasks?filter=history`, { headers })).json()).toEqual(before);
+  });
+
   test(`task header stays horizontal as the content area narrows (${locale})`, async ({ page, product }) => {
     const chinese = locale === "zh-CN";
     await page.setViewportSize({ width: 1440, height: 960 });

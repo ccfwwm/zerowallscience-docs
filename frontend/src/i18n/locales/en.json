@@ -1632,6 +1632,38 @@
     }
   },
   "tasks": {
+    "report": {
+      "exportExcel": "Export Excel",
+      "exportMarkdown": "Export Markdown",
+      "subtreeScope": "Export only the selected task and its descendants, with status, progress, hierarchy and descriptions. Images remain references.",
+      "taskUnavailable": "This task was deleted or is unavailable. Refresh and try again.",
+      "exportFailed": "Task export failed. Please try again.",
+      "open": "Export tasks",
+      "title": "Task report",
+      "xlsx": "Excel workbook (.xlsx)",
+      "md": "Markdown report (.md)",
+      "scope": "Export all tasks in the current space, including completed and archived tasks, with status, progress, hierarchy and descriptions. Images remain references.",
+      "transferHint": "Use Excel / Markdown for task reports, ZIP for a full backup with images, and JSON / CSV for migration.",
+      "excelCellLimit": "Task text exceeds Excel’s 32767-character cell limit. Export as Markdown to preserve the full text.",
+      "fields": {
+        "id": "Task ID",
+        "parentId": "Parent task ID",
+        "path": "Task path",
+        "project": "Project",
+        "title": "Task title",
+        "status": "Status",
+        "progress": "Progress (%)",
+        "completedChildren": "Completed direct subtasks",
+        "totalChildren": "Total direct subtasks",
+        "description": "Description",
+        "priority": "Priority",
+        "startDate": "Start date",
+        "dueDate": "Due date",
+        "dueAt": "Due time",
+        "completedAt": "Completed at",
+        "archivedAt": "Archived at"
+      }
+    },
     "contextMenu": {
       "actions": "Task actions",
       "open": "View details",

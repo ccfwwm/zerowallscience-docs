@@ -1639,6 +1639,38 @@
     }
   },
   "tasks": {
+    "report": {
+      "exportExcel": "导出 Excel",
+      "exportMarkdown": "导出 Markdown",
+      "subtreeScope": "仅导出所选任务及其下级子任务，保留状态、进度、层级和描述。图片仅保留引用。",
+      "taskUnavailable": "该任务已删除或无法访问，请刷新后重试。",
+      "exportFailed": "任务导出失败，请重试。",
+      "open": "导出任务",
+      "title": "任务报告",
+      "xlsx": "Excel 工作簿 (.xlsx)",
+      "md": "Markdown 报告 (.md)",
+      "scope": "导出当前空间全部任务（含已完成、已归档），保留状态、进度、层级和描述。图片仅保留引用。",
+      "transferHint": "Excel / Markdown 用于任务汇报；ZIP 完整备份包含图片；JSON / CSV 用于数据迁移。",
+      "excelCellLimit": "任务文本超过 Excel 单元格的 32767 字符限制，请使用 Markdown 导出以保留全文。",
+      "fields": {
+        "id": "任务 ID",
+        "parentId": "父任务 ID",
+        "path": "任务路径",
+        "project": "项目",
+        "title": "任务标题",
+        "status": "状态",
+        "progress": "进度 (%)",
+        "completedChildren": "已完成直属子任务",
+        "totalChildren": "直属子任务总数",
+        "description": "任务描述",
+        "priority": "优先级",
+        "startDate": "开始日期",
+        "dueDate": "截止日期",
+        "dueAt": "截止时间",
+        "completedAt": "完成时间",
+        "archivedAt": "归档时间"
+      }
+    },
     "contextMenu": {
       "actions": "任务操作",
       "open": "查看详情",

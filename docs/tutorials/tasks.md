@@ -8,6 +8,20 @@
 
 点击左侧导航栏的 ✅「待办」图标。
 
+## 导出任务报告
+
+点击任务中心的「导出任务」，选择 **Excel 工作簿 (.xlsx)** 或 **Markdown 报告 (.md)**。也可从「设置 → 数据管理 → 待办数据导入导出」进入。
+
+报告包含当前空间全部任务（包括已完成和已归档任务）的标题、状态、项目、父子层级、进度、描述、优先级和日期。进度与任务树一致：叶子任务为 0% 或 100%，父任务为直属子任务进度的平均值。Excel 还包含任务 ID、父任务 ID 和完整路径；Markdown 使用有层级的勾选清单，并保留描述中的 Markdown 格式。
+
+只导出单个任务时，在任务或子任务上右键，选择「导出 Excel」或「导出 Markdown」；移动端点击该任务的「更多操作」。报告仅包含所选任务和它的全部下级子任务（包括折叠、已完成和已归档的子任务），不会包含它的父任务、兄弟任务或其他项目。选择没有下级的任务时，只导出这一条。
+
+导出期间不会修改任务。图片保留原引用，需要包含图片文件的完整迁移请使用 ZIP。Excel 单元格超过 32767 字符时会提示使用 Markdown，避免截断；Excel / Markdown 报告不用于重新导入，恢复和批量迁移仍使用 ZIP / JSON / CSV。Android 客户端使用系统文件保存选择器；移动浏览器复用文件分享或下载入口。
+
+**English:** Choose **Export tasks** in the task center, then **Excel workbook (.xlsx)** or **Markdown report (.md)**. Reports include all tasks in the current space, including completed and archived tasks, with status, hierarchy, project, progress, full descriptions, priority and dates. Leaf progress is 0% or 100%; parent progress averages its direct children's progress, matching the task tree. Excel includes task IDs and paths; Markdown preserves nested checkboxes and description formatting. Reports do not modify tasks. Images remain references; use ZIP for image files and ZIP / JSON / CSV for re-import. Text exceeding Excel's 32767-character cell limit requires Markdown to retain the full content. Android uses the system file picker; mobile browsers use the existing file-sharing or download path.
+
+For a single task or subtask, right-click it (or use its mobile **Task actions** button), then choose **Export Excel** or **Export Markdown**. Only that task and its complete subtree are included, even when descendants are collapsed, completed or archived. Ancestors, siblings and other projects are excluded. A leaf task produces a one-task report.
+
 ---
 
 ## 创建任务

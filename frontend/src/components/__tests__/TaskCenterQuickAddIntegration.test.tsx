@@ -41,6 +41,9 @@ const i18nMocks = vi.hoisted(() => ({
     t: (key: string) => key,
 }));
 
+const reportExport = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+vi.mock("@/lib/taskReportExport", () => ({ exportTaskReport: reportExport }));
+
 vi.mock("react-i18next", () => ({
     useTranslation: () => ({ t: i18nMocks.t, i18n: { language: "zh-CN" } }),
 }));
@@ -720,6 +723,17 @@ describe("TaskCenter quick-add integration", () => {
         await chooseTaskAction("tasks.high");
         expect(apiMocks.updateTask).toHaveBeenCalledOnce();
         expect(apiMocks.updateTask).toHaveBeenCalledWith("task-1", { priority: 3 });
+    });
+
+    it.each(["xlsx", "md"])("exports the clicked subtask as %s without exporting its parent", async format => {
+        apiMocks.getTasks.mockResolvedValue([makeTask({ id: "parent" }), makeTask({ id: "child", parentId: "parent" })]);
+        await renderTaskCenter(root);
+        const expand = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(button => button.title === "tasks.expand");
+        await act(async () => { expand?.click(); await flush(); });
+        await openTaskMenu("child");
+        await chooseTaskAction(format === "xlsx" ? "tasks.report.exportExcel" : "tasks.report.exportMarkdown");
+        expect(reportExport).toHaveBeenLastCalledWith(format, expect.any(Function), "child");
+        expect(host.querySelector("[role=menu]")).toBeNull();
     });
 
     it("archived task menu restores the task tree and omits editing actions", async () => {

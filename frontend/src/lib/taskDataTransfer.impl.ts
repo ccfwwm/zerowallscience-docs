@@ -1036,7 +1036,7 @@ export async function saveTaskTransferFile(content: string, filename: string, mi
   }
 }
 
-export function taskBackupFilename(extension: "json" | "csv", date = new Date()): string {
+export function taskBackupFilename(extension: "json" | "csv" | "xlsx" | "md", date = new Date()): string {
   const stamp = [
     date.getFullYear(),
     String(date.getMonth() + 1).padStart(2, "0"),
