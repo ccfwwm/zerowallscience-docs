@@ -407,7 +407,7 @@ export interface FileStats {
 
 export type TaskPriority = 1 | 2 | 3; // 1=低, 2=中, 3=高
 
-export type TaskFilter = "all" | "today" | "week" | "overdue" | "completed";
+export type TaskFilter = "all" | "today" | "week" | "overdue" | "completed" | "completed-today" | "archived" | "history";
 
 export interface Task {
   id: string;
@@ -418,6 +418,7 @@ export interface Task {
   description: string;
   isCompleted: number;
   completedAt?: string | null;
+  archivedAt?: string | null;
   priority: TaskPriority;
   dueDate: string | null;
   /** Phase 2: 精确到分钟的截止时间，ISO 8601 格式（如 2026-06-12T18:00）。兼容旧 dueDate */
@@ -426,6 +427,7 @@ export interface Task {
   startDate?: string | null;
   noteId: string | null;
   parentId: string | null;
+  parentTitle?: string | null;
   sortOrder: number;
   projectId: string | null;
   status: TaskStatus;
@@ -449,6 +451,8 @@ export interface Task {
 }
 
 export interface TaskStats {
+  completedToday?: number;
+  archived?: number;
   total: number;
   completed: number;
   pending: number;

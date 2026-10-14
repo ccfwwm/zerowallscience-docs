@@ -27,7 +27,7 @@
 - 幂等性按用户、空间、requestId 与 previewId 隔离，并绑定最终内容的 SHA-256。相同批次重试返回原 ID；同 ID 不同内容返回 409；不同请求 ID 的相同未完成任务在事务内再次去重。疑似重复需要每项明确 `allowDuplicate`。
 - 客户端保存按服务器/账号/空间隔离的 session 草稿。响应不确定时冻结最终 payload，重试相同 ID；确认成功后才刷新列表、统计和提醒状态。失败不显示全部成功；创建成功但本机缓存失败单独提示。
 - 日期仅接受有效日历键；精确时间采用现有 `YYYY-MM-DDTHH:mm` 本地时间语义，拒绝 Z/offset 与矛盾日期。当前日期、明天、后天和下周一按用户 IANA 时区构造。DST 缺失时间拒绝，重复时间提示人工确认。
-- Native schema 7→8 在迁移事务中添加重复字段，不清理队列；已确认任务 `INSERT OR IGNORE`，重试不覆盖本机编辑。服务器项目使用现有 Native 项目表。重复任务完成/撤销在线复用普通任务 API，并缓存下一次任务；有未同步本机编辑或离线时拒绝修改并提示。普通 Native 离线任务仍走原路径。
+- Native schema 7/8→9 在迁移事务中添加重复字段，不清理队列；已确认任务 `INSERT OR IGNORE`，重试不覆盖本机编辑。服务器项目使用现有 Native 项目表。重复任务完成/撤销在线复用普通任务 API，并缓存下一次任务；有未同步本机编辑或离线时拒绝修改并提示。普通 Native 离线任务仍走原路径。
 - 不新增大型依赖、私人笔记上下文或离线写入队列。P1/P2（笔记提取、已有任务规划、My Day 写入、自动规划）未实现。
 
 ## 实际验证
@@ -78,13 +78,15 @@ npx playwright test --config playwright.task-composer.config.ts
 
 新端兼容旧 payload 缺失的可选字段；旧客户端自身不能展示其不认识的重复字段，需升级。Native 重复任务完成需要在线及已同步状态，明确失败时保留任务。新迁移只增加幂等表与 Native 重复字段，不删除用户数据。
 
-回滚功能时应先移除助手入口/新增端点，保留 schema 124 / Native schema 8 的兼容迁移和已有任务，不能直接删任务、台账或 Outbox。回退不认识新 schema 的旧二进制前，需按既有备份流程做快照并验证恢复方案；本任务未执行生产降级/恢复。
+回滚功能时应先移除助手入口/新增端点，保留 schema 125 / Native schema 9 的兼容迁移和已有任务，不能直接删任务、台账或 Outbox。回退不认识新 schema 的旧二进制前，需按既有备份流程做快照并验证恢复方案；本任务未执行生产降级/恢复。
 
-PR 保留 Draft，等待上述未完成平台验收与既有 DCC 超时问题确认；不自动合并。
+2026-10-14：用户要求解决冲突后合入 `release/v1.5.2`。集成时保留任务归档迁移 124，将 Composer 迁移调整为 125，Native schema 调整为 9，补齐归档与重复字段的组合升级和同步回归。此合并授权不代表上述未完成平台验收或发布门禁已经通过。
+
+本次集成验证：后端 30 文件 / 218 项、前端 40 文件 / 361 项回归通过，DCC 12 个不变量 / 125 个测试引用校验通过。下方原 P0 验证记录仍保留其平台和验收边界。
 
 ## English delivery boundary
 
-P0 implements natural-language task drafts, editable selection, validated atomic confirmation, durable idempotency, scoped duplicate checks, local-calendar validation and the existing task event/sync paths. Native confirmed-task/project caching preserves pending edits; recurrence completion uses the canonical online endpoint. Tests use isolated data and a deterministic AI provider. Browser and Windows Electron renderer checks are development evidence, not packaged-device or production acceptance. The existing note-deletion test also times out on the untouched target baseline, so the PR remains a draft and full backend DCC success is not claimed.
+P0 implements natural-language task drafts, editable selection, validated atomic confirmation, durable idempotency, scoped duplicate checks, local-calendar validation and the existing task event/sync paths. Native confirmed-task/project caching preserves pending edits; recurrence completion uses the canonical online endpoint. Tests use isolated data and a deterministic AI provider. Browser and Windows Electron renderer checks are development evidence, not packaged-device or production acceptance. The existing note-deletion test also times out on the untouched target baseline, so full backend DCC success is not claimed. On 2026-10-14 the user authorized conflict resolution and integration into release/v1.5.2; this does not waive the outstanding platform and release acceptance boundaries.
 
 ## 修改文件
 

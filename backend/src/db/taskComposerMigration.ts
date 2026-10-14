@@ -2,7 +2,7 @@ import type { Migration } from "./migrations.impl.js";
 import { installSyncPersonalEntitiesTriggers } from "./syncPersonalEntitiesMigration.js";
 
 export const taskComposerMigration: Migration = {
-  version: 124,
+  version: 125,
   name: "task-composer-idempotency",
   up: db => {
     db.exec(`CREATE TABLE IF NOT EXISTS task_composer_batches (

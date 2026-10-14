@@ -92,6 +92,7 @@ export const TaskTreeRow = React.forwardRef<HTMLDivElement, {
 
         {/* Checkbox */}
         <button
+          disabled={!!task.archivedAt}
           onClick={(e) => { e.stopPropagation(); onToggle(task.id); }}
           className="flex-shrink-0 mt-0.5 transition-transform hover:scale-110"
         >
@@ -147,6 +148,7 @@ export const TaskTreeRow = React.forwardRef<HTMLDivElement, {
         <div className="flex items-center gap-2 flex-shrink-0 mt-0.5">
           {/* Action buttons (visible on hover) */}
           <button
+            disabled={!!task.archivedAt}
             onClick={(e) => {
               e.stopPropagation();
               setShowSubtaskInput(true);

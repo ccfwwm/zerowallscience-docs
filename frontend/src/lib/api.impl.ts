@@ -1869,6 +1869,7 @@ export const api = {
   getTasks: (filter?: TaskFilter, noteId?: string, projectId?: string) => {
     const params = new URLSearchParams();
     if (filter && filter !== "all") params.set("filter", filter);
+    params.set("timezone", Intl.DateTimeFormat().resolvedOptions().timeZone);
     if (noteId) params.set("noteId", noteId);
     if (projectId) params.set("projectId", projectId);
     const ws = getCurrentWorkspace();
@@ -1876,6 +1877,8 @@ export const api = {
     const qs = params.toString() ? `?${params.toString()}` : "";
     return request<Task[]>(`/tasks${qs}`);
   },
+  archiveTask: (id: string, archived = true) => request<{ success: boolean; affected: number }>(`/tasks/${id}/archive`, { method: "PATCH", body: JSON.stringify({ archived }) }),
+  saveTaskAsNote: (id: string, data: { requestId: string; notebookId: string; title: string; description: string }) => request<Note>(`/tasks/${id}/note`, { method: "POST", body: JSON.stringify(data) }),
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
   createTask: (data: Partial<Task>) => {
     const ws = getCurrentWorkspace();
@@ -2002,7 +2005,8 @@ export const api = {
   getTaskStats: () => {
     const ws = getCurrentWorkspace();
     const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
-    return request<TaskStats>(`/tasks/stats/summary${qs}`);
+    const timezone = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    return request<TaskStats>(`/tasks/stats/summary${qs}${qs ? "&" : "?"}timezone=${timezone}`);
   },
 
   // Habits

@@ -36,6 +36,14 @@
         },
         {
           "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native task archive rolls back data and Outbox together on a child enqueue failure"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native task note snapshots keep the source and atomically persist an idempotent note"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
           "case": "native personal moves and sorting are atomic, survive reopen and push only structural fields"
         },
         {
@@ -69,6 +77,10 @@
       "title": "断网、服务端失败或停止调度不得静默丢弃待同步修改",
       "status": "covered",
       "checks": [
+        {
+          "file": "frontend/src/lib/__tests__/taskOfflineApi.test.ts",
+          "case": "keeps an offline task-tree archive across reinitialization and failed replay"
+        },
         {
           "file": "backend/tests/sync-v2-engine.test.ts",
           "case": "服务端错误时条目保留在 Outbox，重试次数增长但不删除"
@@ -219,6 +231,10 @@
       "title": "Android Native 关闭同步后重启仍保留未发出修改",
       "status": "covered",
       "checks": [
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native task archive survives restart and converges with its details on a second device"
+        },
         {
           "file": "frontend/src/lib/__tests__/mobileSyncSwitch.test.ts",
           "case": "keeps edits queued without network traffic across reinitialization, then uploads them on enable"

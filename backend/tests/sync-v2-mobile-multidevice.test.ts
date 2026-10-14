@@ -3,7 +3,7 @@ import test from "node:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import Database from "better-sqlite3";
 import { Hono } from "hono";
@@ -94,6 +94,82 @@ async function client(name: string): Promise<Client> {
 }
 async function pending(c: Client) { return c.db.query<{ mutationId: string; baseVersion: number; payload: string }>("SELECT mutationId,baseVersion,payload FROM sync_outbox WHERE profileId=? ORDER BY createdAt,rowid", [c.profileId]); }
 async function conflicts(c: Client) { return c.db.query<{ localPayload: string; remotePayload: string }>("SELECT localPayload,remotePayload FROM sync_conflicts WHERE profileId=? AND status='unresolved'", [c.profileId]); }
+
+test("native task archive survives restart and converges with its details on a second device",async () => {
+  const root=randomUUID(),child=randomUUID();
+  for (const [id,parent] of [[root,null],[child,root]]) serverDb.prepare(`INSERT INTO tasks
+    (id,userId,title,description,parentId,isCompleted,status,completedAt,dueAt) VALUES (?,?,'Project','Preserved task details',?,1,'done',?,'2026-10-13T18:00')`)
+    .run(id,USER,parent,new Date().toISOString());
+  const first=await client("task-archive-first");await first.sync();
+  assert.equal((await first.db.query<any>("SELECT * FROM tasks WHERE id=?",[root]))[0].description,"Preserved task details");
+  await first.repository.archiveTaskTree(root,true);
+  const mutationIds=(await pending(first)).map((item) => item.mutationId);
+  assert.equal(mutationIds.length,2);
+  await first.repository.archiveTaskTree(root,false);
+  await first.repository.archiveTaskTree(root,true);
+  assert.deepEqual((await pending(first)).map((item) => item.mutationId),mutationIds);
+  await first.db.close();const reopened=await client("task-archive-first");
+  assert.deepEqual((await pending(reopened)).map((item) => item.mutationId),mutationIds);
+  await reopened.sync();assert.equal((await pending(reopened)).length,0);
+  const second=await client("task-archive-second");await second.sync();
+  for (const id of [root,child]) {
+    const row=(await second.db.query<any>("SELECT * FROM tasks WHERE id=?",[id]))[0];
+    assert.ok(row.archivedAt);assert.equal(row.description,"Preserved task details");assert.equal(row.dueAt,"2026-10-13T18:00");assert.equal(row.status,"done");
+  }
+  await second.repository.archiveTaskTree(root,false);await second.sync();await reopened.sync();
+  assert.equal((await reopened.db.query<any>("SELECT * FROM tasks WHERE id=?",[root]))[0].archivedAt,null);
+  assert.equal((await reopened.db.query<any>("SELECT * FROM tasks WHERE id=?",[child]))[0].archivedAt,null);
+});
+
+test("native task archive rolls back data and Outbox together on a child enqueue failure",async () => {
+  const c=await client("task-archive-rollback"),root=randomUUID(),child=randomUUID();
+  for (const [id,parent] of [[root,null],[child,root]]) await c.db.run(`INSERT INTO tasks
+    (id,userId,title,parentId,isCompleted,status,createdAt,updatedAt) VALUES (?,?,'Completed',?,1,'done','created','before')`,[id,USER,parent]);
+  await c.db.run(`CREATE TRIGGER task_archive_failure BEFORE INSERT ON sync_outbox
+    WHEN NEW.entityType='task' AND NEW.entityId='${child}' BEGIN SELECT RAISE(ABORT,'injected task enqueue failure'); END`);
+  await assert.rejects(c.repository.archiveTaskTree(root,true),/injected task enqueue failure/);
+  assert.equal((await pending(c)).length,0);
+  for (const id of [root,child]) {
+    const row=(await c.db.query<any>("SELECT * FROM tasks WHERE id=?",[id]))[0];assert.equal(row.archivedAt,null);assert.equal(row.updatedAt,"before");
+  }
+});
+
+test("native task note snapshots keep the source and atomically persist an idempotent note",async () => {
+  const c=await client("task-note-snapshot"),task=randomUUID(),notebook=randomUUID(),requestId=randomUUID();
+  const objects=new Map<string,Buffer>();
+  const store={
+    async save(input:any) {
+      const bytes=input.data instanceof Blob ? Buffer.from(await input.data.arrayBuffer()) : Buffer.from(input.data);
+      objects.set(input.attachmentId,bytes);
+      return {attachmentId:input.attachmentId,path:`objects/${input.attachmentId}`,size:bytes.length,sha256:createHash("sha256").update(bytes).digest("hex"),mtime:0,uri:"memory://fixture"};
+    },
+    async read(id:string) { const bytes=objects.get(id);if(!bytes)throw new Error("Missing bytes");return new Blob([bytes]); },
+    async remove(id:string) { objects.delete(id); },
+    async resolveUrl() { return null; },
+  };
+  c.repository=new NativeLocalRepository({db:c.db,attachments:store as never,accountId:"task-note-snapshot",userId:USER,getScopeKey:() => "personal"});
+  await c.repository.notebooks.create({id:notebook,name:"Snapshots"});
+  await c.db.run("INSERT INTO tasks (id,userId,title,description,createdAt,updatedAt) VALUES (?,?,'Task','Source details','created','updated')",[task,USER]);
+  const sourceNote=randomUUID(),sourceAttachment=randomUUID();
+  await c.repository.notes.create({id:sourceNote,notebookId:notebook,title:"Source",contentFormat:"markdown",content:"Source document"});
+  await c.repository.attachments.save({id:sourceAttachment,noteId:sourceNote,filename:"source.txt",mimeType:"text/plain",blob:new Blob(["Independent bytes"])});
+  const draft={requestId,notebookId:notebook,title:"Latest draft",description:`Unsaved task details\n\n[file](/api/attachments/${sourceAttachment})`};
+  const saved=await c.repository.saveTaskNoteSnapshot(task,draft);
+  assert.match(saved.content,/Unsaved task details/);assert.ok(!saved.content.includes(sourceAttachment));assert.equal(saved.title,draft.title);
+  assert.equal((await c.db.query<any>("SELECT * FROM tasks WHERE id=?",[task]))[0].description,"Source details");
+  assert.equal((await c.repository.saveTaskNoteSnapshot(task,draft)).id,saved.id);
+  assert.equal((await c.db.query<any>("SELECT * FROM sync_outbox WHERE entityType='note' AND entityId=?",[saved.id])).length,1);
+  const failingId=randomUUID();
+  const objectCount=objects.size;
+  await c.db.run(`CREATE TRIGGER task_note_failure BEFORE INSERT ON sync_outbox WHEN NEW.entityId='${failingId}' BEGIN SELECT RAISE(ABORT,'injected note enqueue failure'); END`);
+  await assert.rejects(c.repository.saveTaskNoteSnapshot(task,{...draft,requestId:failingId}),/injected note enqueue failure/);
+  assert.equal((await c.db.query("SELECT * FROM notes WHERE id=?",[failingId])).length,0);
+  assert.equal((await c.db.query("SELECT * FROM native_runtime_meta WHERE key=?",[`taskNoteSnapshot:${failingId}`])).length,0);
+  assert.equal(objects.size,objectCount);
+  const attachment=(await c.repository.attachments.listByNote(saved.id))[0];
+  await store.remove(sourceAttachment);
+  assert.equal(await (await store.read(attachment.id)).text(),"Independent bytes");
+});
 
 async function cachePersonalTree(c: Client,includeDeleted=false): Promise<void> {
   const response = await fetch(`${serverUrl}/api/knowledge-tree/?workspaceId=personal${includeDeleted?"&includeDeleted=1":""}`, { headers: { Authorization: `Bearer ${USER}` } });

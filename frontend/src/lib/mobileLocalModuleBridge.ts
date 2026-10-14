@@ -1,3 +1,4 @@
+import { isTaskCompletedToday } from "@/components/tasks/taskLifecycle";
 import type {
   Diary,
   DiaryStats,
@@ -62,6 +63,8 @@ export function installMobileLocalModuleBridge(
   };
   const originals = {
     getTasks: target.getTasks,
+    archiveTask: target.archiveTask,
+    saveTaskAsNote: target.saveTaskAsNote,
     getTask: target.getTask,
     createTask: target.createTask,
     updateTask: target.updateTask,
@@ -135,9 +138,13 @@ export function installMobileLocalModuleBridge(
     const today = dateKey(now());
     const weekEnd = new Date();
     weekEnd.setDate(weekEnd.getDate() + 7);
-    return rows.filter((task) => {
+    const parentTitles = new Map(rows.map((task) => [task.id,task.title]));
+    return rows.map((task) => ({...task,parentTitle:(task.parentId ? parentTitles.get(task.parentId) : null) || null})).filter((task) => {
       if (noteId && task.noteId !== noteId) return false;
       if (projectId && task.projectId !== projectId) return false;
+      if (filter === "archived") return !!task.archivedAt;
+      if (filter === "completed-today") return isTaskCompletedToday(task);
+      if (filter !== "history" && task.archivedAt) return false;
       if (filter === "completed") return task.isCompleted === 1;
       if (filter === "today") return !task.isCompleted && dateKey(task.dueAt || task.dueDate || "") === today;
       if (filter === "overdue") return !task.isCompleted && !!(task.dueAt || task.dueDate) && dateKey(task.dueAt || task.dueDate || "") < today;
@@ -148,19 +155,24 @@ export function installMobileLocalModuleBridge(
       return true;
     });
   };
+  target.archiveTask = (id, archived = true) => repository.archiveTaskTree(id,archived);
+  target.saveTaskAsNote = async (id, data) => repository.saveTaskNoteSnapshot(id,data);
   target.getTask = async (id: string) => {
     const task = await readTask(id);
     if (!task) throw new Error("任务不存在");
     return task;
   };
   target.createTask = async (data: Partial<Task>): Promise<Task> => {
+    if (data.parentId && (await readTask(data.parentId))?.archivedAt) throw new Error("请先恢复已归档任务");
     const createdAt = now();
+    const done = data.status === "done" || !!data.isCompleted;
     const task: Task = {
       id:newLocalId(),userId,workspaceId:null,title:data.title?.trim() || "新任务",
-      description:data.description || "",isCompleted:data.isCompleted ? 1 : 0,completedAt:data.completedAt || null,
+      description:data.description || "",isCompleted:done ? 1 : 0,
+      completedAt:done ? (Object.prototype.hasOwnProperty.call(data,"completedAt") ? data.completedAt || null : createdAt) : null,
       priority:data.priority || 2,dueDate:data.dueDate || null,dueAt:data.dueAt || null,startDate:data.startDate || null,
       noteId:data.noteId || null,parentId:data.parentId || null,sortOrder:data.sortOrder || 0,projectId:data.projectId || null,
-      status:data.status || (data.isCompleted ? "done" : "todo"),createdAt,updatedAt:createdAt,
+      status:data.status || (done ? "done" : "todo"),createdAt,updatedAt:createdAt,
       ...Object.fromEntries(NATIVE_TASK_REPEAT_FIELDS.map((field, index) => [field, nativeTaskRepeatValues(data)[index]])),
     };
     await db.run(`INSERT INTO tasks (
@@ -175,6 +187,8 @@ export function installMobileLocalModuleBridge(
   };
   target.updateTask = async (id: string, patch: Partial<Task>) => {
     const current = await target.getTask(id) as Task;
+    if (current.archivedAt) throw new Error("请先恢复已归档任务");
+    if (patch.parentId && (await readTask(patch.parentId))?.archivedAt) throw new Error("不能移动到已归档任务");
     if (current.repeatRule && current.repeatRule !== "none" && patch.isCompleted !== undefined) {
       const context = getTaskComposerContext();
       if (isMobileLocalMode() || navigator.onLine === false) throw new Error(i18n.t("taskComposer.repeatNeedsOnline"));
@@ -194,6 +208,8 @@ export function installMobileLocalModuleBridge(
     const updatedAt = now();
     const task = { ...current,...patch,id,userId,workspaceId:null,updatedAt };
     if (patch.isCompleted !== undefined && patch.status === undefined) task.status = patch.isCompleted ? "done" : "todo";
+    if (patch.status !== undefined && patch.isCompleted === undefined) task.isCompleted = patch.status === "done" ? 1 : 0;
+    if (patch.isCompleted !== undefined || patch.status !== undefined) task.completedAt = task.isCompleted ? (current.isCompleted ? current.completedAt || now() : now()) : null;
     await db.run(`UPDATE tasks SET title=?,description=?,isCompleted=?,completedAt=?,priority=?,dueDate=?,dueAt=?,startDate=?,
       noteId=?,parentId=?,sortOrder=?,projectId=?,status=?,updatedAt=?,${NATIVE_TASK_REPEAT_FIELDS.map(field => `${field}=?`).join(",")} WHERE scopeKey='personal' AND id=?`, [
       task.title,task.description,task.isCompleted,task.completedAt,task.priority,task.dueDate,task.dueAt,task.startDate,
@@ -227,9 +243,11 @@ export function installMobileLocalModuleBridge(
     return { success:true,affected:ids.length };
   };
   target.getTaskStats = async (): Promise<TaskStats> => {
-    const tasks = await target.getTasks("all") as Task[];
+    const history = await target.getTasks("history") as Task[];
+    const tasks = history.filter((task) => !task.archivedAt);
     const today = dateKey(now());
     return {
+      completedToday:history.filter((task) => isTaskCompletedToday(task)).length,archived:history.filter((task) => task.archivedAt).length,
       total:tasks.length,completed:tasks.filter((item) => item.isCompleted).length,
       pending:tasks.filter((item) => !item.isCompleted).length,
       today:tasks.filter((item) => !item.isCompleted && dateKey(item.dueAt || item.dueDate || "") === today).length,

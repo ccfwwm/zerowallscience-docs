@@ -4,6 +4,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { URL as NodeURL } from "node:url";
 import { openNativeDatabase } from "../nativeDatabase";
+import { NATIVE_TASK_REPEAT_FIELDS, nativeTaskRepeatValues } from "../nativeTaskFields";
 import { cacheConfirmedNativeTasks } from "../nativeTaskComposerCache";
 import type { Task } from "@/types";
 import { installMobileLocalModuleBridge } from "../mobileLocalModuleBridge";
@@ -58,7 +59,7 @@ it("migrates schema 6 queues without losing mutation identity, retries, versions
   const db = await openNativeDatabase("tree-migration-fixture");
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
   expect(fixture.raw.prepare("SELECT * FROM sync_conflicts").all()).toEqual(history);
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version:8});
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 9});
   await db.run(`INSERT INTO sync_outbox(id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,createdAt)
     VALUES ('tree','tree-mutation','p','d','personal','knowledge_tree_node','note:n','upsert','now')`);
   expect(fixture.raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -79,7 +80,7 @@ it("upgrades schema 7 task recurrence and caches confirmed batches without overw
   fixture.raw.exec("PRAGMA user_version=7; INSERT INTO tasks(id,userId,title,createdAt,updatedAt) VALUES ('old','local','Preserved','now','now')");
   const before = fixture.raw.prepare("SELECT * FROM sync_outbox").all();
   const db = await openNativeDatabase("task-composer-fixture");
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 8 });
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 9 });
   expect(fixture.raw.prepare("SELECT title,repeatRule FROM tasks WHERE id='old'").get()).toEqual({ title: "Preserved", repeatRule: "none" });
   const task = { id: "confirmed", workspaceId: null, userId: "remote", title: "Daily study", description: "Practice", priority: 2, isCompleted: 0, dueDate: "2026-12-31", dueAt: "2026-12-31T09:00", repeatRule: "daily", repeatInterval: 1, repeatEndCount: 7, createdAt: "now", updatedAt: "now" } as Task;
   await cacheConfirmedNativeTasks(db, "local", [task], [{ id: "remote-project", userId: "remote", workspaceId: null, name: "Server project", icon: "", color: "#123456", sortOrder: 0, createdAt: "now", updatedAt: "now" }]);
@@ -122,5 +123,38 @@ it("native recurring completion uses the canonical online route, caches its succ
     });
     expect((await api.toggleTask("repeat")).task?.title).toBe("Concurrent edit");
     expect(await db.query("SELECT id FROM sync_outbox WHERE id='concurrent'")).toHaveLength(1);
+  } finally { restore(); await db.close(); }
+});
+it("upgrades schema 7 task rows without inventing archives or losing pending mutations",async () => {
+  fixture.raw.exec("ALTER TABLE tasks DROP COLUMN archivedAt; PRAGMA user_version=7");
+  fixture.raw.exec(`INSERT INTO tasks (id,userId,title,isCompleted,completedAt,status,createdAt,updatedAt)
+    VALUES ('task','u','Historical task',1,'2026-10-12T10:00:00Z','done','created','updated')`);
+  const task=fixture.raw.prepare("SELECT * FROM tasks").get();
+  const outbox=fixture.raw.prepare("SELECT * FROM sync_outbox").all();
+  const db=await openNativeDatabase("task-migration-fixture");
+  expect(fixture.raw.prepare("SELECT * FROM tasks").get()).toEqual({...task,archivedAt:null,...Object.fromEntries(NATIVE_TASK_REPEAT_FIELDS.map((field,index) => [field,nativeTaskRepeatValues({})[index]]))});
+  expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(outbox);
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 9});
+  await db.close();
+});
+
+
+it("upgrades lifecycle schema 8 with recurrence while preserving archives and pending mutations", async () => {
+  fixture.raw.exec(`PRAGMA user_version=8;
+    INSERT INTO tasks(id,userId,title,isCompleted,status,archivedAt,createdAt,updatedAt)
+    VALUES ('archived','local','Preserved archive',1,'done','archive-time','created','updated')`);
+  const before = fixture.raw.prepare("SELECT * FROM sync_outbox").all();
+  const db = await openNativeDatabase("lifecycle-v8-fixture");
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 9 });
+  expect(fixture.raw.prepare("SELECT title,archivedAt,repeatRule,repeatInterval FROM tasks WHERE id='archived'").get()).toEqual({
+    title: "Preserved archive", archivedAt: "archive-time", repeatRule: "none", repeatInterval: 1,
+  });
+  expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
+  const restore = installMobileLocalModuleBridge({} as never, db, "local");
+  try {
+    await db.run("UPDATE tasks SET repeatRule='daily' WHERE id='archived'");
+    vi.mocked(updateRepeatingTaskOnline).mockClear();
+    await expect(api.toggleTask("archived")).rejects.toThrow("请先恢复已归档任务");
+    expect(updateRepeatingTaskOnline).not.toHaveBeenCalled();
   } finally { restore(); await db.close(); }
 });

@@ -440,7 +440,7 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
     `SELECT * FROM tasks WHERE id = ? AND workspaceId IS ?
       AND (? IS NOT NULL OR userId = ?)`,
   ).get(input.entityId, workspaceIdOf(input), workspaceIdOf(input), input.userId) as
-    | ({ updatedAt: string } & Record<string, unknown>)
+    | ({ updatedAt: string; archivedAt: string | null } & Record<string, unknown>)
     | undefined;
 
   if (existing) {
@@ -452,15 +452,18 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
     }
   }
 
+  const archivedAt = Object.prototype.hasOwnProperty.call(p,"archivedAt") ? (typeof p.archivedAt === "string" ? p.archivedAt : null) : (existing?.archivedAt ?? null);
+  if (archivedAt && !p.isCompleted) throw new SyncError("VERSION_CONFLICT", "请先恢复已归档任务");
   db.prepare(`
     INSERT INTO tasks (
-      id, userId, title, isCompleted, completedAt, priority, dueDate,
+      id, userId, title, isCompleted, completedAt, archivedAt, priority, dueDate,
       noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId, ${TASK_SYNC_FIELDS.join(",")}
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'), ?, ${TASK_SYNC_FIELDS.map(() => "?").join(",")})
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'), ?, ${TASK_SYNC_FIELDS.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       isCompleted = excluded.isCompleted,
       completedAt = excluded.completedAt,
+      archivedAt = excluded.archivedAt,
       priority = excluded.priority,
       dueDate = excluded.dueDate,
       noteId = excluded.noteId,
@@ -474,6 +477,7 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
     typeof p.title === "string" ? p.title : "",
     p.isCompleted ? 1 : 0,
     typeof p.completedAt === "string" ? p.completedAt : null,
+    archivedAt,
     Number.isFinite(p.priority as number) ? Number(p.priority) : 2,
     typeof p.dueDate === "string" ? p.dueDate : null,
     requestedNoteId,

@@ -84,6 +84,7 @@ export const FlatTaskRow = React.forwardRef<HTMLDivElement, {
         onClick={() => onSelect(task)}
       >
         <button
+          disabled={!!task.archivedAt}
           onClick={(e) => { e.stopPropagation(); onToggle(task.id); }}
           className="flex-shrink-0 mt-0.5 transition-transform hover:scale-110"
         >

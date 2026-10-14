@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **tasks**：新增按设备时区统计的今日完成清单、已完成任务树的归档与恢复，以及将最新任务详情和独立附件保存为笔记；补齐离线队列、Native 原子写入、同步字段和任务备份兼容回归。Add a local-day completion list, reversible completed-task-tree archiving, and independent note snapshots of task drafts and attachments, with offline, Native transaction, sync and backup regressions.
+
 - **deployment**：新增可选 Caddy HTTPS Compose 模板，自动配置公开地址、持久化证书并取消主应用端口映射；补齐 Nginx / NAS 反代指引和部署验收步骤。Add an optional Caddy HTTPS Compose overlay with a public origin, persistent certificates, no direct application port mapping, and deployment/acceptance documentation.
 - **tasks / AI**：任务中心新增 AI 智能待办助手，支持自然语言生成、可编辑预览、多选和事务批量确认；服务端校验日期、项目权限和重复规则，以持久化幂等记录防止重试重复创建，复用用户 AI 设置和现有同步触发器。AI Task Composer adds editable drafts and atomic, idempotent batch confirmation with scoped duplicate checks, date/recurrence validation, existing AI settings and task sync.
 

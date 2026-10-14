@@ -1,3 +1,5 @@
+import { TaskSaveNoteDialog } from "./TaskSaveNoteDialog";
+import TaskAttachmentSection from "./TaskAttachmentSection";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -168,6 +170,7 @@ export const TaskDetailPanel = React.forwardRef<HTMLDivElement, {
   onClose: () => void;
   onUpdate: (id: string, data: Partial<Task>) => void;
   onDelete: (id: string) => void;
+  onArchive?: (id: string, archived: boolean) => Promise<void>;
   onToggle?: (id: string) => void;
   onSelectTask?: (taskId: string) => void;
   onCreated?: () => void;
@@ -175,7 +178,7 @@ export const TaskDetailPanel = React.forwardRef<HTMLDivElement, {
   dependencies?: TaskDependency[];
   onCreateDependency?: (predecessorTaskId: string, successorTaskId: string) => Promise<void>;
   onDeleteDependency?: (id: string) => Promise<void>;
-}>(({ task, treeNode, allTasks, onClose, onUpdate, onDelete, onToggle, onSelectTask, onCreated, onReminderCountChange, dependencies = [], onCreateDependency, onDeleteDependency }, ref) => {
+}>(({ task, treeNode, allTasks, onClose, onUpdate, onDelete, onArchive, onToggle, onSelectTask, onCreated, onReminderCountChange, dependencies = [], onCreateDependency, onDeleteDependency }, ref) => {
   const { t, i18n } = useTranslation();
   const lang = i18n.resolvedLanguage || i18n.language;
   const isZh = lang.toLowerCase().startsWith("zh");
@@ -183,7 +186,16 @@ export const TaskDetailPanel = React.forwardRef<HTMLDivElement, {
   const createdAtDate = parseServerTime(task.createdAt);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
-  const [descriptionMode, setDescriptionMode] = useState<"edit" | "preview">("edit");
+  const [descriptionMode, setDescriptionMode] = useState<"edit" | "preview">(task.archivedAt ? "preview" : "edit");
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [snapshotDraft, setSnapshotDraft] = useState<{ title: string; description: string } | null>(null);
+  const [archiving, setArchiving] = useState(false);
+  const showSnapshot = () => {
+    const draft = { title, description, attachmentsPending: false };
+    panelRef.current?.dispatchEvent(new CustomEvent("nowen:task-snapshot-draft", { detail: draft }));
+    if (draft.attachmentsPending) { toast.error(t("tasks.lifecycle.waitAttachments")); return; }
+    setSnapshotDraft({title:draft.title,description:draft.description});
+  };
   const [priority, setPriority] = useState<TaskPriority>(task.priority);
   const [dueDate, setDueDate] = useState(getDateValue(task.dueDate || task.dueAt));
   const [dueAt, setDueAt] = useState(getDueTimeValue(task.dueAt || task.dueDate));
@@ -472,7 +484,9 @@ export const TaskDetailPanel = React.forwardRef<HTMLDivElement, {
 
   return (
     <div
-      ref={ref}
+      data-task-id={task.id}
+      data-task-archived={task.archivedAt ? "true" : "false"}
+      ref={(element) => { panelRef.current = element; if (typeof ref === "function") ref(element); else if (ref) ref.current = element; }}
       className={cn(
         "h-full border-l border-app-border bg-app-surface flex flex-col shrink-0",
         "fixed inset-0 z-30 w-full border-l-0",
@@ -488,7 +502,7 @@ export const TaskDetailPanel = React.forwardRef<HTMLDivElement, {
       </div>
 
       {/* Body */}
-      <div className="flex-1 overflow-auto p-4 space-y-4">
+      <fieldset disabled={!!task.archivedAt} className="flex-1 min-w-0 min-h-0 overflow-auto p-4 space-y-4">
         {/* Title */}
         <div>
           <label className="text-xs text-tx-tertiary uppercase tracking-wider mb-1.5 block">{t("tasks.taskTitle")}</label>
@@ -1285,10 +1299,17 @@ export const TaskDetailPanel = React.forwardRef<HTMLDivElement, {
             </>
           )}
         </div>
-      </div>
+      </fieldset>
 
+      {task.archivedAt && <div className="max-h-64 overflow-auto px-4 pb-3"><TaskAttachmentSection task={task} /></div>}
+
+      {snapshotDraft && <TaskSaveNoteDialog task={task} draft={snapshotDraft} onClose={() => setSnapshotDraft(null)} />}
       {/* Footer */}
       <div className="p-3 border-t border-app-border" style={{ paddingBottom: "calc(var(--safe-area-bottom) + 16px)" }}>
+        <div className="mb-2 flex gap-2">
+          <button onClick={showSnapshot} className="flex-1 rounded-md border border-app-border px-3 py-2 text-sm text-tx-primary">{t("tasks.lifecycle.saveNote")}</button>
+          {!task.parentId && onArchive && <button disabled={archiving} onClick={async () => { setArchiving(true); try { await onArchive(task.id,!task.archivedAt); } finally { setArchiving(false); } }} className="flex-1 rounded-md border border-app-border px-3 py-2 text-sm text-tx-primary">{t(task.archivedAt ? "tasks.lifecycle.restore" : "tasks.lifecycle.archive")}</button>}
+        </div>
         <button
           onClick={() => { onDelete(task.id); onClose(); }}
           className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-md text-sm text-accent-danger border border-accent-danger/30 hover:bg-accent-danger/10 transition-colors"

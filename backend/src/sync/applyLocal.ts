@@ -326,16 +326,18 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
     && db.prepare("SELECT 1 FROM tasks WHERE id = ? AND workspaceId IS ?").get(p.parentId,workspaceId) ? p.parentId : null;
 
   const current = db.prepare("SELECT * FROM tasks WHERE id=? AND workspaceId IS ?").get(item.entityId, workspaceId) as Record<string, unknown> | undefined;
+  const archivedAt = Object.prototype.hasOwnProperty.call(p,"archivedAt") ? (typeof p.archivedAt === "string" ? p.archivedAt : null) : (current?.archivedAt ?? null);
   db.prepare(`
     INSERT INTO tasks (
-      id, userId, title, isCompleted, completedAt, priority, dueDate,
+      id, userId, title, isCompleted, completedAt, archivedAt, priority, dueDate,
       noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId, ${TASK_SYNC_FIELDS.join(",")}
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
               COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), ?, ${TASK_SYNC_FIELDS.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       isCompleted = excluded.isCompleted,
       completedAt = excluded.completedAt,
+      archivedAt = excluded.archivedAt,
       priority = excluded.priority,
       dueDate = excluded.dueDate,
       noteId = excluded.noteId,
@@ -349,6 +351,7 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
     str(p.title, ""),
     p.isCompleted ? 1 : 0,
     p.completedAt ?? null,
+    archivedAt,
     num(p.priority) || 2,
     p.dueDate ?? null,
     noteId,

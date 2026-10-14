@@ -68,6 +68,11 @@ export function createLocalizationJob(userId: string, input: LocalizationScopeIn
       totalImageReferences: scan.totalImageReferences,
       remoteReferenceCount: scan.remoteReferenceCount,
       uniqueRemoteUrlCount: scan.uniqueRemoteUrlCount,
+      totalImageOperations: noteResults.reduce((sum, result) => sum + result.uniqueRemoteUrlCount, 0),
+      processedImageOperations: noteResults.filter((result) => result.status !== "queued")
+        .reduce((sum, result) => sum + result.uniqueRemoteUrlCount, 0),
+      skippedImageOperations: noteResults.filter((result) => result.status !== "queued")
+        .reduce((sum, result) => sum + result.uniqueRemoteUrlCount, 0),
       downloadedUniqueUrls: 0,
       reusedDownloads: 0,
       localizedReferences: 0,
