@@ -1188,18 +1188,18 @@ export default function TaskCenter() {
 
         {/* Header desktop with batch controls */}
         {centerMode === "tasks" ? (
-          <div className="hidden items-center gap-3 border-b border-app-border px-5 py-3 md:flex">
-            <div className="min-w-0 flex-1">
-              <h1 className="text-lg font-bold text-tx-primary">
+          <div className="hidden shrink-0 flex-wrap items-center gap-3 border-b border-app-border px-5 py-3 md:flex">
+            <div className="min-w-0 flex-1 basis-40">
+              <h1 className="truncate text-lg font-bold text-tx-primary">
                 {selectedProjectId
                   ? projects.find((p) => p.id === selectedProjectId)?.name || t("tasks.allTasks")
                   : FILTERS.find((f) => f.key === filter)?.label || t("tasks.allTasks")}
               </h1>
-              <p className="mt-0.5 text-[11px] text-tx-tertiary">
+              <p className="mt-0.5 whitespace-nowrap text-[11px] text-tx-tertiary">
                 {t("tasks.visibleTaskCount", { count: displayTasks.length, defaultValue: `${displayTasks.length} 条任务` })}
               </p>
             </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="ml-auto flex max-w-full flex-wrap items-center justify-end gap-2 whitespace-nowrap">
               {selectMode ? (
                 <>
                   <span className="text-xs text-tx-tertiary">{t("tasks.selectedCount", { count: selectedIds.size })}</span>

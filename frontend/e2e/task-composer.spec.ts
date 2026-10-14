@@ -39,6 +39,61 @@ const test = base.extend<{ product: { server: string; provider: string; director
   },
 });
 
+for (const locale of ["zh-CN", "en"] as const) {
+  test(`task header stays horizontal as the content area narrows (${locale})`, async ({ page, product }) => {
+    const chinese = locale === "zh-CN";
+    await page.setViewportSize({ width: 1440, height: 960 });
+    const registered = await page.request.post(`${product.server}/api/auth/register`, { data: { username: "header_layout", password: "header-layout-test-password" } });
+    expect(registered.ok()).toBe(true);
+    const account = await registered.json();
+    const headers = { Authorization: `Bearer ${account.token}` };
+    const created = await page.request.post(`${product.server}/api/tasks`, { headers, data: { title: "Header layout fixture" } });
+    expect(created.ok()).toBe(true);
+    const task = await created.json();
+    await page.goto(product.server);
+    await page.evaluate(language => { localStorage.setItem("i18nextLng", language); localStorage.setItem("nowen-seen-version", "1.5.1"); }, locale);
+    await page.reload();
+    await page.getByPlaceholder("admin", { exact: true }).fill("header_layout");
+    await page.locator("input[type=password]").fill("header-layout-test-password");
+    await page.locator("button[type=submit]").click();
+    await expect(page.getByRole("textbox", { name: chinese ? "笔记标题" : "Note Title", exact: true })).toHaveValue("欢迎使用 Nowen Note");
+    await page.getByRole("button", { name: chinese ? "待办事项" : "Tasks", exact: true }).click();
+    const heading = page.getByRole("heading", { name: chinese ? "全部任务" : "All Tasks", exact: true });
+    const checkHeader = async () => {
+      await expect(heading).toBeVisible();
+      const geometry = await heading.evaluate(element => {
+        const title = element as HTMLElement;
+        const subtitle = title.nextElementSibling as HTMLElement;
+        const header = title.parentElement!.parentElement!;
+        const toolbar = header.lastElementChild as HTMLElement;
+        return {
+          titleHeight: title.clientHeight, titleLineHeight: parseFloat(getComputedStyle(title).lineHeight),
+          subtitleHeight: subtitle.clientHeight, subtitleLineHeight: parseFloat(getComputedStyle(subtitle).lineHeight),
+          width: header.clientWidth, scrollWidth: header.scrollWidth,
+          titleBottom: title.parentElement!.getBoundingClientRect().bottom, toolbarTop: toolbar.getBoundingClientRect().top,
+        };
+      });
+      expect(geometry.titleHeight).toBe(Math.round(geometry.titleLineHeight));
+      expect(geometry.subtitleHeight).toBe(Math.round(geometry.subtitleLineHeight));
+      expect(geometry.scrollWidth).toBeLessThanOrEqual(geometry.width);
+      return geometry;
+    };
+    for (const width of [1440, 1200, 1000, 900]) {
+      await page.setViewportSize({ width, height: 960 });
+      const geometry = await checkHeader();
+      if (width <= 1200) expect(geometry.toolbarTop).toBeGreaterThanOrEqual(geometry.titleBottom);
+    }
+    await page.getByRole("button", { name: chinese ? "选择模式" : "Select mode", exact: true }).click();
+    await checkHeader();
+    await page.getByRole("button", { name: chinese ? "取消选择" : "Cancel selection", exact: true }).filter({ visible: true }).click();
+    await page.setViewportSize({ width: 1440, height: 960 });
+    await page.locator(`[data-task-context-id="${task.id}"]`).first().click();
+    await expect(page.locator(`[data-task-id="${task.id}"]`)).toBeVisible();
+    const withDetail = await checkHeader();
+    expect(withDetail.toolbarTop).toBeGreaterThanOrEqual(withDetail.titleBottom);
+  });
+}
+
 test("Electron renderer confirms a draft through the same task center", async ({ product }) => {
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
   delete env.ELECTRON_RUN_AS_NODE;
