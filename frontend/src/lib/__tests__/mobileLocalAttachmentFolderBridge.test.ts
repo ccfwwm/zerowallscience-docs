@@ -69,6 +69,12 @@ function createFakeDb() {
       if(normalized.startsWith("SELECT id,folderId FROM attachments")){
         return [...assignments].map(([id,folderId])=>({id,folderId})) as T[];
       }
+      if(normalized.startsWith("SELECT id FROM attachments WHERE folderId=?")){
+        return [...assignments].filter(([,folderId])=>folderId===values[0]).map(([id])=>({id})) as T[];
+      }
+      if(normalized.startsWith("SELECT id FROM mobile_local_attachment_folders WHERE parentId=?")){
+        return folders.filter((folder)=>folder.parentId===values[0]).map(({id})=>({id})) as T[];
+      }
       if(normalized.startsWith("SELECT id FROM attachments WHERE id=?")){
         return (assignments.has(String(values[0])) ? [{id:String(values[0])}] : []) as T[];
       }
@@ -136,6 +142,9 @@ describe("mobile local attachment folder bridge",()=>{
     expect(listed.items[0]).toMatchObject({folderId:folder.id,folderName:"资料"});
     expect((await api.attachmentFolders.list()).folders[0]).toMatchObject({id:folder.id,fileCount:1});
 
+    await expect(api.attachmentFolders.remove(folder.id)).rejects.toMatchObject({code:"FOLDER_NOT_EMPTY"});
+    expect(assignments.get("file-1")).toBe(folder.id);
+    await api.files.move(["file-1"],null);
     await api.attachmentFolders.remove(folder.id);
     expect(assignments.get("file-1")).toBeNull();
     expect((await api.attachmentFolders.list()).folders).toEqual([]);
