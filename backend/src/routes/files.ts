@@ -62,6 +62,12 @@ import {
   requireWorkspaceFeature,
 } from "../middleware/acl";
 import { createUserAttachmentAccessUrls } from "../lib/attachment-signed-url";
+import { ensureFileSharesTable } from "../services/file-shares";
+import {
+  ensureAttachmentLinkPolicyTable,
+  isAttachmentExternalAccessEnabled,
+  setAttachmentExternalAccessEnabled,
+} from "../services/attachment-link-policy";
 import { isHeifMime, resolveHeifUploadMime } from "../lib/heif-mime";
 import { analyzeModernMedia } from "../lib/modern-media";
 import { recordMediaAnalysis } from "../services/modern-media";
@@ -755,15 +761,17 @@ app.get("/:id", (c) => {
   const base = db
     .prepare(
       `SELECT a.id, a.filename, a.mimeType, a.size, a.path, a.createdAt, a.hash,
-              a.noteId, a.userId, a.workspaceId,
+              a.noteId, a.userId, a.workspaceId, a.uploadSource, a.folderId,
+              af.name AS folderName,
               n.title AS noteTitle, n.notebookId, n.isTrashed,
               nb.name AS notebookName, nb.icon AS notebookIcon
          FROM attachments a
          LEFT JOIN notes n ON n.id = a.noteId
          LEFT JOIN notebooks nb ON nb.id = n.notebookId
+         LEFT JOIN attachment_folders af ON af.id = a.folderId
         WHERE a.id = ?`,
     )
-    .get(id) as (FileRow & { userId: string; workspaceId: string | null }) | undefined;
+    .get(id) as (FileRow & FileAttachmentAccessRow) | undefined;
 
   if (!base) return c.json({ error: "文件不存在" }, 404);
 
@@ -805,9 +813,69 @@ app.get("/:id", (c) => {
 
   return c.json({
     ...toFileOut(base),
+    canManage: base.userId === userId && canWriteManagedFile(base, userId),
+    externalAccessEnabled: isAttachmentExternalAccessEnabled(id),
     references,
     accessUrls: createUserAttachmentAccessUrls(userId, [base]),
   });
+});
+
+// Moving files only changes their organization; note bindings and storage paths stay stable.
+app.post("/batch-move", async (c) => {
+  const userId = c.req.header("X-User-Id") || "";
+  if (!userId) return c.json({ error: "未授权" }, 401);
+  const body = await c.req.json().catch(() => null);
+  if (!body || !Array.isArray(body.ids) || body.ids.length === 0 || body.ids.length > 200
+    || body.ids.some((id: unknown) => typeof id !== "string" || !id.trim())
+    || !(body.folderId === null || (typeof body.folderId === "string" && body.folderId.trim()))) {
+    return c.json({ error: "请提供 1–200 个文件 ID 和目标 folderId（未归档为 null）" }, 400);
+  }
+  const ids = [...new Set<string>(body.ids)];
+  const db = getDb();
+  const folder = body.folderId === null ? null : db.prepare(
+    "SELECT id, name FROM attachment_folders WHERE id = ? AND userId = ?",
+  ).get(body.folderId, userId) as { id: string; name: string } | undefined;
+  if (body.folderId !== null && !folder) return c.json({ error: "目标文件夹不存在" }, 404);
+
+  const rows = ids.map((id) => db.prepare(
+    "SELECT id, noteId, userId, workspaceId, uploadSource FROM attachments WHERE id = ?",
+  ).get(id) as FileAttachmentAccessRow | undefined);
+  if (rows.some((row) => !row)) return c.json({ error: "文件不存在" }, 404);
+  if (rows.some((row) => row!.userId !== userId || !canWriteManagedFile(row!, userId))) {
+    return c.json({ error: "无权移动所选文件", code: "FORBIDDEN" }, 403);
+  }
+  db.transaction(() => {
+    const update = db.prepare("UPDATE attachments SET folderId = ? WHERE id = ?");
+    for (const id of ids) update.run(body.folderId, id);
+  })();
+  return c.json({ success: true, moved: ids.length, folderId: body.folderId, folderName: folder?.name ?? null });
+});
+
+app.patch("/:id/external-access", async (c) => {
+  const userId = c.req.header("X-User-Id") || "";
+  if (!userId) return c.json({ error: "未授权" }, 401);
+  const body = await c.req.json().catch(() => null);
+  if (typeof body?.enabled !== "boolean") return c.json({ error: "enabled 必须为布尔值" }, 400);
+  const id = c.req.param("id");
+  const db = getDb();
+  const row = db.prepare(
+    "SELECT id, noteId, userId, workspaceId, uploadSource FROM attachments WHERE id = ?",
+  ).get(id) as FileAttachmentAccessRow | undefined;
+  if (!row) return c.json({ error: "文件不存在" }, 404);
+  if (row.userId !== userId || !canWriteManagedFile(row, userId)) {
+    return c.json({ error: "无权修改此文件的外链设置", code: "FORBIDDEN" }, 403);
+  }
+  ensureAttachmentLinkPolicyTable();
+  ensureFileSharesTable();
+  db.transaction(() => {
+    setAttachmentExternalAccessEnabled(id, body.enabled);
+    if (!body.enabled) {
+      db.prepare("UPDATE file_shares SET isActive = 0, updatedAt = datetime('now') WHERE attachmentId = ?")
+        .run(id);
+    }
+  })();
+  c.header("Cache-Control", "private, no-store");
+  return c.json({ success: true, externalAccessEnabled: body.enabled });
 });
 
 // ---------------------------------------------------------------------------
@@ -1195,6 +1263,11 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
   if (!(file instanceof File)) {
     return c.json({ error: "file 字段缺失或非文件" }, 400);
   }
+  // UTF-8 form fields survive clients/proxies that rewrite non-ASCII multipart filenames.
+  const filename = typeof body.originalFilename === "string" ? body.originalFilename : file.name;
+  if (!filename || filename.length > 255 || /[\\/\x00-\x1f\x7f]/.test(filename)) {
+    return c.json({ error: "文件名无效（最多 255 字符，不含路径或控制字符）" }, 400);
+  }
   // folderId：可选，上传到指定文件夹
   const folderId = typeof body.folderId === "string" && body.folderId ? body.folderId : null;
   if (file.size > MAX_UPLOAD_SIZE) {
@@ -1223,7 +1296,7 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
   }
 
   mime = analyzeModernMedia(buffer, resolveHeifUploadMime(buffer, mime)).mimeType;
-  const ext = pickExt(file.name, mime);
+  const ext = pickExt(filename, mime);
   const monthPath = getUploadMonthPath();
   const storagePath = `${monthPath}/${id}.${ext}`;
 
@@ -1333,7 +1406,7 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
       id,
       noteId,
       userId,
-      file.name || `${id}.${ext}`,
+      filename,
       mime,
       file.size,
       storagePath,
@@ -1358,7 +1431,7 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
       url: `/api/attachments/${id}`,
       mimeType: mime,
       size: file.size,
-      filename: file.name || `${id}.${ext}`,
+      filename,
       category: isImage(mime) ? "image" : "file",
       createdAt: new Date().toISOString(),
       accessUrls: createUserAttachmentAccessUrls(userId, [{ id, noteId }]),

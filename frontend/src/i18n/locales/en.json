@@ -3098,7 +3098,17 @@
     "supportMultiFiles": "Multiple files supported",
     "uploading": "Uploading...",
     "upload": "Upload",
-    "folderCreated": "Folder created"
+    "folderCreated": "Folder created",
+    "moveFiles": "Move files",
+    "moving": "Moving…",
+    "moved": "Moved {{count}} file(s)",
+    "moveHint": "Move {{count}} file(s) to a folder. Note references remain valid.",
+    "moveFailed": "Could not move files. Please retry.",
+    "externalAccess": "Allow public link access",
+    "externalAccessHint": "Disabling public access on this server revokes file links and blocks the file on shared pages. You and authorized members retain access. Temporary preview links remain valid; do not forward them.",
+    "externalEnabled": "Public link access enabled; revoked file links remain invalid",
+    "externalDisabled": "Public link access disabled",
+    "accessFailed": "Could not update link access. Please retry."
   },
   "journal": {
     "created": "Today's journal created",

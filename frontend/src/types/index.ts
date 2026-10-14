@@ -336,6 +336,9 @@ export interface FileItem {
   folderId: string | null;
   /** 附件文件夹名称。未归档时为 null。 */
   folderName: string | null;
+  /** Serving-instance policy; authenticated runtime URLs retain normal ACL checks. */
+  externalAccessEnabled?: boolean;
+  canManage?: boolean;
   primaryNote: {
     id: string;
     title: string;

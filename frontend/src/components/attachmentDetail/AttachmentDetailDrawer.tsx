@@ -45,6 +45,7 @@ import {
 import AttachmentPreview from "@/components/attachmentPreview/AttachmentPreview";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { buildPublicAttachmentUrl } from "@/lib/publicAttachmentUrl";
+import FileMoveDialog from "@/components/FileMoveDialog";
 
 function humanSize(bytes: number): string {
   if (!bytes || bytes < 0) return "0 B";
@@ -95,6 +96,7 @@ export interface AttachmentDetailDrawerProps {
   onJumpToNote?: (noteId: string) => void;
   onAfterDelete?: (id: string) => void;
   onAfterRename?: (id: string, newFilename: string) => void;
+  onAfterMove?: (id: string, folderId: string | null, folderName: string | null) => void;
   showDelete?: boolean;
   isImageHostMode?: boolean;
   extraHeaderActions?: React.ReactNode;
@@ -107,6 +109,7 @@ export default function AttachmentDetailDrawer({
   onJumpToNote,
   onAfterDelete,
   onAfterRename,
+  onAfterMove,
   showDelete = false,
   isImageHostMode = false,
   extraHeaderActions,
@@ -120,6 +123,7 @@ export default function AttachmentDetailDrawer({
 
   useEffect(() => {
     if (!attachmentId) {
+      ++reqIdRef.current;
       setDetail(null);
       return;
     }
@@ -140,11 +144,14 @@ export default function AttachmentDetailDrawer({
       .finally(() => {
         if (reqIdRef.current === myReq) setLoading(false);
       });
+    return () => { ++reqIdRef.current; };
   }, [attachmentId, onClose, t]);
 
   const [renaming, setRenaming] = useState(false);
   const [renameDraft, setRenameDraft] = useState("");
   const [renameSubmitting, setRenameSubmitting] = useState(false);
+  const [moving, setMoving] = useState(false);
+  const [accessSubmitting, setAccessSubmitting] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [isMobile, setIsMobile] = useState(() => (
     typeof window !== "undefined" ? window.matchMedia("(max-width: 639px)").matches : false
@@ -164,6 +171,8 @@ export default function AttachmentDetailDrawer({
     setRenaming(false);
     setRenameDraft("");
     setRenameSubmitting(false);
+    setMoving(false);
+    setAccessSubmitting(false);
     setExpanded(false);
     setMobileShareOpen(isImageHostMode);
     setMobileInfoOpen(false);
@@ -210,7 +219,7 @@ export default function AttachmentDetailDrawer({
 
   const copySnippet = useCallback(
     async (format: ImageHostFormat) => {
-      if (!detail) return;
+      if (!detail || detail.externalAccessEnabled === false) return;
       const resolved = resolveAttachmentUrl(detail.url);
       const full = buildPublicAttachmentUrl(resolved, {
         filePublicOrigin: siteConfig.filePublicOrigin,
@@ -226,6 +235,23 @@ export default function AttachmentDetailDrawer({
     },
     [detail, siteConfig.filePublicOrigin, siteConfig.publicWebOrigin, t],
   );
+
+  const toggleExternalAccess = async () => {
+    if (!detail || accessSubmitting) return;
+    const currentId = detail.id;
+    const requestId = reqIdRef.current;
+    setAccessSubmitting(true);
+    try {
+      const res = await api.files.setExternalAccess(currentId, detail.externalAccessEnabled === false);
+      if (reqIdRef.current !== requestId) return;
+      setDetail((prev) => prev?.id === currentId ? { ...prev, externalAccessEnabled: res.externalAccessEnabled } : prev);
+      toast.success(t(res.externalAccessEnabled ? "fileManager.externalEnabled" : "fileManager.externalDisabled"));
+    } catch (err: unknown) {
+      if (reqIdRef.current === requestId) toast.error(err instanceof Error ? err.message : t("fileManager.accessFailed"));
+    } finally {
+      if (reqIdRef.current === requestId) setAccessSubmitting(false);
+    }
+  };
 
   const [downloading, setDownloading] = useState(false);
   const handleDownload = useCallback(async () => {
@@ -275,30 +301,42 @@ export default function AttachmentDetailDrawer({
 
   const renderShareBody = (fullUrl: string) => (
     <>
-      <input
-        type="text"
-        readOnly
-        value={fullUrl}
-        onFocus={(e) => e.currentTarget.select()}
-        className="w-full px-2 py-1.5 rounded-md border border-app-border bg-app-surface text-[11px] text-tx-primary font-mono outline-none focus:border-accent-primary overflow-x-auto"
-      />
-      <div className="flex flex-wrap gap-1.5">
-        {(["url", "markdown", "html"] as ImageHostFormat[]).map((fmt) => (
-          <button
-            key={fmt}
-            onClick={() => copySnippet(fmt)}
-            className={cn(
-              "px-2.5 py-1 rounded-md text-[11px] flex items-center gap-1 transition-colors",
-              isImageHostMode
-                ? "bg-indigo-500 hover:bg-indigo-600 text-white"
-                : "bg-app-surface border border-app-border hover:bg-app-hover text-tx-primary",
-            )}
-          >
-            <Copy size={11} />
-            {t("attachmentDetail.copyFormat", { format: imageHostFormatLabel(fmt) })}
-          </button>
-        ))}
-      </div>
+      {detail?.canManage && detail.externalAccessEnabled !== undefined && (
+        <label className="flex items-center gap-2 text-xs text-tx-primary">
+          <input type="checkbox" checked={detail.externalAccessEnabled !== false} disabled={accessSubmitting} onChange={toggleExternalAccess} />
+          {t("fileManager.externalAccess")}
+        </label>
+      )}
+      {detail?.externalAccessEnabled !== undefined && <p className="text-[11px] leading-4 text-tx-secondary">{t("fileManager.externalAccessHint")}</p>}
+      {detail?.externalAccessEnabled === false ? (
+        <p className="text-xs text-tx-secondary">{t("fileManager.externalDisabled")}</p>
+      ) : <>
+        <input
+          type="text"
+          readOnly
+          value={fullUrl}
+          onFocus={(e) => e.currentTarget.select()}
+          className="w-full px-2 py-1.5 rounded-md border border-app-border bg-app-surface text-[11px] text-tx-primary font-mono outline-none focus:border-accent-primary overflow-x-auto"
+        />
+        <div className="flex flex-wrap gap-1.5">
+          {(["url", "markdown", "html"] as ImageHostFormat[]).map((fmt) => (
+            <button
+              key={fmt}
+              disabled={accessSubmitting}
+              onClick={() => copySnippet(fmt)}
+              className={cn(
+                "px-2.5 py-1 rounded-md text-[11px] flex items-center gap-1 transition-colors",
+                isImageHostMode
+                  ? "bg-indigo-500 hover:bg-indigo-600 text-white"
+                  : "bg-app-surface border border-app-border hover:bg-app-hover text-tx-primary",
+              )}
+            >
+              <Copy size={11} />
+              {t("attachmentDetail.copyFormat", { format: imageHostFormatLabel(fmt) })}
+            </button>
+          ))}
+        </div>
+      </>}
     </>
   );
 
@@ -520,7 +558,7 @@ export default function AttachmentDetailDrawer({
                             {t("attachmentDetail.shareLink")}
                           </div>
                           <div className="mt-0.5 text-[10px] text-tx-tertiary">
-                            {t("attachmentDetail.publicAccess")}
+                            {t(detail.externalAccessEnabled === false ? "fileManager.externalDisabled" : "attachmentDetail.publicAccess")}
                           </div>
                         </div>
                         <ChevronDown
@@ -562,7 +600,7 @@ export default function AttachmentDetailDrawer({
                         {t("attachmentDetail.shareLink")}
                       </span>
                       <span className="text-[10px] text-tx-tertiary ml-auto">
-                        {t("attachmentDetail.publicAccess")}
+                        {t(detail.externalAccessEnabled === false ? "fileManager.externalDisabled" : "attachmentDetail.publicAccess")}
                       </span>
                     </div>
                     {renderShareBody(fullUrl)}
@@ -667,6 +705,12 @@ export default function AttachmentDetailDrawer({
               </div>
 
               <div className="pt-3 border-t border-app-border space-y-2 pb-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
+                {detail.canManage && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-tx-secondary">{t("fileManager.targetFolder")}: {detail.folderName || t("fileManager.unarchived")}</p>
+                    <Button variant="outline" size="sm" className="w-full" onClick={() => setMoving(true)}>{t("fileManager.moveFiles")}</Button>
+                  </div>
+                )}
                 <Button
                   variant="default"
                   size="sm"
@@ -693,6 +737,17 @@ export default function AttachmentDetailDrawer({
           )}
         </ScrollArea>
       </motion.div>
+      {moving && detail && (
+        <FileMoveDialog
+          ids={[detail.id]}
+          currentFolderId={detail.folderId}
+          onClose={() => setMoving(false)}
+          onMoved={(folderId, folderName) => {
+            setDetail((prev) => prev?.id === detail.id ? { ...prev, folderId, folderName } : prev);
+            onAfterMove?.(detail.id, folderId, folderName);
+          }}
+        />
+      )}
     </>
   );
 }

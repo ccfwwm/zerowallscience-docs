@@ -41,6 +41,10 @@
  *     记录了 noteId + userId，后续需要审计哪位用户上传的附件也可追溯。
  */
 import { Hono } from "hono";
+import {
+  resolveFileAttachmentAccess,
+  type FileAttachmentAccessRow,
+} from "../services/fileAttachmentAccess";
 import type { Context } from "hono";
 import { getDb } from "../db/schema";
 import { isEncryptedNoteFormat } from "../lib/encryptedNotes.js";
@@ -436,8 +440,8 @@ export async function handleDownloadAttachment(
   const id = c.req.param("id");
   const db = getDb();
   const row = db
-    .prepare("SELECT id, noteId, mimeType, path, filename FROM attachments WHERE id = ?")
-    .get(id) as { id: string; noteId: string; mimeType: string; path: string; filename: string } | undefined;
+    .prepare("SELECT id, noteId, mimeType, path, filename, userId, workspaceId, uploadSource FROM attachments WHERE id = ?")
+    .get(id) as (FileAttachmentAccessRow & { id: string; mimeType: string; path: string; filename: string }) | undefined;
   if (!row) return c.json({ error: "附件不存在" }, 404);
 
   // SEC-ATTACHMENT-01: 签名 URL 校验
@@ -453,8 +457,7 @@ export async function handleDownloadAttachment(
       return c.json({ error: "签名无效或已过期", code: "INVALID_SIGNATURE", reason: result.reason }, 403);
     }
   } else if (row.noteId && userId) {
-    const { permission } = resolveNotePermission(row.noteId, userId);
-    if (!hasPermission(permission, "read")) {
+    if (!resolveFileAttachmentAccess(row, userId).canView) {
       return c.json({ error: "无权访问该附件" }, 403);
     }
   } else {

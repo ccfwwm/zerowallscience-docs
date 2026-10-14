@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **files**：文件管理支持单个 / 批量移动到文件夹或未归档，保留附件身份与笔记引用；增强中文上传文件名兼容，新增当前服务实例的逐文件公开外链开关，关闭时撤销旧文件分享并拒绝分享 / 发布页的公开读取，本人预览与下载继续按权限工作（#837）。Add single/batch folder moves, Unicode upload-name compatibility and per-file public-link controls on the serving instance, while preserving attachment identity, note references and authorized owner access. [边界与验证 / Scope and validation](./docs/file-management-837.md).
+
 - **tasks**：任务中心新增导出入口，支持 Excel `.xlsx` 和 Markdown 报告，保留当前空间任务的状态、描述、层级和递归进度（#836）；任务及子任务右键菜单支持仅导出所选子树，包含已完成与已归档任务，超长 Excel 单元格明确提示改用 Markdown，避免静默截断。Export a space or selected task subtree with status, descriptions, hierarchy and recursive progress to Excel or Markdown, including completed and archived tasks, with explicit handling of Excel cell limits.
 
 - **editor**：新增独立 TXT 纯文本笔记（#835），提供目录树、列表和标签栏创建入口，按原文保存 Markdown/HTML/JSON 和空白，支持纯文本编辑、UTF-8 `.txt` 导出及 Nowen 备份恢复，复用现有权限与离线同步。Add plain text notes with literal editing, UTF-8 TXT export, backup round trips and existing permission/offline-sync workflows.

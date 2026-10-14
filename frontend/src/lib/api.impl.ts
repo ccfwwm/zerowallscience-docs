@@ -60,6 +60,7 @@ import { withShareSessionHeader } from "@/lib/shareSession";
 import { clearFolderUnlockTokens, folderUnlockRequestHeaders } from "@/lib/knowledgeTreePassword";
 import { getServerTransportUrl, rememberServerInstanceId } from "./serverEndpointState";
 import { isRootDocumentNotebookId } from "@/lib/rootDocumentCreatePolicy";
+import { resolveUploadFetch } from "@/lib/uploadRequest";
 import {
   registerAttachmentAccessUrls,
   resolveAttachmentAccessUrl,
@@ -3346,6 +3347,14 @@ export const api = {
   // note 兜底外键约束，用户看到的只是"未归档文件"。
   //
   files: {
+    move: (ids: string[], folderId: string | null) =>
+      request<{ success: boolean; moved: number; folderId: string | null; folderName: string | null }>(
+        "/files/batch-move", { method: "POST", body: JSON.stringify({ ids, folderId }) },
+      ),
+    setExternalAccess: (id: string, enabled: boolean) =>
+      request<{ success: boolean; externalAccessEnabled: boolean }>(
+        `/files/${id}/external-access`, { method: "PATCH", body: JSON.stringify({ enabled }) },
+      ),
     /** 分类聚合统计。侧栏/顶栏展示"X 张图片 / Y 个文件"用。
      *  Y4: 自动注入当前工作区 scope；personal 不带、workspace 带 ?workspaceId=。
      */
@@ -3458,12 +3467,13 @@ export const api = {
       const token = getToken();
       const form = new FormData();
       form.append("file", file);
+      form.append("originalFilename", file.name);
       if (opts.noteId) form.append("noteId", opts.noteId);
       if (opts.notebookId) form.append("notebookId", opts.notebookId);
       if (opts.folderId) form.append("folderId", opts.folderId);
       const ws = getCurrentWorkspace();
       const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
-      const res = await fetch(`${getBaseUrl()}/files/upload${qs}`, {
+      const res = await resolveUploadFetch(form)(`${getBaseUrl()}/files/upload${qs}`, {
         method: "POST",
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: form,

@@ -77,6 +77,7 @@ import {
 import AttachmentDetailDrawer from "@/components/attachmentDetail/AttachmentDetailDrawer";
 import { MotionPhotoOverlay } from "@/components/MotionPhotoOverlay";
 import FileUploadDialog from "@/components/FileUploadDialog";
+import FileMoveDialog from "@/components/FileMoveDialog";
 import { useSiteSettings } from "@/hooks/useSiteSettings";
 import {
   buildPublicAttachmentUrl,
@@ -375,6 +376,7 @@ export default function FileManager() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [batchDeleting, setBatchDeleting] = useState(false);
+  const [moveIds, setMoveIds] = useState<string[] | null>(null);
 
   // 可回收空间（dryRun 扫出的"孤儿附件"汇总）：
   //   顶部清理按钮始终可见；有可回收项时附带展示数量与空间。
@@ -669,6 +671,12 @@ export default function FileManager() {
     // v12：清列表缓存——文件名变了，缓存里仍是老名字会与 UI 不一致
     invalidateFileListCache();
   }, []);
+
+  const afterMove = useCallback(() => {
+    invalidateFileListCache();
+    void loadList();
+    void loadFolders();
+  }, [loadList, loadFolders]);
 
   // ---- 批量选择 ----
   const toggleSelectionMode = useCallback(() => {
@@ -1608,6 +1616,15 @@ export default function FileManager() {
               <Button
                 size="sm"
                 variant="outline"
+                onClick={() => setMoveIds(Array.from(selectedIds))}
+                disabled={selectedIds.size === 0 || selectedIds.size > 200 || batchDeleting}
+              >
+                <FolderOpen size={14} className="mr-1" />
+                {t("fileManager.moveFiles")}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
                 onClick={handleBatchDelete}
                 disabled={selectedIds.size === 0 || batchDeleting}
                 className="text-red-500 border-red-500/40 hover:bg-red-500/10 hover:text-red-500 hover:border-red-500/60 disabled:opacity-50"
@@ -1783,6 +1800,7 @@ export default function FileManager() {
             onJumpToNote={jumpToNote}
             onAfterDelete={afterDelete}
             onAfterRename={afterRename}
+            onAfterMove={afterMove}
             showDelete
             isImageHostMode={isImageHostMode}
           />
@@ -1790,6 +1808,12 @@ export default function FileManager() {
       </AnimatePresence>
 
       {/* 上传弹窗 */}
+      {moveIds && (
+        <FileMoveDialog ids={moveIds} onClose={() => setMoveIds(null)} onMoved={() => {
+          setSelectedIds(new Set());
+          afterMove();
+        }} />
+      )}
       <FileUploadDialog
         open={uploadDialogOpen}
         onClose={() => setUploadDialogOpen(false)}

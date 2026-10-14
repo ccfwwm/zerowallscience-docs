@@ -34,6 +34,7 @@ export function installMobileLocalAttachmentFolderBridge(
     filesList: target.files.list,
     filesGet: target.files.get,
     filesUpload: target.files.upload,
+    filesMove: target.files.move,
   };
 
   let schemaPromise: Promise<void> | null = null;
@@ -176,6 +177,7 @@ export function installMobileLocalAttachmentFolderBridge(
         ...item,
         folderId,
         folderName: folderId ? folders.get(folderId)?.name || null : null,
+        canManage: true,
       };
     });
   };
@@ -207,10 +209,35 @@ export function installMobileLocalAttachmentFolderBridge(
     };
   };
 
+  target.files.move = async (rawIds: string[], folderId: string | null) => {
+    await ready();
+    if (!rawIds.length || rawIds.length > 200 || rawIds.some((id) => typeof id !== "string" || !id)) {
+      throw new Error("请提供 1–200 个文件 ID");
+    }
+    const ids = [...new Set(rawIds)];
+    const folder = folderId ? await readFolder(folderId) : null;
+    await db.transaction(async (tx) => {
+      for (const id of ids) {
+        const row = (await tx.query<{ id: string }>(
+          "SELECT id FROM attachments WHERE id=? AND scopeKey='personal' AND userId=? AND available=1",
+          [id,userId],
+        ))[0];
+        if (!row) throw new Error("文件不存在或无权移动");
+      }
+      for (const id of ids) {
+        await tx.run("UPDATE attachments SET folderId=?,updatedAt=? WHERE id=? AND scopeKey='personal' AND userId=?",[
+          folderId,now(),id,userId,
+        ]);
+      }
+    });
+    return { success:true,moved:ids.length,folderId,folderName:folder?.name || null };
+  };
+
   return () => {
     target.attachmentFolders = originals.attachmentFolders;
     target.files.list = originals.filesList;
     target.files.get = originals.filesGet;
     target.files.upload = originals.filesUpload;
+    target.files.move = originals.filesMove;
   };
 }
