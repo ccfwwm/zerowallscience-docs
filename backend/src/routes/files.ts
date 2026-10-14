@@ -61,6 +61,7 @@ import {
   hasPermission,
   getUserWorkspaceRole,
   requireWorkspaceFeature,
+  hasRole,
 } from "../middleware/acl";
 import { createUserAttachmentAccessUrls } from "../lib/attachment-signed-url";
 import { ensureFileSharesTable } from "../services/file-shares";
@@ -1273,6 +1274,9 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
 
   const scope = resolveFilesScope(c.req.query("workspaceId") || "", userId);
   if (scope.error) return c.json({ error: scope.error, code: "FORBIDDEN" }, 403);
+  if (scope.workspaceId && !hasRole(getUserWorkspaceRole(scope.workspaceId, userId), "editor")) {
+    return c.json({ error: "无权向此工作区上传文件", code: "FORBIDDEN" }, 403);
+  }
 
   let body: Record<string, unknown>;
   try {
@@ -1302,6 +1306,16 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
     return c.json({ error: `出于安全考虑，不支持该类型: ${mime}` }, 415);
   }
 
+  const db = getDb();
+  // 校验 folderId（如果提供）
+  if (folderId) {
+    if (scope.workspaceId) return c.json({ error: "工作区文件不能上传到个人文件夹", code: "FILE_SCOPE_MISMATCH" }, 409);
+    const folder = db
+      .prepare("SELECT id FROM attachment_folders WHERE id = ? AND userId = ?")
+      .get(folderId, userId) as { id: string } | undefined;
+    if (!folder) return c.json({ error: "目标文件夹不存在" }, 404);
+  }
+
   const { noteId } = ensureHolderNote(userId, scope.workspaceId);
 
   ensureAttachmentsDir();
@@ -1323,16 +1337,7 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
 
   // 同 user + 同 workspace 内查 hash；复用原 id，并补写缺失的实体文件。
   const sha256 = crypto.createHash("sha256").update(buffer).digest("hex");
-  const db = getDb();
 
-  // 校验 folderId（如果提供）
-  if (folderId) {
-    if (scope.workspaceId) return c.json({ error: "工作区文件不能上传到个人文件夹", code: "FILE_SCOPE_MISMATCH" }, 409);
-    const folder = db
-      .prepare("SELECT id FROM attachment_folders WHERE id = ? AND userId = ?")
-      .get(folderId, userId) as { id: string } | undefined;
-    if (!folder) return c.json({ error: "目标文件夹不存在" }, 404);
-  }
 
   const dedupRow = db
     .prepare(

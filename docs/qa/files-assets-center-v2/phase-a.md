@@ -34,7 +34,7 @@ No real user database was used.
 
 - Initial baseline: organization, upload repair, folder repository, shared access, stable file sharing passed.
 - New reproductions failed before the corresponding fixes: duplicate location, mixed scope and referenced deletion.
-- Focused backend: 77 tests passed across safety (4), organization (10), upload repair (14), folder repository (11), shared access (7), stable sharing (5), manual upload retention (1), note deletion (13), orphan visibility (3), backup integrity (7), manual file visibility (2).
+- Focused backend: 78 tests passed across safety (5), organization (10), upload repair (14), folder repository (11), shared access (7), stable sharing (5), manual upload retention (1), note deletion (13), orphan visibility (3), backup integrity (7), manual file visibility (2).
 - Frontend Native folder bridge: 2 tests passed; TypeScript and production frontend build passed.
 - Backend production bundle passed. DCC mapping: 12 invariants / 132 references verified.
 - Full DCC backend behavior run: 13 files, 213 tests passed. Additional Native sync-switch tests are skipped without their configured native test runtime; they are not counted as passes.
@@ -51,3 +51,5 @@ Deletion intentionally returns 409 for referenced/shared files and nonempty fold
 Folder positions still do not synchronize through Sync V2; full synchronization and file recycle bin belong to separate Phase D PRs.
 SQLite API tests and mocked S3 HTTP tests do not prove a PostgreSQL production deployment, real S3 service, Android device, installed Electron package, WAN operation or release readiness.
 Tags/smart folders/AI and a true recycle bin are later phases and are not represented as implemented.
+
+Phase A follow-up: read-only workspace uploads return 403 before creating a holder or attachment. Destination validation also precedes holder creation. The regression failed with 201 before the fix, then passed.

@@ -76,6 +76,20 @@ test("workspace files cannot enter personal folders; mixed batches and workspace
   assert.equal((await req("/api/attachment-folders?workspaceId=asset-workspace", "POST", { name: "Team folder" })).status, 409);
 });
 
+test("read-only workspace uploads are rejected before creating any holder or file", async () => {
+  const db = schema.getDb();
+  db.prepare("INSERT INTO workspace_members (workspaceId, userId, role) VALUES ('asset-workspace', ?, 'viewer')").run(other);
+  const before = db.prepare("SELECT COUNT(*) AS count FROM notes").get();
+  const filesBefore = db.prepare("SELECT COUNT(*) AS count FROM attachments").get();
+  const form = new FormData();
+  form.set("file", new File(["viewer must not write"], "viewer.txt", { type: "text/plain" }));
+  const response = await app.request("/api/files/upload?workspaceId=asset-workspace", { method: "POST", headers: { "X-User-Id": other }, body: form });
+  assert.equal(response.status, 403);
+  assert.equal((await response.json() as any).code, "FORBIDDEN");
+  assert.deepEqual(db.prepare("SELECT COUNT(*) AS count FROM notes").get(), before);
+  assert.deepEqual(db.prepare("SELECT COUNT(*) AS count FROM attachments").get(), filesBefore);
+});
+
 test("three-level folders reject cycles, missing parents, foreign parents and nonempty deletion", async () => {
   const create = async (name: string, parentId?: string) => {
     const res = await req("/api/attachment-folders", "POST", { name, parentId });
