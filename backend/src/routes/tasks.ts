@@ -1,4 +1,7 @@
+import { generateNextRepeatedTask } from "../lib/taskRecurrence";
+import { invalidTaskDateField } from "../lib/taskDates";
 import { localDayCompletionFilter, validTaskTimezone } from "../lib/taskLifecycle";
+import { guardTaskRecurrenceWrite, removeTaskOccurrences, taskRemovalRows, type TaskRemovalMode } from "../lib/taskRecurrenceDeletion";
 import { saveTaskNoteSnapshot, TaskSnapshotError } from "../services/taskNoteSnapshot";
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -59,6 +62,7 @@ function isInvalidTaskDateRange(
 }
 
 const tasks = new Hono();
+tasks.get("/recurrence/capabilities", (c) => c.json({taskRecurrenceLifecycle:"v1"}));
 
 // ---------------------------------------------------------------------------
 // Phase 2/Y3: 工作区 scope 解析
@@ -350,6 +354,8 @@ class TaskCreateError extends Error {
 
 // The normal endpoint and AI batch share the same creation validation and SQL.
 function createTaskRecord(db: ReturnType<typeof getDb>, userId: string, workspaceId: string | null, body: any): Record<string, unknown> {
+  const invalidDate = invalidTaskDateField(body);
+  if (invalidDate) throw new TaskCreateError({error:`Invalid ${invalidDate}`,code:"INVALID_TASK_DATE"},400);
   const id = crypto.randomUUID();
   const { title, priority = 2, dueDate = null, dueAt = null, startDate = null, noteId = null, parentId = null } = body;
   const description = typeof body.description === "string" ? body.description : "";
@@ -372,7 +378,7 @@ function createTaskRecord(db: ReturnType<typeof getDb>, userId: string, workspac
   if (repeatRule === "none") {
     repeatEndCount = null;
   }
-  if (repeatRule !== "none" && repeatRule !== "custom" && repeatInterval < 1) {
+  if (repeatRule !== "none" && repeatRule !== "custom" && (!Number.isSafeInteger(Number(repeatInterval)) || Number(repeatInterval) < 1)) {
     throw new TaskCreateError({ error: "repeatInterval must be >= 1", code: "INVALID_REPEAT_INTERVAL" }, 400);
   }
   // TASK-RECURRENCE-CUSTOM-01: 解析自定义循环规则
@@ -502,6 +508,8 @@ tasks.put("/:id", (c) => {
     if (!canManageResource(existing.userId, existing.workspaceId, userId)) {
       return c.json({ error: "无权修改该任务", code: "FORBIDDEN" }, 403);
     }
+    const invalidDate = invalidTaskDateField(body,existing);
+    if (invalidDate) return c.json({error:`Invalid ${invalidDate}`,code:"INVALID_TASK_DATE"},400);
 
     if (existing.archivedAt) return c.json({ error: "请先恢复已归档任务", code: "TASK_ARCHIVED" }, 409);
     if (body.parentId) {
@@ -523,6 +531,8 @@ tasks.put("/:id", (c) => {
 
     // Repeat fields
     const repeatRule = body.repeatRule !== undefined ? body.repeatRule : (existing.repeatRule || "none");
+    try { guardTaskRecurrenceWrite(db,existing,repeatRule); }
+    catch (error) { return c.json({ error: (error as Error).message, code: "TASK_RECURRENCE_STOPPED" }, 409); }
     const repeatInterval = body.repeatInterval !== undefined ? body.repeatInterval : (existing.repeatInterval ?? 1);
     const repeatEndDate = body.repeatEndDate !== undefined ? body.repeatEndDate : (existing.repeatEndDate ?? null);
     let repeatEndCount: number | null;
@@ -541,7 +551,7 @@ tasks.put("/:id", (c) => {
     if (repeatRule === "none") {
       repeatEndCount = null;
     }
-    if (repeatRule !== "none" && repeatRule !== "custom" && (repeatInterval ?? 0) < 1) {
+    if (repeatRule !== "none" && repeatRule !== "custom" && (!Number.isSafeInteger(Number(repeatInterval)) || Number(repeatInterval) < 1)) {
       return c.json({ error: "repeatInterval must be >= 1", code: "INVALID_REPEAT_INTERVAL" }, 400);
     }
     // TASK-RECURRENCE-CUSTOM-01: 解析自定义循环规则
@@ -668,68 +678,6 @@ tasks.put("/:id", (c) => {
 // 切换完成状态（快捷操作）
 // Y3: 切换完成状态视作"编辑"——走 canManageResource。
 /** TASK-RECURRENCE-CUSTOM-01: 从自定义规则计算下一次日期 */
-function nextDateFromCustomRule(baseDate: Date, rule: any): Date | null {
-  const freq = rule.frequency;
-  const interval = Math.max(1, Number(rule.interval) || 1);
-
-  if (freq === "day") {
-    const next = new Date(baseDate);
-    next.setDate(next.getDate() + interval);
-    return next;
-  }
-
-  if (freq === "week") {
-    const weekdays: number[] = rule.weekdays || []; // 0=Sun, 1=Mon, ..., 6=Sat
-    if (weekdays.length === 0) {
-      // 无指定星期 → 简单加 N 周
-      const next = new Date(baseDate);
-      next.setDate(next.getDate() + 7 * interval);
-      return next;
-    }
-    // 找下一个匹配的星期几
-    const sorted = [...weekdays].sort((a, b) => a - b);
-    const curDay = baseDate.getDay();
-    // 先找本周内下一个
-    for (const d of sorted) {
-      if (d > curDay) {
-        const next = new Date(baseDate);
-        next.setDate(next.getDate() + (d - curDay));
-        return next;
-      }
-    }
-    // 没找到 → 下一周的第 一个
-    const next = new Date(baseDate);
-    next.setDate(next.getDate() + (7 * interval) - curDay + sorted[0]);
-    return next;
-  }
-
-  // TASK-RECURRENCE-CUSTOM-01-RV1: 修复月末/闰年溢出
-  // 先 setDate(1) 防止 setMonth 溢出到下下月
-  if (freq === "month") {
-    const monthDay = Number(rule.monthDay) || baseDate.getDate();
-    const next = new Date(baseDate);
-    next.setDate(1); // 防止溢出：31 日 setMonth 会跳过短月
-    next.setMonth(next.getMonth() + interval);
-    const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
-    next.setDate(Math.min(monthDay, lastDay));
-    return next;
-  }
-
-  if (freq === "year") {
-    const yearMonth = Number(rule.yearMonth) || (baseDate.getMonth() + 1);
-    const yearDay = Number(rule.yearDay) || baseDate.getDate();
-    const next = new Date(baseDate);
-    next.setDate(1); // 防止溢出：2 月 29 日 setFullYear 到非闰年会跳月
-    next.setFullYear(next.getFullYear() + interval);
-    next.setMonth(yearMonth - 1);
-    const lastDay = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
-    next.setDate(Math.min(yearDay, lastDay));
-    return next;
-  }
-
-  return null;
-}
-
 // TASK-RECURRENCE-CUSTOM-01-RV1: 校验自定义循环规则字段
 const VALID_FREQS = ["day", "week", "month", "year"];
 function normalizeRepeatEndCount(value: unknown): number | null {
@@ -744,7 +692,7 @@ function normalizeRepeatEndCount(value: unknown): number | null {
 function validateRepeatRuleJson(rj: any): string | null {
   if (!rj || typeof rj !== "object") return "repeatRuleJson must be an object";
   if (!VALID_FREQS.includes(rj.frequency)) return "frequency must be day/week/month/year";
-  if (!rj.interval || Number(rj.interval) < 1) return "interval must be >= 1";
+  if (!Number.isSafeInteger(Number(rj.interval)) || Number(rj.interval) < 1) return "interval must be an integer >= 1";
   if (rj.weekdays !== undefined) {
     if (!Array.isArray(rj.weekdays)) return "weekdays must be an array";
     for (const w of rj.weekdays) {
@@ -764,95 +712,6 @@ function validateRepeatRuleJson(rj: any): string | null {
     if (!Number.isInteger(yd) || yd < 1 || yd > 31) return "yearDay must be 1-31";
   }
   return null;
-}
-
-function getRepeatOccurrenceCount(db: any, groupId: string): number {
-  const row = db.prepare(
-    "SELECT COUNT(*) AS count FROM tasks WHERE id = ? OR repeatGroupId = ?"
-  ).get(groupId, groupId) as { count: number } | undefined;
-  return row?.count ?? 0;
-}
-
-/** Generate next repeated task. Returns the new task or null. */
-function generateNextRepeatedTask(db: any, task: any): any {
-  if (!task.repeatRule || task.repeatRule === "none" || task.repeatNextGeneratedId) return null;
-  const baseDateStr = task.dueAt ? task.dueAt.split("T")[0] : task.dueDate;
-  if (!baseDateStr) return null;
-  const groupId = task.repeatGroupId || task.id;
-
-  const maxCount = task.repeatEndCount === null || task.repeatEndCount === undefined
-    ? null
-    : Number(task.repeatEndCount);
-  const currentSequenceIndex = task.repeatSequenceIndex === null || task.repeatSequenceIndex === undefined
-    ? getRepeatOccurrenceCount(db, groupId)
-    : Number(task.repeatSequenceIndex);
-  if (maxCount !== null && Number.isFinite(maxCount) && maxCount >= 1) {
-    if (currentSequenceIndex >= maxCount) return null;
-  }
-  const nextSequenceIndex = Number.isFinite(currentSequenceIndex) && currentSequenceIndex >= 1
-    ? currentSequenceIndex + 1
-    : getRepeatOccurrenceCount(db, groupId) + 1;
-
-  const parts = baseDateStr.split("-").map(Number);
-  const base = new Date(parts[0], parts[1] - 1, parts[2]);
-  let next: Date | null = null;
-
-  if (task.repeatRule === "custom") {
-    let rule: any = null;
-    try { rule = JSON.parse(task.repeatRuleJson || "{}"); } catch {}
-    if (!rule || !rule.frequency) return null;
-    next = nextDateFromCustomRule(base, rule);
-  } else {
-    const interval = task.repeatInterval || 1;
-    switch (task.repeatRule) {
-      case "daily": next = new Date(base); next.setDate(next.getDate() + interval); break;
-      case "weekly": next = new Date(base); next.setDate(next.getDate() + 7 * interval); break;
-      case "monthly":
-        next = new Date(base); next.setMonth(next.getMonth() + interval);
-        if (next.getDate() !== base.getDate()) next.setDate(0);
-        break;
-      case "yearly":
-        next = new Date(base); next.setFullYear(next.getFullYear() + interval);
-        if (next.getDate() !== base.getDate()) next.setDate(0);
-        break;
-      default: return null;
-    }
-  }
-
-  if (!next) return null;
-
-  if (task.repeatEndDate) {
-    const endParts = task.repeatEndDate.split("-").map(Number);
-    const endDate = new Date(endParts[0], endParts[1] - 1, endParts[2]);
-    if (next > endDate) return null;
-  }
-
-  const yyyy = next.getFullYear();
-  const mm = String(next.getMonth() + 1).padStart(2, "0");
-  const dd = String(next.getDate()).padStart(2, "0");
-  const nextDateStr = `${yyyy}-${mm}-${dd}`;
-  let nextDueAt: string | null = null;
-  let nextDueDate = nextDateStr;
-  if (task.dueAt) {
-    const timePart = task.dueAt.split("T")[1] || "00:00:00";
-    nextDueAt = `${nextDateStr}T${timePart}`;
-  }
-
-  const newId = crypto.randomUUID();
-  db.prepare(`
-    INSERT INTO tasks (id, userId, workspaceId, title, description, isCompleted, completedAt, priority, dueDate, dueAt, startDate, noteId, parentId, projectId, status, repeatRule, repeatInterval, repeatEndDate, repeatGroupId, repeatGeneratedFromId, repeatEndCount, repeatSequenceIndex, repeatRuleJson)
-    VALUES (?, ?, ?, ?, ?, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(newId, task.userId, task.workspaceId, task.title, task.description || "", task.priority, nextDueDate, nextDueAt, null, task.noteId, task.parentId, task.projectId, 'todo', task.repeatRule, task.repeatInterval, task.repeatEndDate, groupId, task.id, task.repeatEndCount ?? null, nextSequenceIndex, task.repeatRuleJson);
-
-  db.prepare("UPDATE tasks SET repeatNextGeneratedId = ? WHERE id = ?").run(newId, task.id);
-
-  const reminders = db.prepare("SELECT * FROM task_reminders WHERE taskId = ?").all(task.id) as any[];
-  for (const r of reminders) {
-    const rId = crypto.randomUUID();
-    db.prepare("INSERT INTO task_reminders (id, taskId, userId, offsetMinutes, enabled, lastNotifiedAt, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, NULL, datetime('now'), datetime('now'))").run(rId, newId, r.userId, r.offsetMinutes, r.enabled);
-  }
-
-  return db.prepare("SELECT * FROM tasks WHERE id = ?").get(newId);
 }
 
 tasks.patch("/:id/toggle", (c) => {
@@ -881,48 +740,28 @@ tasks.patch("/:id/toggle", (c) => {
 
 // 删除任务
 // Y3: 删除走 canManageResource；children 靠外键 ON DELETE CASCADE 自动清理。
-tasks.delete("/:id", (c) => {
+function removeOccurrences(c: Context, mode: TaskRemovalMode) {
   const db = getDb();
   const userId = c.req.header("X-User-Id")!;
   const id = c.req.param("id");
-
-  const task = db.prepare("SELECT userId, workspaceId FROM tasks WHERE id = ?").get(id) as
-    | { userId: string; workspaceId: string | null }
-    | undefined;
-  if (!task) return c.json({ error: "Task not found" }, 404);
-
-  if (!canManageResource(task.userId, task.workspaceId, userId)) {
-    return c.json({ error: "无权删除该任务", code: "FORBIDDEN" }, 403);
-  }
-
-  // Collect all descendants (children, grandchildren, etc.)
-  const idsToDelete = collectDescendantIds(db, [id]);
-  const ph = idsToDelete.map(() => "?").join(",");
-
-  // Clean up all dependencies referencing deleted tasks (including descendants)
-  taskDependenciesRepository.deleteByTaskIds(idsToDelete);
-
-  // Delete root task (children cascade via ON DELETE CASCADE)
-  db.prepare("DELETE FROM tasks WHERE id = ?").run(id);
-  return c.json({ success: true });
-});
-
-/** 安全清理任务依赖：表不存在或清理失败不阻断删除 */
-function safeDeleteTaskDependencies(db: any, ids: string[]) {
-  if (!ids || ids.length === 0) return;
-  try {
-    const tableExists = db.prepare(
-      "SELECT name FROM sqlite_master WHERE type='table' AND name='task_dependencies'"
-    ).get();
-    if (!tableExists) {
-      console.warn("[tasks.batch] task_dependencies table not found, skipping");
-      return;
+  return db.transaction(() => {
+    const task = db.prepare("SELECT * FROM tasks WHERE id=?").get(id) as any;
+    if (!task) return c.json({ error: "Task not found" }, 404);
+    const rows = taskRemovalRows(db,task,mode);
+    if (!canManageResource(task.userId,task.workspaceId,userId) || rows.some(row => row.workspaceId !== task.workspaceId || !canManageResource(row.userId,row.workspaceId,userId))) {
+      return c.json({ error: "无权操作部分任务", code: "FORBIDDEN" }, 403);
     }
-    taskDependenciesRepository.deleteByTaskIds(ids);
-  } catch (err) {
-    console.warn("[tasks.batch] failed to cleanup task_dependencies:", err);
-  }
+    if (mode !== "stop") taskDependenciesRepository.deleteByTaskIds(rows.map(row => row.id));
+    const ids = removeTaskOccurrences(db,task,mode);
+    return c.json({ success: true, affected: ids.length, ids });
+  })();
 }
+tasks.patch("/:id/recurrence/stop", (c) => removeOccurrences(c,"stop"));
+tasks.delete("/:id", (c) => {
+  const mode = c.req.query("mode") || "single";
+  if (mode !== "single" && mode !== "series") return c.json({ error: "Invalid deletion mode" }, 400);
+  return removeOccurrences(c,mode);
+});
 
 // batch: complete / delete multiple tasks
 tasks.post("/batch", async (c) => {
@@ -988,16 +827,14 @@ tasks.post("/batch", async (c) => {
       console.log(`${logPrefix} complete success: affected=${toComplete.length}, generated=${generatedCount}`);
       return c.json({ success: true, affected: toComplete.length, generatedCount });
     } else {
-      const idsToDelete = collectDescendantIds(db, allowedIds);
-      console.log(`${logPrefix} delete: allowedIds=${allowedIds.length}, idsToDelete=${idsToDelete.length}`);
-
-      safeDeleteTaskDependencies(db, idsToDelete);
-
-      const dph = allowedIds.map(() => "?").join(",");
-      db.prepare("DELETE FROM tasks WHERE id IN (" + dph + ")").run(...allowedIds);
-
-      console.log(`${logPrefix} delete success: affected=${allowedIds.length}`);
-      return c.json({ success: true, affected: allowedIds.length });
+      return db.transaction(() => {
+        const roots = allowedIds.map(id => db.prepare("SELECT * FROM tasks WHERE id=?").get(id) as any);
+        if (roots.some(root => taskRemovalRows(db,root,"single").some(row => !canManageResource(row.userId,row.workspaceId,userId)))) {
+          return c.json({error:"无权删除部分子任务",code:"FORBIDDEN"},403);
+        }
+        for (const root of roots) if (db.prepare("SELECT 1 FROM tasks WHERE id=?").get(root.id)) removeTaskOccurrences(db,root,"single");
+        return c.json({ success: true, affected: allowedIds.length });
+      })();
     }
   } catch (err: any) {
     const errMsg = err?.message || String(err);

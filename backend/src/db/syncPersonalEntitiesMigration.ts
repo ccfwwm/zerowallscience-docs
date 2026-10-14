@@ -42,7 +42,7 @@ const ENTITY_TABLES: Array<{
  * 统一带上 baseUpdatedAt：那是冲突检测的依据。
  * 对 UPDATE 用 OLD.updatedAt —— 它正是"本次修改所基于的版本"。
  */
-function payloadExpr(entityType: string, alias: string, baseAlias?: string, archived = false): string {
+function payloadExpr(entityType: string, alias: string, baseAlias?: string, archived = false, recurrence = false): string {
   const base = baseAlias
     ? `'baseUpdatedAt', ${baseAlias}.updatedAt,`
     : "";
@@ -55,6 +55,7 @@ function payloadExpr(entityType: string, alias: string, baseAlias?: string, arch
         'isCompleted', ${alias}.isCompleted,
         'completedAt', ${alias}.completedAt,
         ${archived ? `'archivedAt', ${alias}.archivedAt,` : ""}
+        ${recurrence ? `'recurrenceAction', (SELECT action FROM task_recurrence_state WHERE groupId=COALESCE(${alias}.repeatGroupId,${alias}.id) AND scopeKey=CASE WHEN ${alias}.workspaceId IS NULL THEN 'personal:' || ${alias}.userId ELSE 'workspace:' || ${alias}.workspaceId END),` : ""}
         'priority', ${alias}.priority,
         'dueDate', ${alias}.dueDate,
         ${TASK_SYNC_FIELDS.map(field => `'${field}', ${alias}.${field}`).join(",")},
@@ -156,6 +157,9 @@ export function installSyncPersonalEntitiesTriggers(
       : `${oldWorkspace} IS NULL AND (${scopeChanged})`;
     const baseArg = hasUpdatedAt(entityType) ? "OLD" : undefined;
     const archived = entityType === "task" && (db.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>).some((column) => column.name === "archivedAt");
+    const recurrence = entityType === "task" && !!db.prepare("SELECT 1 FROM sqlite_master WHERE name='task_recurrence_state'").get();
+    const deletePayload = recurrence ? `json_object('repeatGroupId',COALESCE(OLD.repeatGroupId,OLD.id),'recurrenceAction',
+      (SELECT action FROM task_recurrence_state WHERE groupId=COALESCE(OLD.repeatGroupId,OLD.id) AND scopeKey=CASE WHEN OLD.workspaceId IS NULL THEN 'personal:' || OLD.userId ELSE 'workspace:' || OLD.workspaceId END))` : "NULL";
 
     db.exec(`
       DROP TRIGGER IF EXISTS sync_v2_${table}_feed_insert;
@@ -216,7 +220,7 @@ export function installSyncPersonalEntitiesTriggers(
           (SELECT profileId FROM sync_v2_outbox_target)${scopeValue(newWorkspace)},
           (SELECT deviceId FROM sync_v2_local_device),
           '${entityType}', NEW.id, 'upsert', NULL,
-          ${payloadExpr(entityType, "NEW", undefined, archived)},
+          ${payloadExpr(entityType, "NEW", undefined, archived, recurrence)},
           'pending', 0, datetime('now')
         );
       END;
@@ -245,7 +249,7 @@ export function installSyncPersonalEntitiesTriggers(
           (SELECT profileId FROM sync_v2_outbox_target)${scopeValue(newWorkspace)},
           (SELECT deviceId FROM sync_v2_local_device),
           '${entityType}', NEW.id, 'upsert', NULL,
-          ${payloadExpr(entityType, "NEW", baseArg, archived)},
+          ${payloadExpr(entityType, "NEW", baseArg, archived, recurrence)},
           'pending', 0, datetime('now')
         WHERE ${newScopeCondition};
       END;
@@ -263,7 +267,7 @@ export function installSyncPersonalEntitiesTriggers(
           lower(hex(randomblob(16))), lower(hex(randomblob(16))),
           (SELECT profileId FROM sync_v2_outbox_target)${scopeValue(oldWorkspace)},
           (SELECT deviceId FROM sync_v2_local_device),
-          '${entityType}', OLD.id, 'delete', NULL, NULL,
+          '${entityType}', OLD.id, 'delete', NULL, ${deletePayload},
           'pending', 0, datetime('now')
         );
       END;

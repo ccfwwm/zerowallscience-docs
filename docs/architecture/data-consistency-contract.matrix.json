@@ -69,6 +69,10 @@
         {
           "file": "frontend/src/lib/__tests__/mobileSyncSwitch.test.ts",
           "case": "keeps edits queued without network traffic across reinitialization, then uploads them on enable"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/nativeTreeSchemaMigration.test.ts",
+          "case": "native deletion and stop roll back tasks and lifecycle markers when Outbox insertion fails"
         }
       ]
     },
@@ -96,6 +100,14 @@
         {
           "file": "frontend/src/lib/__tests__/mobileSyncUnexpectedFailure.test.ts",
           "case": "captures an unexpected scheduled sync failure without advancing the cursor or dropping local changes"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/taskOfflineApi.test.ts",
+          "case": "persists an offline series delete through restart, failed replay and stale server refresh"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native recurrence intent stays durable until the server advertises support"
         }
       ]
     },
@@ -204,6 +216,14 @@
         {
           "file": "frontend/src/lib/__tests__/syncEngine.snapshotSafety.test.ts",
           "case": "does not delete local notebooks or tags missing from a remote listing"
+        },
+        {
+          "file": "backend/tests/task-recurrence-delete.test.ts",
+          "case": "a delayed offline update cannot resurrect a deleted occurrence"
+        },
+        {
+          "file": "backend/tests/task-recurrence-delete.test.ts",
+          "case": "a delayed successor cannot recreate a deleted or stopped series"
         }
       ]
     },
@@ -242,6 +262,10 @@
         {
           "file": "frontend/src/lib/__tests__/mobileSyncUnexpectedFailure.test.ts",
           "case": "handles /scopes HTTP 401 before per-scope processing without deleting local writes"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native recurrence stop survives restart and whole-series deletion converges across three SQLite devices"
         }
       ]
     },
@@ -261,6 +285,10 @@
         {
           "file": "frontend/src/lib/__tests__/noteSyncSafety.integration.test.ts",
           "case": "preserves a stale offline edit as one pending conflict without issuing PUT"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/taskOfflineApi.test.ts",
+          "case": "deleting while an offline create is in flight hides its delayed response and queues its server deletion"
         }
       ]
     },

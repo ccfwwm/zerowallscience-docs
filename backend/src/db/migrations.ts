@@ -1,4 +1,5 @@
 import { taskLifecycleMigration } from "./taskLifecycleMigration.js";
+import { taskRecurrenceDeletionMigration } from "./taskRecurrenceDeletionMigration.js";
 import { wechatAssistantQueueColumnsMigration } from "./wechatAssistantQueueColumnsMigration.js";
 import { wechatAssistantMigration } from "./wechatAssistantMigration.js";
 import { pluginInboundMigration } from "./pluginInboundMigration.js";
@@ -421,6 +422,7 @@ export const MIGRATIONS: Migration[] = [
   encryptedContentV2Migration,
   taskLifecycleMigration,
   taskComposerMigration,
+  taskRecurrenceDeletionMigration,
 ].sort((a, b) => a.version - b.version);
 
 export const CURRENT_SCHEMA_VERSION: number = MIGRATIONS.reduce(

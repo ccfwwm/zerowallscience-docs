@@ -19,6 +19,7 @@ type EntityType = "notebook" | "note" | "tag" | "note_tag" | "favorite" | "attac
 type RemoteEntityType = EntityType | "knowledge_tree_node";
 
 interface ScopeDescriptor {
+  taskRecurrenceLifecycle?: string;
   scopeKey: string;
   workspaceId: string | null;
   workspaceName: string | null;
@@ -717,6 +718,9 @@ export class MobileSyncEngine {
       ORDER BY createdAt,rowid LIMIT 100`,
     [this.options.profileId,scope.scopeKey]);
     if (!rows.length || !scope.canWrite && scope.workspaceId) return;
+    if (rows.some(row => row.entityType === "task" && ["stop","series"].includes(JSON.parse(row.payload || "{}").recurrenceAction)) && scope.taskRecurrenceLifecycle !== "v1") {
+      throw syncFailure("SERVER_ERROR","请升级服务器以同步循环任务操作；本机修改已保留");
+    }
     if(rows.some((row)=>row.entityType==="knowledge_tree_node" && JSON.parse(row.payload||"{}").lifecycle)) {
       const capability=(await this.options.db.query<{value:string}>("SELECT value FROM native_runtime_meta WHERE key=?",[nativeTreeLifecycleKey(this.options.profileId)]))[0];
       if(capability?.value!=="personal-folder-v1") throw syncFailure("SERVER_ERROR","当前服务器不支持已保存的文件夹回收站操作，已保留本机数据");
@@ -1054,7 +1058,19 @@ export class MobileSyncEngine {
       ]);return;
     }
     if(entry.entityType==="task"){
-      if(deleting){await db.run("DELETE FROM tasks WHERE scopeKey=? AND id=?",[key,entry.entityId]);return;}
+      if(deleting){
+        const task = (await db.query<{repeatGroupId:string|null}>("SELECT repeatGroupId FROM tasks WHERE scopeKey=? AND id=?",[key,entry.entityId]))[0];
+        await db.run("INSERT OR IGNORE INTO task_deletion_tombstones(id,userId,workspaceId,repeatGroupId,deletedAt) VALUES(?,?,?,?,?)",[entry.entityId,this.options.userId,ws,task?.repeatGroupId || null,now()]);
+        await db.run("DELETE FROM tasks WHERE scopeKey=? AND id=?",[key,entry.entityId]);return;
+      }
+      if ((await db.query("SELECT id FROM task_deletion_tombstones WHERE id=?",[entry.entityId])).length) return;
+      const recurrenceScope = ws ? `workspace:${ws}` : `personal:${this.options.userId}`;
+      const groupId = typeof p.repeatGroupId === "string" ? p.repeatGroupId : entry.entityId;
+      if (p.recurrenceAction === "stop") await db.run(`INSERT INTO task_recurrence_state(groupId,scopeKey,action,updatedAt) VALUES(?,?,'stop',?)
+        ON CONFLICT(groupId,scopeKey) DO UPDATE SET action=CASE WHEN action='series' THEN action ELSE excluded.action END,updatedAt=excluded.updatedAt`,[groupId,recurrenceScope,now()]);
+      const lifecycle = (await db.query<{action:string}>("SELECT action FROM task_recurrence_state WHERE groupId=? AND scopeKey=?",[groupId,recurrenceScope]))[0];
+      if (lifecycle?.action === "series") return;
+      if (lifecycle?.action === "stop") p.repeatRule = "none";
       const current = (await db.query<Record<string, unknown>>("SELECT * FROM tasks WHERE scopeKey=? AND id=?", [key,entry.entityId]))[0] || {};
       const repeat = nativeTaskRepeatValues({ ...current, ...p } as Partial<import("@/types").Task>);
       await db.run(`INSERT INTO tasks (

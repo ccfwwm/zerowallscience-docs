@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **tasks**：循环任务明确区分仅删除本次、终止后续循环和删除整个系列，展示包含历史、归档及子任务的影响范围；持久化删除与终止意图，补齐 Web 离线队列、Native 原子写入、旧服务端协商和多设备同步回归，防止迟到更新复活已删除任务；规范化 SQLite 日期时间并阻止 NaN 日期生成，旧异常日期不再使任务中心白屏。Distinguish occurrence deletion, recurrence termination and whole-series deletion, with affected-range confirmation, durable lifecycle intents, offline/Native atomic writes, server capability checks and multi-device regressions; normalize SQLite timestamps and prevent invalid recurrence dates from blanking the task center. 安装包与真实设备验收待完成，见 `docs/qa/v1.5.2/task-recurrence-deletion.md`。
+
 - **files**：文件管理支持单个 / 批量移动到文件夹或未归档，保留附件身份与笔记引用；增强中文上传文件名兼容，新增当前服务实例的逐文件公开外链开关，关闭时撤销旧文件分享并拒绝分享 / 发布页的公开读取，本人预览与下载继续按权限工作（#837）。Add single/batch folder moves, Unicode upload-name compatibility and per-file public-link controls on the serving instance, while preserving attachment identity, note references and authorized owner access. [边界与验证 / Scope and validation](./docs/file-management-837.md).
 
 - **tasks**：任务中心新增导出入口，支持 Excel `.xlsx` 和 Markdown 报告，保留当前空间任务的状态、描述、层级和递归进度（#836）；任务及子任务右键菜单支持仅导出所选子树，包含已完成与已归档任务，超长 Excel 单元格明确提示改用 Markdown，避免静默截断。Export a space or selected task subtree with status, descriptions, hierarchy and recursive progress to Excel or Markdown, including completed and archived tasks, with explicit handling of Excel cell limits.

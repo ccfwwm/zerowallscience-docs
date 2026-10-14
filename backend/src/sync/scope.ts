@@ -16,6 +16,7 @@ import type { SyncEntityType, SyncOperation } from "./types";
 export type SyncScopeAccessStatus = "read" | "write";
 
 export interface SyncScopeDescriptor {
+  taskRecurrenceLifecycle?: "v1";
   scopeKey: string;
   workspaceId: string | null;
   workspaceName: string | null;

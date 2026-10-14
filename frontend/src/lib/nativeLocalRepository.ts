@@ -1,4 +1,5 @@
-import type { Note, NoteListItem, Notebook, Tag, Workspace, WorkspaceRole } from "@/types";
+import type { Note, NoteListItem, Notebook, Tag, Task, Workspace, WorkspaceRole } from "@/types";
+import { taskRemovalIds, type TaskRemovalMode } from "./taskRecurrenceRemoval";
 import {
   type LocalAttachmentRecord,
   type LocalRepository,
@@ -332,6 +333,37 @@ export class NativeLocalRepository implements LocalRepository {
     return {success:true,affected};
   }
 
+  async removeTaskOccurrences(id: string, mode: TaskRemovalMode): Promise<{ success: boolean; affected: number }> {
+    const affected = await this.db.transaction(async tx => {
+      const tasks = await tx.query<Task>("SELECT * FROM tasks WHERE scopeKey='personal'");
+      const root = tasks.find(task => task.id === id);
+      if (!root || root.userId !== this.userId) throw new Error("任务不存在或无权操作");
+      const ids = taskRemovalIds(tasks,id,mode);
+      const rows = tasks.filter(task => ids.has(task.id));
+      if (rows.some(task => task.userId !== this.userId)) throw new Error("任务树的账户归属不一致");
+      const groupId = root.repeatGroupId || root.id;
+      if (mode !== "single") await tx.run(`INSERT INTO task_recurrence_state(groupId,scopeKey,action,updatedAt) VALUES(?,?,?,?)
+        ON CONFLICT(groupId,scopeKey) DO UPDATE SET action=CASE WHEN action='series' THEN action ELSE excluded.action END,updatedAt=excluded.updatedAt`,[groupId,`personal:${this.userId}`,mode,now()]);
+      if (mode === "stop") {
+        for (const task of rows) await tx.run("UPDATE tasks SET repeatRule='none',repeatEndDate=NULL,repeatEndCount=NULL,repeatRuleJson=NULL,repeatGroupId=?,updatedAt=? WHERE id=?",[groupId,now(),task.id]);
+        // A series command also stops occurrences created on another device while this one was offline.
+        await this.enqueue(tx,"task",id,"upsert",{recurrenceAction:"stop"},undefined,"personal",false);
+      } else {
+        const dependencies = await tx.query("SELECT name FROM sqlite_master WHERE type='table' AND name='mobile_local_task_dependencies'");
+        for (const task of rows) {
+          if (dependencies.length) await tx.run("DELETE FROM mobile_local_task_dependencies WHERE predecessorTaskId=? OR successorTaskId=?",[task.id,task.id]);
+          await tx.run("INSERT OR REPLACE INTO task_deletion_tombstones(id,userId,workspaceId,repeatGroupId,deletedAt) VALUES(?,?,?,?,?)",[task.id,task.userId,task.workspaceId,task.repeatGroupId || null,now()]);
+          await tx.run("DELETE FROM tasks WHERE id=?",[task.id]);
+          const inSeries = task.id === groupId || task.repeatGroupId === groupId;
+          await this.enqueue(tx,"task",task.id,"delete",{recurrenceAction:mode === "series" && inSeries ? "series" : "single",repeatGroupId:task.repeatGroupId || task.id},undefined,"personal",false);
+        }
+      }
+      return rows.length;
+    });
+    this.requestSyncCallback?.();
+    return {success:true,affected};
+  }
+
   async reorderNotes(items:Array<{id:string;sortOrder:number}>):Promise<void> {
     for(const item of items)await this.updateNote(item.id,{sortOrder:item.sortOrder});
   }
@@ -402,6 +434,7 @@ export class NativeLocalRepository implements LocalRepository {
     payload?: Record<string, unknown>,
     baseVersion?: number | null,
     scopeKeyOverride?:string,
+    notify = true,
   ): Promise<void> {
     const sync = await this.syncContext(tx);
     if (!sync) return;
@@ -415,7 +448,7 @@ export class NativeLocalRepository implements LocalRepository {
       uuid(), uuid(), sync.profileId, sync.deviceId, scopeKey, entityType, entityId,
       operation, baseVersion ?? null, payload ? JSON.stringify(payload) : null, now(),
     ]);
-    this.requestSyncCallback?.();
+    if (notify) this.requestSyncCallback?.();
   }
 
   async movePersonalTreeNodes(items: NativeTreeMove[]) {

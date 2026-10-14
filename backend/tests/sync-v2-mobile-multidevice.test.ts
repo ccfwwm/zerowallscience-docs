@@ -12,6 +12,7 @@ import { NativeLocalRepository } from "../../frontend/src/lib/nativeLocalReposit
 import { MobileSyncEngine } from "../../frontend/src/lib/mobileSyncEngine";
 import { NATIVE_TASK_REPEAT_COLUMNS } from "../../frontend/src/lib/nativeTaskFields";
 import type { NativeDatabase } from "../../frontend/src/lib/nativeDatabase";
+import { NATIVE_TASK_DELETION_STATEMENTS } from "../../frontend/src/lib/nativeTaskRecurrenceDeletion";
 import { nativeReceiptKey, readNativeNoteSyncReceipt } from "../../frontend/src/lib/mobileNoteSyncReceipt";
 import { applyNativePersonalTree } from "../../frontend/src/lib/nativeKnowledgeTreeSync";
 
@@ -31,6 +32,7 @@ const clients: Client[] = [];
 let afterPush: ((response: Response) => Promise<Response>) | undefined;
 let afterSnapshot: ((response: Response) => Promise<Response>) | undefined;
 let afterAck: ((response: Response) => Promise<Response>) | undefined;
+let legacyTaskCapabilities = false;
 
 // The real native schema, with independent on-disk SQLite databases. The adapter
 // serializes transactions just like NativeDatabaseImpl; no shared client state.
@@ -47,6 +49,7 @@ function openClientDb(file: string): NativeDatabase {
   for (const [field, type] of Object.entries(NATIVE_TASK_REPEAT_COLUMNS)) {
     if (!taskColumns.has(field)) raw.exec(`ALTER TABLE tasks ADD COLUMN ${field} ${type}`);
   }
+  for (const statement of NATIVE_TASK_DELETION_STATEMENTS) raw.exec(statement);
   let queue = Promise.resolve();
   const schedule = <T>(work: () => Promise<T>): Promise<T> => {
     const next = queue.then(work, work);
@@ -99,6 +102,38 @@ async function client(name: string): Promise<Client> {
 }
 async function pending(c: Client) { return c.db.query<{ mutationId: string; baseVersion: number; payload: string }>("SELECT mutationId,baseVersion,payload FROM sync_outbox WHERE profileId=? ORDER BY createdAt,rowid", [c.profileId]); }
 async function conflicts(c: Client) { return c.db.query<{ localPayload: string; remotePayload: string }>("SELECT localPayload,remotePayload FROM sync_conflicts WHERE profileId=? AND status='unresolved'", [c.profileId]); }
+
+test("native recurrence stop survives restart and whole-series deletion converges across three SQLite devices",async()=>{
+  const root=randomUUID(),next=randomUUID(),child=randomUUID();
+  for(const [id,parent,group,done] of [[root,null,null,1],[next,null,root,0],[child,next,null,0]]) serverDb.prepare(`INSERT INTO tasks
+    (id,userId,title,parentId,repeatGroupId,isCompleted,status,dueDate,repeatRule,repeatSequenceIndex)
+    VALUES (?,?,'Daily',?,?,?,?,'2026-10-14','daily',1)`).run(id,USER,parent,group,done,done?"done":"todo");
+  const first=await client("repeat-first"),second=await client("repeat-second");await first.sync();await second.sync();
+  await first.repository.removeTaskOccurrences(next,"stop");const mutations=await pending(first);
+  await first.db.close();const reopened=await client("repeat-first");
+  assert.deepEqual(await pending(reopened),mutations);await reopened.sync();assert.equal((await pending(reopened)).length,0);
+  await second.sync();
+  for(const c of [reopened,second]){
+    const history=(await c.db.query<any>("SELECT * FROM tasks WHERE id=?",[root]))[0];
+    assert.equal(history.isCompleted,1);assert.equal(history.repeatRule,"none");
+    assert.equal((await c.db.query<any>("SELECT * FROM tasks WHERE id=?",[next]))[0].repeatRule,"none");
+    assert.equal((await c.db.query<any>("SELECT action FROM task_recurrence_state WHERE groupId=?",[root]))[0].action,"stop");
+  }
+  await second.repository.removeTaskOccurrences(next,"series");await second.sync();await reopened.sync();
+  const third=await client("repeat-third");await third.sync();
+  for(const c of [reopened,second,third]) for(const id of [root,next,child]) assert.equal((await c.db.query("SELECT id FROM tasks WHERE id=?",[id])).length,0);
+  assert.equal(serverDb.prepare("SELECT 1 FROM tasks WHERE id=?").get(root),undefined);
+});
+test("native recurrence intent stays durable until the server advertises support",async()=>{
+  const id=randomUUID();serverDb.prepare("INSERT INTO tasks(id,userId,title,repeatRule) VALUES (?,?,'Old server','daily')").run(id,USER);
+  const c=await client("repeat-old-server");await c.sync();await c.repository.removeTaskOccurrences(id,"stop");
+  const intent=await pending(c);legacyTaskCapabilities=true;
+  try {await c.sync();} finally {legacyTaskCapabilities=false;}
+  assert.deepEqual(await pending(c),intent);
+  assert.equal((serverDb.prepare("SELECT title,repeatRule FROM tasks WHERE id=?").get(id) as any).repeatRule,"daily");
+  await c.sync();assert.equal((await pending(c)).length,0);
+  assert.equal((serverDb.prepare("SELECT title FROM tasks WHERE id=?").get(id) as any).title,"Old server");
+});
 
 test("native task archive survives restart and converges with its details on a second device",async () => {
   const root=randomUUID(),child=randomUUID();
@@ -638,6 +673,10 @@ test.before(async () => {
     if (c.req.path.endsWith("/push") && afterPush) c.res = await afterPush(c.res);
     if (c.req.path.endsWith("/snapshot") && afterSnapshot) c.res = await afterSnapshot(c.res);
     if (c.req.path.endsWith("/ack") && afterAck) c.res = await afterAck(c.res);
+    if (c.req.path.endsWith("/scopes") && legacyTaskCapabilities) {
+      const payload=await c.res.json() as {items:Array<Record<string,unknown>>};
+      c.res=Response.json({items:payload.items.map(({taskRecurrenceLifecycle: _capability,...scope})=>scope)});
+    }
   });
   app.route("/api/sync/v2", routes.default);
   app.route("/api/knowledge-tree/", treeRoutes.default);

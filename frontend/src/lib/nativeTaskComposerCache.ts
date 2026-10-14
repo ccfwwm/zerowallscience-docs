@@ -12,6 +12,10 @@ export async function cacheConfirmedNativeTasks(db: NativeDatabase, userId: stri
     }
     for (const task of tasks) {
       if (task.workspaceId) continue;
+      const deleted = await tx.query("SELECT id FROM task_deletion_tombstones WHERE id=?",[task.id]);
+      const lifecycle = (await tx.query<{action:string}>("SELECT action FROM task_recurrence_state WHERE groupId=? AND scopeKey=?",[task.repeatGroupId || task.id,`personal:${userId}`]))[0];
+      if (deleted.length || lifecycle?.action === "series") continue;
+      const repeatTask = lifecycle?.action === "stop" ? {...task,repeatRule:"none" as const} : task;
       // A retry must not overwrite edits or recreate Outbox mutations for an existing local row.
       await tx.run(`INSERT OR IGNORE INTO tasks (
         id,scopeKey,workspaceId,userId,title,description,isCompleted,completedAt,priority,dueDate,dueAt,startDate,
@@ -19,7 +23,7 @@ export async function cacheConfirmedNativeTasks(db: NativeDatabase, userId: stri
       ) VALUES (?,'personal',NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,${NATIVE_TASK_REPEAT_FIELDS.map(() => "?").join(",")})`, [
         task.id,userId,task.title,task.description || "",task.isCompleted,task.completedAt || null,task.priority,
         task.dueDate || null,task.dueAt || null,task.startDate || null,null,null,task.sortOrder || 0,
-        task.projectId || null,task.status || "todo",task.createdAt,task.updatedAt,...nativeTaskRepeatValues(task),
+        task.projectId || null,task.status || "todo",task.createdAt,task.updatedAt,...nativeTaskRepeatValues(repeatTask),
       ]);
     }
   });

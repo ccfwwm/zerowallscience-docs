@@ -248,7 +248,7 @@ app.get("/scopes", (c) => {
   if (denied) return denied;
   const db = getDb();
   const userId = c.req.header("X-User-Id") as string;
-  return c.json({ items: listAuthorizedScopes(db, userId) });
+  return c.json({ items: listAuthorizedScopes(db, userId).map(scope => ({...scope,taskRecurrenceLifecycle:"v1"})) });
 });
 
 // ---------------------------------------------------------------------------
@@ -464,7 +464,9 @@ function snapshotPage(
 
     case "task":
       return map(db.prepare(`
-        SELECT * FROM tasks
+        SELECT tasks.*, (SELECT action FROM task_recurrence_state s
+          WHERE s.groupId=COALESCE(tasks.repeatGroupId,tasks.id)
+            AND s.scopeKey=CASE WHEN tasks.workspaceId IS NULL THEN 'personal:' || tasks.userId ELSE 'workspace:' || tasks.workspaceId END) AS recurrenceAction FROM tasks
         WHERE workspaceId IS ? AND (? IS NOT NULL OR userId = ?) AND id > ?
         ORDER BY id ASC LIMIT ?
       `).all(workspaceId, workspaceId, userId, afterId, limit) as Array<Record<string, unknown>>);

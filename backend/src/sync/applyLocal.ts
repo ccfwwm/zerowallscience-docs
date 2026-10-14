@@ -1,4 +1,5 @@
 import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
+import { removeTaskOccurrences } from "../lib/taskRecurrenceDeletion.js";
 import { withEncryptedBlockWrite } from "../lib/encryptedBlockWrites.js";
 import type Database from "better-sqlite3";
 import { runWithOutboxSuppressed } from "./context";
@@ -313,11 +314,22 @@ function applyAttachmentLocal(db: Database.Database, item: RemoteEntityPayload, 
 function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, options: ApplyLocalOptions): void {
   const { userId, workspaceId = null } = options;
   if (item.operation === "delete") {
+    const task = db.prepare("SELECT * FROM tasks WHERE id=? AND workspaceId IS ?").get(item.entityId,workspaceId) as any;
+    if (task) removeTaskOccurrences(db,task,"single",false);
+    else db.prepare("INSERT OR IGNORE INTO task_deletion_tombstones(id,userId,workspaceId,deletedAt) VALUES(?,?,?,?)").run(item.entityId,userId,workspaceId,new Date().toISOString());
     db.prepare("DELETE FROM tasks WHERE id = ? AND workspaceId IS ? AND (? IS NOT NULL OR userId = ?)")
       .run(item.entityId,workspaceId,workspaceId,userId);
     return;
   }
   const p = item.payload || {};
+  if (db.prepare("SELECT 1 FROM task_deletion_tombstones WHERE id=?").get(item.entityId)) return;
+  const groupId = typeof p.repeatGroupId === "string" ? p.repeatGroupId : item.entityId;
+  const scopeKey = workspaceId ? `workspace:${workspaceId}` : `personal:${userId}`;
+  if (p.recurrenceAction === "stop") db.prepare(`INSERT INTO task_recurrence_state(groupId,scopeKey,action,updatedAt) VALUES(?,?,'stop',?)
+    ON CONFLICT(groupId,scopeKey) DO UPDATE SET action=CASE WHEN action='series' THEN action ELSE excluded.action END,updatedAt=excluded.updatedAt`).run(groupId,scopeKey,new Date().toISOString());
+  const lifecycle = db.prepare("SELECT action FROM task_recurrence_state WHERE groupId=? AND scopeKey=?").get(groupId,scopeKey) as {action:string} | undefined;
+  if (lifecycle?.action === "series") return;
+  if (lifecycle?.action === "stop") p.repeatRule = "none";
   // noteId / parentId 若指向本地尚不存在的实体则置 null：
   // 外键会拒绝写入，导致整条任务永远同步不下来。
   const noteId = typeof p.noteId === "string"

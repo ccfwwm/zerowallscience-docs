@@ -1,6 +1,7 @@
 import { Capacitor } from "@capacitor/core";
 import { NATIVE_ENCRYPTED_NOTE_GUARDS } from "./encryptedNotes/nativeStorageGuards";
 import { NATIVE_TASK_REPEAT_COLUMNS } from "./nativeTaskFields";
+import { NATIVE_TASK_DELETION_STATEMENTS } from "./nativeTaskRecurrenceDeletion";
 import {
   CapacitorSQLite,
   SQLiteConnection,
@@ -34,7 +35,7 @@ type NativeDatabaseGlobal = typeof globalThis & {
   __nowenNoteNativeDatabaseState?: NativeDatabaseGlobalState;
 };
 
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 const DATABASE_PREFIX = "nowen_local_";
 
 const ENTITY_TYPE_CHECK = `
@@ -735,6 +736,7 @@ class NativeDatabaseImpl implements NativeDatabase {
           }
           await executeSchemaStatements(this.raw, KNOWLEDGE_TREE_SCHEMA_STATEMENTS);
           await upgradeTaskRecurrence(this.raw);
+          await executeSchemaStatements(this.raw, NATIVE_TASK_DELETION_STATEMENTS);
           for (const statement of NATIVE_ENCRYPTED_NOTE_GUARDS) await this.raw.execute(statement, false);
           await this.raw.run(
             `INSERT INTO native_runtime_meta (key, value, updatedAt)
@@ -790,6 +792,7 @@ class NativeDatabaseImpl implements NativeDatabase {
         if (version < 9) {
           await upgradeTaskRecurrence(this.raw);
         }
+        if (version < 10) await executeSchemaStatements(this.raw, NATIVE_TASK_DELETION_STATEMENTS);
         await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
       });
     });

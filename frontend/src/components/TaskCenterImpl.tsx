@@ -61,6 +61,7 @@ import { useContextMenu } from "@/hooks/useContextMenu";
 import { SubtaskInput } from "./tasks/SubtaskInput";
 import { isTaskCenterModuleVisible } from "@/lib/navigationVisibility";
 const TaskSaveNoteDialog = React.lazy(() => import("./tasks/TaskSaveNoteDialog").then(module => ({ default: module.TaskSaveNoteDialog })));
+const TaskRecurrenceDeleteDialog = React.lazy(() => import("./tasks/TaskRecurrenceDeleteDialog").then(module => ({ default: module.TaskRecurrenceDeleteDialog })));
 const TaskContextMenu = React.lazy(() => import("./tasks/TaskContextMenu"));
 const TaskComposer = React.lazy(() => import("./tasks/TaskComposer"));
 
@@ -133,6 +134,7 @@ export default function TaskCenter() {
   const [newHabitTitle, setNewHabitTitle] = useState("");
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [recurrenceDeleteTask, setRecurrenceDeleteTask] = useState<Task | null>(null);
   const { menu: taskMenu, menuRef: taskMenuRef, openMenu: openTaskMenu, openMenuAt: openTaskMenuAt, closeMenu: closeTaskMenu } = useContextMenu();
   const [contextChildTask, setContextChildTask] = useState<Task | null>(null);
   const [contextNoteTask, setContextNoteTask] = useState<Task | null>(null);
@@ -398,6 +400,7 @@ export default function TaskCenter() {
   useEffect(() => {
     const onWs = () => {
       closeTaskMenu(); setContextChildTask(null); setContextNoteTask(null);
+      setRecurrenceDeleteTask(null);
       setSelectedTaskId(null);
       setSearchQuery("");
       setSelectedIds(new Set());
@@ -587,6 +590,10 @@ export default function TaskCenter() {
   };
 
   const handleDelete = async (id: string) => {
+    const task = tasks.find(task => task.id === id);
+    if (task && (task.repeatGroupId || (task.repeatRule && task.repeatRule !== "none"))) {
+      setRecurrenceDeleteTask(task); return;
+    }
     const descendantIds = getDescendantIds(id, tasks);
     if (descendantIds.length > 1) {
       const ok = window.confirm(t("tasks.confirmDeleteWithChildren", { count: descendantIds.length - 1 }));
@@ -598,6 +605,7 @@ export default function TaskCenter() {
     }
     try {
       await api.deleteTask(id);
+      await loadTasks();
       const s = await api.getTaskStats();
       setStats(s);
       refreshCounts();
@@ -739,6 +747,7 @@ export default function TaskCenter() {
   const handleBatchDelete = async () => {
     const ids = Array.from(selectedIds);
     if (ids.length === 0) return;
+    if (tasks.some(task => selectedIds.has(task.id) && (task.repeatGroupId || (task.repeatRule && task.repeatRule !== "none"))) && !window.confirm(t("taskRemoval.bulkSingle"))) return;
     // Collect all descendants
     const idsToRemove = new Set<string>();
     for (const id of ids) {
@@ -756,6 +765,7 @@ export default function TaskCenter() {
     setSelectedIds(new Set());
     try {
       await api.batchTasks(ids, "delete");
+      await loadTasks();
       const s = await api.getTaskStats();
       setStats(s);
       refreshCounts();
@@ -1646,6 +1656,11 @@ export default function TaskCenter() {
 
       {taskMenu.isOpen && contextTask && <React.Suspense fallback={null}><TaskContextMenu menu={taskMenu} menuRef={taskMenuRef} task={contextTask} projects={projects} canArchive={canArchiveContextTask} onAction={handleTaskMenuAction} /></React.Suspense>}
       {contextNoteTask && <React.Suspense fallback={null}><TaskSaveNoteDialog task={contextNoteTask} draft={{ title: contextNoteTask.title, description: contextNoteTask.description || "" }} onClose={() => setContextNoteTask(null)} /></React.Suspense>}
+      {recurrenceDeleteTask && <React.Suspense fallback={null}><TaskRecurrenceDeleteDialog task={recurrenceDeleteTask} onClose={() => setRecurrenceDeleteTask(null)} onConfirm={async mode => {
+        if (mode === "stop") await api.stopTaskRecurrence(recurrenceDeleteTask.id);
+        else await api.deleteTask(recurrenceDeleteTask.id,mode);
+        setSelectedTaskId(null); await loadTasks(); refreshCounts();
+      }} /></React.Suspense>}
       {contextChildTask && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-4" onClick={() => setContextChildTask(null)}>
         <div role="dialog" aria-modal="true" aria-labelledby="task-context-child-title" className="w-full max-w-md rounded-xl border border-app-border bg-app-surface p-4 shadow-xl" onClick={event => event.stopPropagation()} onKeyDown={event => { if (event.key === "Escape") setContextChildTask(null); }}>
           <h2 id="task-context-child-title" className="font-semibold text-tx-primary">{t("tasks.addChild")}</h2>

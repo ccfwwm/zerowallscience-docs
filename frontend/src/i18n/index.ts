@@ -48,6 +48,7 @@ import { installLegacySettingsI18nBridge } from "./legacySettingsI18nBridge";
 import { enVoiceTranslations, zhCNVoiceTranslations } from "./voiceTranslations";
 import { enEncryptedConversionTranslations, zhCNEncryptedConversionTranslations } from "./encryptedConversionTranslations";
 import { enTaskComposerTranslations, zhCNTaskComposerTranslations } from "./taskComposerTranslations";
+import { enTaskRemovalTranslations, zhCNTaskRemovalTranslations } from "./taskRemovalTranslations";
 
 function mergeTranslations(base: any, patch: any): any {
   if (!patch || typeof patch !== "object" || Array.isArray(patch)) return patch;
@@ -81,6 +82,7 @@ const zhCNWithReleaseTranslations = mergeTranslationPatches(
   zhCNVoiceTranslations,
   zhCNEncryptedConversionTranslations,
   zhCNTaskComposerTranslations,
+  zhCNTaskRemovalTranslations,
 );
 
 const enWithReleaseTranslations = mergeTranslationPatches(
@@ -99,6 +101,7 @@ const enWithReleaseTranslations = mergeTranslationPatches(
   enVoiceTranslations,
   enEncryptedConversionTranslations,
   enTaskComposerTranslations,
+  enTaskRemovalTranslations,
 );
 
 const zhCNWithRuntimeOverrides = mergeTranslations(

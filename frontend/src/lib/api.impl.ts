@@ -1265,6 +1265,16 @@ function mergeImportNoteResponses(results: ImportNotesResponse[]): ImportNotesRe
   };
 }
 
+async function requireTaskSeriesSupport(): Promise<void> {
+  let capabilities: {taskRecurrenceLifecycle?:string};
+  try { capabilities = await request("/tasks/recurrence/capabilities"); }
+  catch (error) {
+    if ((error as {status?:number})?.status !== 404) throw error;
+    throw Object.assign(new Error("TASK_RECURRENCE_UNSUPPORTED"),{code:"TASK_RECURRENCE_UNSUPPORTED"});
+  }
+  if (capabilities.taskRecurrenceLifecycle !== "v1") throw Object.assign(new Error("TASK_RECURRENCE_UNSUPPORTED"),{code:"TASK_RECURRENCE_UNSUPPORTED"});
+}
+
 export const api = {
   trash: {
     list: (workspaceId: string) => request<{ items: import("@/features/trash/trashTypes").TrashItem[] }>(`/trash?workspaceId=${encodeURIComponent(workspaceId)}`),
@@ -1899,8 +1909,16 @@ export const api = {
     return result;
   },
   aiBreakdownTask: (id: string, lang?: string) => request<{ subtasks: { title: string; priority: number; dueDate: string | null; reason: string }[] }>(`/tasks/${id}/ai-breakdown`, { method: "POST", body: JSON.stringify({ lang }) }),
-  deleteTask: async (id: string) => {
-    const result = await request(`/tasks/${id}`, { method: "DELETE" });
+  stopTaskRecurrence: async (id: string) => {
+    const result = await request<{ success: boolean; affected: number }>(`/tasks/${id}/recurrence/stop`, { method: "PATCH" });
+    dispatchTaskReminderScheduleChanged();
+    return result;
+  },
+  deleteTask: async (id: string, mode: "single" | "series" = "single") => {
+    if (mode === "series") {
+      await requireTaskSeriesSupport();
+    }
+    const result = await request(`/tasks/${id}${mode === "series" ? "?mode=series" : ""}`, { method: "DELETE" });
     dispatchTaskReminderScheduleChanged();
     return result;
   },

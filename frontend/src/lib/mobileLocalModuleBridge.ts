@@ -71,6 +71,7 @@ export function installMobileLocalModuleBridge(
     reorderTasks: target.reorderTasks,
     toggleTask: target.toggleTask,
     deleteTask: target.deleteTask,
+    stopTaskRecurrence: target.stopTaskRecurrence,
     batchTasks: target.batchTasks,
     getTaskStats: target.getTaskStats,
     getTaskProjects: target.getTaskProjects,
@@ -187,6 +188,8 @@ export function installMobileLocalModuleBridge(
   };
   target.updateTask = async (id: string, patch: Partial<Task>) => {
     const current = await target.getTask(id) as Task;
+    const recurrence = (await db.query<{ action: string }>("SELECT action FROM task_recurrence_state WHERE groupId=? AND scopeKey=?",[current.repeatGroupId || id,`personal:${userId}`]))[0];
+    if (recurrence && patch.repeatRule && patch.repeatRule !== "none") throw new Error(i18n.t("taskRemoval.stopped"));
     if (current.archivedAt) throw new Error("请先恢复已归档任务");
     if (patch.parentId && (await readTask(patch.parentId))?.archivedAt) throw new Error("不能移动到已归档任务");
     if (current.repeatRule && current.repeatRule !== "none" && patch.isCompleted !== undefined) {
@@ -215,7 +218,7 @@ export function installMobileLocalModuleBridge(
       task.title,task.description,task.isCompleted,task.completedAt,task.priority,task.dueDate,task.dueAt,task.startDate,
       task.noteId,task.parentId,task.sortOrder,task.projectId,task.status,updatedAt,...nativeTaskRepeatValues(task),id,
     ]);
-    await enqueue("task",id,"upsert",task as unknown as Record<string, unknown>,current.updatedAt);
+    await enqueue("task",id,"upsert",{...task,recurrenceAction:recurrence?.action} as unknown as Record<string, unknown>,current.updatedAt);
     return { task };
   };
   target.toggleTask = async (id: string) => {
@@ -226,11 +229,8 @@ export function installMobileLocalModuleBridge(
       completedAt:current.isCompleted ? null : now(),
     });
   };
-  target.deleteTask = async (id: string) => {
-    await db.run("DELETE FROM tasks WHERE scopeKey='personal' AND (id=? OR parentId=?)",[id,id]);
-    await enqueue("task",id,"delete");
-    return { success:true };
-  };
+  target.deleteTask = (id: string, mode = "single") => repository.removeTaskOccurrences(id,mode);
+  target.stopTaskRecurrence = (id: string) => repository.removeTaskOccurrences(id,"stop");
   target.reorderTasks = async (items: Array<{ id: string; sortOrder: number }>) => {
     for (const item of items) await target.updateTask(item.id,{ sortOrder:item.sortOrder });
     return { success:true,affected:items.length };

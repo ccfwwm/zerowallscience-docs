@@ -9,6 +9,8 @@ import { cacheConfirmedNativeTasks } from "../nativeTaskComposerCache";
 import type { Task } from "@/types";
 import { installMobileLocalModuleBridge } from "../mobileLocalModuleBridge";
 import { api } from "../api";
+import { NativeLocalRepository } from "../nativeLocalRepository";
+import { ensureMobileLocalTaskSchema } from "../mobileLocalAdvancedTaskBridge";
 import { updateRepeatingTaskOnline } from "../taskComposerApi";
 
 vi.mock("../taskComposerApi", () => ({ registerTaskComposerCache: () => () => undefined, updateRepeatingTaskOnline: vi.fn(), getTaskComposerContext: () => ({}), isTaskComposerContextCurrent: () => true, TaskComposerApiError: class extends Error {} }));
@@ -59,7 +61,7 @@ it("migrates schema 6 queues without losing mutation identity, retries, versions
   const db = await openNativeDatabase("tree-migration-fixture");
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
   expect(fixture.raw.prepare("SELECT * FROM sync_conflicts").all()).toEqual(history);
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 9});
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 10});
   await db.run(`INSERT INTO sync_outbox(id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,createdAt)
     VALUES ('tree','tree-mutation','p','d','personal','knowledge_tree_node','note:n','upsert','now')`);
   expect(fixture.raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -80,7 +82,7 @@ it("upgrades schema 7 task recurrence and caches confirmed batches without overw
   fixture.raw.exec("PRAGMA user_version=7; INSERT INTO tasks(id,userId,title,createdAt,updatedAt) VALUES ('old','local','Preserved','now','now')");
   const before = fixture.raw.prepare("SELECT * FROM sync_outbox").all();
   const db = await openNativeDatabase("task-composer-fixture");
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 9 });
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 10 });
   expect(fixture.raw.prepare("SELECT title,repeatRule FROM tasks WHERE id='old'").get()).toEqual({ title: "Preserved", repeatRule: "none" });
   const task = { id: "confirmed", workspaceId: null, userId: "remote", title: "Daily study", description: "Practice", priority: 2, isCompleted: 0, dueDate: "2026-12-31", dueAt: "2026-12-31T09:00", repeatRule: "daily", repeatInterval: 1, repeatEndCount: 7, createdAt: "now", updatedAt: "now" } as Task;
   await cacheConfirmedNativeTasks(db, "local", [task], [{ id: "remote-project", userId: "remote", workspaceId: null, name: "Server project", icon: "", color: "#123456", sortOrder: 0, createdAt: "now", updatedAt: "now" }]);
@@ -134,7 +136,7 @@ it("upgrades schema 7 task rows without inventing archives or losing pending mut
   const db=await openNativeDatabase("task-migration-fixture");
   expect(fixture.raw.prepare("SELECT * FROM tasks").get()).toEqual({...task,archivedAt:null,...Object.fromEntries(NATIVE_TASK_REPEAT_FIELDS.map((field,index) => [field,nativeTaskRepeatValues({})[index]]))});
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(outbox);
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 9});
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 10});
   await db.close();
 });
 
@@ -145,7 +147,7 @@ it("upgrades lifecycle schema 8 with recurrence while preserving archives and pe
     VALUES ('archived','local','Preserved archive',1,'done','archive-time','created','updated')`);
   const before = fixture.raw.prepare("SELECT * FROM sync_outbox").all();
   const db = await openNativeDatabase("lifecycle-v8-fixture");
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 9 });
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 10 });
   expect(fixture.raw.prepare("SELECT title,archivedAt,repeatRule,repeatInterval FROM tasks WHERE id='archived'").get()).toEqual({
     title: "Preserved archive", archivedAt: "archive-time", repeatRule: "none", repeatInterval: 1,
   });
@@ -157,4 +159,59 @@ it("upgrades lifecycle schema 8 with recurrence while preserving archives and pe
     await expect(api.toggleTask("archived")).rejects.toThrow("请先恢复已归档任务");
     expect(updateRepeatingTaskOnline).not.toHaveBeenCalled();
   } finally { restore(); await db.close(); }
+});
+
+async function recurrenceFixture() {
+  const db = await openNativeDatabase("repeat-deletion-fixture");
+  const repository = new NativeLocalRepository({ db, attachments:{} as never, accountId:"u",userId:"u",getScopeKey:()=>"personal" });
+  for (const [id,parent,group,done] of [["root",null,null,1],["next",null,"root",0],["child","next",null,0],["grandchild","child",null,0],["other",null,null,0]] as const) {
+    await db.run("INSERT INTO tasks(id,userId,title,parentId,repeatGroupId,isCompleted,repeatRule,createdAt,updatedAt) VALUES (?,'u',?,?,?,?, 'daily','created','updated')",[id,id,parent,group,done]);
+  }
+  return {db,repository};
+}
+it("native series deletion atomically removes deep descendants and queues explicit series intent",async()=>{
+  const {db,repository}=await recurrenceFixture();
+  await ensureMobileLocalTaskSchema(db);
+  await db.run("INSERT INTO mobile_local_task_dependencies(id,userId,predecessorTaskId,successorTaskId,createdAt,updatedAt) VALUES('dep','u','grandchild','other','created','updated')");
+  await db.run("INSERT INTO task_reminders(id,taskId,userId,createdAt,updatedAt) VALUES('r','grandchild','u','created','updated')");
+  expect(await repository.removeTaskOccurrences("next","series")).toEqual({success:true,affected:4});
+  expect((await db.query<Task>("SELECT * FROM tasks")).map(row=>row.id)).toEqual(["other"]);
+  expect(await db.query("SELECT * FROM task_reminders")).toEqual([]);
+  expect(await db.query("SELECT * FROM mobile_local_task_dependencies")).toEqual([]);
+  expect(await db.query("SELECT id FROM task_deletion_tombstones")).toHaveLength(4);
+  const queued = await db.query<{payload:string,entityId:string}>("SELECT * FROM sync_outbox WHERE entityType='task'");
+  expect(queued).toHaveLength(4);
+  expect(JSON.parse(queued.find(row=>row.entityId==="next")!.payload)).toMatchObject({recurrenceAction:"series",repeatGroupId:"root"});
+  expect(JSON.parse(queued.find(row=>row.entityId==="grandchild")!.payload).recurrenceAction).toBe("single");
+  await db.close();
+});
+it("native stop preserves history and survives reopening with a durable series command",async()=>{
+  const {db,repository}=await recurrenceFixture();
+  await repository.removeTaskOccurrences("next","stop");
+  expect(await db.query("SELECT isCompleted,repeatRule FROM tasks WHERE id='root'")).toEqual([{isCompleted:1,repeatRule:"none"}]);
+  expect(await db.query("SELECT * FROM tasks")).toHaveLength(5);
+  const before=await db.query("SELECT * FROM sync_outbox WHERE entityType='task'");
+  expect(before).toHaveLength(1);await db.close();
+  const reopened=await openNativeDatabase("repeat-deletion-fixture");
+  expect(await reopened.query("SELECT * FROM sync_outbox WHERE entityType='task'")).toEqual(before);
+  expect(await reopened.query("SELECT action FROM task_recurrence_state")).toEqual([{action:"stop"}]);
+  await reopened.close();
+});
+it("native deletion and stop roll back tasks and lifecycle markers when Outbox insertion fails",async()=>{
+  const {db,repository}=await recurrenceFixture();const before=await db.query("SELECT * FROM tasks");
+  await db.run("CREATE TRIGGER fail_task_intent BEFORE INSERT ON sync_outbox WHEN NEW.entityType='task' BEGIN SELECT RAISE(ABORT,'Outbox interruption'); END");
+  for(const mode of ["stop","series"] as const){
+    await expect(repository.removeTaskOccurrences("next",mode)).rejects.toThrow("Outbox interruption");
+    expect(await db.query("SELECT * FROM tasks")).toEqual(before);
+    expect(await db.query("SELECT * FROM task_recurrence_state")).toEqual([]);
+    expect(await db.query("SELECT * FROM task_deletion_tombstones")).toEqual([]);
+  }
+  await db.close();
+});
+it("a late confirmed recurrence response cannot recreate a locally deleted series",async()=>{
+  const {db,repository}=await recurrenceFixture();const stale=(await db.query<Task>("SELECT * FROM tasks WHERE id='next'"))[0];
+  await repository.removeTaskOccurrences("next","series");
+  await cacheConfirmedNativeTasks(db,"u",[stale,{...stale,id:"late",repeatGroupId:"root"}]);
+  expect(await db.query("SELECT id FROM tasks WHERE repeatGroupId='root'")).toEqual([]);
+  await db.close();
 });

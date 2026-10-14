@@ -1,4 +1,6 @@
 import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
+import { invalidTaskDateField } from "../lib/taskDates.js";
+import { guardTaskRecurrenceWrite, removeTaskOccurrences, taskRemovalRows } from "../lib/taskRecurrenceDeletion.js";
 import { withEncryptedBlockWrite } from "../lib/encryptedBlockWrites.js";
 import type Database from "better-sqlite3";
 import { guardEncryptedNoteMutation, guardEncryptedBlockWriter } from "../lib/encryptedNotes.js";
@@ -419,15 +421,42 @@ function applyAttachment(db: Database.Database, input: ApplyMutationInput): numb
  * 因此只要双方 updatedAt 不同就判冲突，交给用户决定。
  */
 function applyTask(db: Database.Database, input: ApplyMutationInput): number | null {
+  const p = input.payload || {};
+  const scopeTask = db.prepare(`SELECT * FROM tasks WHERE id=? AND workspaceId IS ? AND (? IS NOT NULL OR userId=?)`)
+    .get(input.entityId,workspaceIdOf(input),workspaceIdOf(input),input.userId) as any;
+  const tombstone = db.prepare(`SELECT * FROM task_deletion_tombstones WHERE id=? AND workspaceId IS ? AND (? IS NOT NULL OR userId=?)`)
+    .get(input.entityId,workspaceIdOf(input),workspaceIdOf(input),input.userId) as any;
+  if ((!scopeTask && db.prepare("SELECT 1 FROM tasks WHERE id=?").get(input.entityId)) || (!tombstone && db.prepare("SELECT 1 FROM task_deletion_tombstones WHERE id=?").get(input.entityId))) {
+    throw new SyncError("SCOPE_FORBIDDEN", "任务不属于当前同步作用域");
+  }
+  if (scopeTask && p.repeatGroupId !== undefined && (p.repeatGroupId || input.entityId) !== (scopeTask.repeatGroupId || input.entityId)) {
+    throw new SyncError("VERSION_CONFLICT", "不能通过同步更改循环任务系列");
+  }
+  const anchor = scopeTask || tombstone || { id: input.entityId, userId: input.userId, workspaceId: workspaceIdOf(input) };
+  const removalMode = p.recurrenceAction === "stop" ? "stop" : (input.operation === "delete" ? (p.recurrenceAction === "series" ? "series" : "single") : null);
+  const removalRows = removalMode ? taskRemovalRows(db,anchor,removalMode) : [];
+  if (input.operation === "delete" && p.recurrenceAction === "stop") removalRows.push(...taskRemovalRows(db,anchor,"single"));
+  if (removalRows.some(row => {
+    if (row.userId === input.userId) return false;
+    if (!row.workspaceId) return true;
+    const role = db.prepare("SELECT role FROM workspace_members WHERE workspaceId=? AND userId=?").get(row.workspaceId,input.userId) as {role:string} | undefined;
+    return role?.role !== "owner" && role?.role !== "admin";
+  })) {
+    throw new SyncError("SCOPE_FORBIDDEN", "无权操作部分循环任务");
+  }
   if (input.operation === "delete") {
+    if (p.recurrenceAction === "stop") removeTaskOccurrences(db,anchor,"stop");
+    if (p.recurrenceAction === "series" && anchor) removeTaskOccurrences(db,anchor,"series");
+    else if (scopeTask) removeTaskOccurrences(db,scopeTask,"single");
+    db.prepare("INSERT OR IGNORE INTO task_deletion_tombstones(id,userId,workspaceId,repeatGroupId,deletedAt) VALUES(?,?,?,?,?)")
+      .run(input.entityId,input.userId,workspaceIdOf(input),anchor.repeatGroupId || null,new Date().toISOString());
     // 子任务通过 parentId 的 CASCADE 一并删除，与本地删除语义一致。
-    db.prepare(`DELETE FROM tasks WHERE id = ? AND workspaceId IS ?
-      AND (? IS NOT NULL OR userId = ?)`)
-      .run(input.entityId, workspaceIdOf(input), workspaceIdOf(input), input.userId);
     return null;
   }
-
-  const p = input.payload || {};
+  if (p.recurrenceAction === "stop" && anchor && p.title === undefined) {
+    removeTaskOccurrences(db,anchor,"stop"); return null;
+  }
+  if (tombstone && !scopeTask) throw new SyncError("VERSION_CONFLICT", "任务已删除，请保留冲突或另建任务");
   const requestedNoteId = typeof p.noteId === "string" ? p.noteId : null;
   const requestedParentId = typeof p.parentId === "string" ? p.parentId : null;
   if (requestedNoteId && !noteExists(db,requestedNoteId,input)) {
@@ -451,6 +480,12 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
       throw new SyncError("VERSION_CONFLICT", "任务在服务端已被修改");
     }
   }
+
+  const invalidDate = invalidTaskDateField(p,existing);
+  if (invalidDate) throw new SyncError("INVALID_PAYLOAD",`Invalid ${invalidDate}`);
+  const taskScope = { id: input.entityId, userId: input.userId, workspaceId: workspaceIdOf(input), repeatGroupId: typeof p.repeatGroupId === "string" ? p.repeatGroupId : (scopeTask?.repeatGroupId ?? null) };
+  if (p.recurrenceAction === "stop" && existing) removeTaskOccurrences(db,taskScope,"stop");
+  guardTaskRecurrenceWrite(db,taskScope,p.repeatRule ?? existing?.repeatRule);
 
   const archivedAt = Object.prototype.hasOwnProperty.call(p,"archivedAt") ? (typeof p.archivedAt === "string" ? p.archivedAt : null) : (existing?.archivedAt ?? null);
   if (archivedAt && !p.isCompleted) throw new SyncError("VERSION_CONFLICT", "请先恢复已归档任务");

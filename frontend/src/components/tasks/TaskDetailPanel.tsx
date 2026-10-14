@@ -5,7 +5,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeSanitize from "rehype-sanitize";
 import { Flag, Trash2, X, Bell, BellOff, CheckCircle2, Circle, Plus, Clock, Repeat, Link2, CalendarDays, Loader2 } from "lucide-react";
-import { format, parseISO } from "date-fns";
+import { format } from "date-fns";
 import { zhCN, enUS } from "date-fns/locale";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,7 @@ import {
   getDueTimeValue,
   isTaskAllDay,
   isTaskDateRangeInvalid,
+  parseTaskDate,
 } from "./taskDateUtils";
 import { buildCustomReminderOffset, sortRemindersByOffset } from "./taskReminderUtils";
 import {
@@ -184,6 +185,7 @@ export const TaskDetailPanel = React.forwardRef<HTMLDivElement, {
   const isZh = lang.toLowerCase().startsWith("zh");
   const dateLocale = isZh ? zhCN : enUS;
   const createdAtDate = parseServerTime(task.createdAt);
+  const dueDateForDisplay = parseTaskDate(task.dueDate);
   const [title, setTitle] = useState(task.title);
   const [description, setDescription] = useState(task.description ?? "");
   const [descriptionMode, setDescriptionMode] = useState<"edit" | "preview">(task.archivedAt ? "preview" : "edit");
@@ -779,7 +781,7 @@ export const TaskDetailPanel = React.forwardRef<HTMLDivElement, {
 
           {task.dueDate && (
             <div className="text-xs text-tx-tertiary">
-              {t("tasks.progress.dueLabel")}: {format(parseISO(task.dueDate), isZh ? "yyyy年M月d日" : "MMM d, yyyy", { locale: dateLocale })}
+              {t("tasks.progress.dueLabel")}: {dueDateForDisplay ? format(dueDateForDisplay, isZh ? "yyyy年M月d日" : "MMM d, yyyy", { locale: dateLocale }) : t("taskRemoval.invalidDate")}
             </div>
           )}
         </div>

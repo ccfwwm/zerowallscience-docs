@@ -92,6 +92,7 @@ function createApi() {
       generatedTask: null,
     })),
     deleteTask: vi.fn(async (_id: string) => ({ success: true })),
+    stopTaskRecurrence: vi.fn(async (_id: string) => ({ success: true, affected: 2 })),
     getHabits: vi.fn(async (_includeArchived?: boolean, _checkinDate?: string) => [habit()]),
     getHabitStats: vi.fn(async (_includeArchived?: boolean, _checkinDate?: string) => habitStats),
     getHabitCheckinLog: vi.fn(async (_params?: { from?: string; to?: string; includeArchived?: boolean }) => []),
@@ -126,6 +127,53 @@ beforeEach(() => {
 });
 
 describe("taskOfflineApi", () => {
+  it("persists an offline series delete through restart, failed replay and stale server refresh", async () => {
+    const fixture = createApi();
+    const rows = [task({id:"root",repeatRule:"daily"}),task({id:"next",repeatGroupId:"root",repeatRule:"daily"}),task({id:"child",parentId:"next"}),task({id:"other"})];
+    fixture.native.getTasks.mockResolvedValue(rows);
+    const options = {getServerUrl:() => "https://repeat.test",getWorkspaceId:() => "personal",getScopeKey:() => "repeat-delete"};
+    installTaskOfflineApi(fixture.api,options); await fixture.api.getTasks("history");
+    setOnline(false); await (fixture.api.deleteTask as (id:string,mode:string)=>Promise<unknown>)("next","series");
+    const restarted = createApi(); restarted.native.getTasks.mockResolvedValue(rows);
+    restarted.native.deleteTask.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const controller = installTaskOfflineApi(restarted.api,options);
+    expect((await restarted.api.getTasks("history")).map(row => row.id)).toEqual(["other"]);
+    setOnline(true); await controller.flush(); expect(controller.pending()).toBe(1);
+    restarted.native.deleteTask.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    expect((await restarted.api.getTasks("history")).map(row => row.id)).toEqual(["other"]);
+    expect(controller.pending()).toBe(1);
+    await controller.flush(); expect(controller.pending()).toBe(0);
+    expect(restarted.native.deleteTask).toHaveBeenLastCalledWith("next","series");
+    restarted.native.getTasks.mockResolvedValue([...rows,task({id:"late",repeatGroupId:"root",repeatRule:"daily"})]);
+    expect((await restarted.api.getTasks("history")).map(row => row.id)).toEqual(["other"]);
+  });
+  it("keeps offline stop intent over old snapshots and replays it after restart", async () => {
+    const fixture=createApi(); const rows=[task({id:"root",repeatRule:"daily"}),task({id:"next",repeatGroupId:"root",repeatRule:"daily"})];
+    fixture.native.getTasks.mockResolvedValue(rows);
+    const options={getServerUrl:() => "https://repeat.test",getWorkspaceId:() => "personal",getScopeKey:() => "repeat-stop"};
+    installTaskOfflineApi(fixture.api,options); await fixture.api.getTasks("history"); setOnline(false);
+    await fixture.api.stopTaskRecurrence("next");
+    const restarted=createApi(); restarted.native.getTasks.mockResolvedValue(rows);
+    restarted.native.stopTaskRecurrence.mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    const controller=installTaskOfflineApi(restarted.api,options);setOnline(true);
+    expect((await restarted.api.getTasks("history")).every(row=>row.repeatRule==="none")).toBe(true);
+    expect(controller.pending()).toBe(1);
+    restarted.native.getTasks.mockResolvedValue(rows.map(row=>({...row,repeatRule:"none"})) as Task[]);
+    await controller.flush();expect(controller.pending()).toBe(0);
+    expect(restarted.native.stopTaskRecurrence).toHaveBeenLastCalledWith("next");
+    restarted.native.getTasks.mockResolvedValue(rows);
+    expect((await restarted.api.getTasks("history")).every(row=>row.repeatRule==="none")).toBe(true);
+  });
+  it("deleting while an offline create is in flight hides its delayed response and queues its server deletion",async()=>{
+    const {api,native}=createApi();setOnline(false);
+    const controller=installTaskOfflineApi(api,{getServerUrl:()=>"https://repeat.test",getWorkspaceId:()=>"personal",getScopeKey:()=>"inflight-create-delete"});
+    const created=await api.createTask({title:"Remove me"});
+    let finish:(row:Task)=>void=()=>{};native.createTask.mockImplementationOnce(()=>new Promise(resolve=>{finish=resolve;}));
+    setOnline(true);const flushing=controller.flush();await Promise.resolve();await api.deleteTask(created.id);
+    finish(task({id:"server-task"}));await flushing;
+    expect(native.deleteTask).toHaveBeenCalledWith("server-task");expect(controller.pending()).toBe(0);
+    native.getTasks.mockResolvedValue([task({id:"server-task"})]);expect(await api.getTasks("history")).toEqual([]);
+  });
   it("keeps an offline task-tree archive across reinitialization and failed replay", async () => {
     const fixture = createApi();
     const rows = [task({id:"root",isCompleted:1,status:"done",completedAt:new Date().toISOString()}),task({id:"child",parentId:"root",isCompleted:1,status:"done",completedAt:new Date().toISOString()})];

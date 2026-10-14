@@ -504,6 +504,9 @@ export class SyncEngine {
     if (rows.length === 0) return;
 
     const batch = coalesceMutations(rows);
+    if (batch.some(item => item.entityType === "task" && ["stop","series"].includes(String(item.payload?.recurrenceAction))) && scope.taskRecurrenceLifecycle !== "v1") {
+      throw new SyncError("SERVER_ERROR","请升级服务器以同步循环任务操作；本机修改已保留");
+    }
     for (const mutation of batch) {
       markMutationInflight(this.db, mutation.mutationId);
       for (const superseded of mutation.supersededIds) {
