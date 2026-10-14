@@ -605,7 +605,7 @@
     "rtfRescueUploadDone": "已上传 {{uploaded}}/{{total}} 张图片",
     "rtfRescueUploadPartial": "已上传 {{uploaded}}/{{total}} 张，{{failed}} 张失败",
     "localizingImages": "正在保存 {{count}} 张图片...",
-    "imagesNotLoaded": "有 {{count}} 张图片未加载完，已丢失。请在原网页等图片全部显示后再复制",
+    "imagesNotLoaded": "有 {{count}} 张图片无法获取可用地址，未能粘贴。可尝试在原网页等图片显示后重新复制，或导出 Markdown 和配套图片后导入",
     "wordImagesNotPastable": "有 {{count}} 张 Word 图片未能粘贴进来（全选长文时 Word 不会把图片放进剪贴板，只留本地临时路径）。可尝试：1) 每次只选几段带图片分次复制；2) 或使用 数据管理 → 导入 Word 文档",
     "imageSize25": "25%",
     "imageSize50": "50%",

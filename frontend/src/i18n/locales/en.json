@@ -598,7 +598,7 @@
     "rtfRescueUploading": "Uploading images to server ({{done}}/{{total}})...",
     "rtfRescueUploadDone": "Uploaded {{uploaded}}/{{total}} image(s)",
     "rtfRescueUploadPartial": "Uploaded {{uploaded}}/{{total}}, {{failed}} failed",
-    "imagesNotLoaded": "{{count}} image(s) were not fully loaded and got dropped. Please wait until all images are visible on the source page before copying.",
+    "imagesNotLoaded": "{{count}} image(s) could not be pasted because no usable image address was available. Try copying again after the images appear on the source page, or import an exported Markdown file with its images.",
     "wordImagesNotPastable": "{{count}} Word image(s) could not be pasted (when copying large selections, Word leaves only local temp paths on the clipboard). Try: 1) copy a few paragraphs + images at a time; 2) or use Data Manager → Import Word.",
     "imageSize25": "25%",
     "imageSize50": "50%",
