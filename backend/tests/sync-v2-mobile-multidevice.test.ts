@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { serve } from "@hono/node-server";
 import { NativeLocalRepository } from "../../frontend/src/lib/nativeLocalRepository";
 import { MobileSyncEngine } from "../../frontend/src/lib/mobileSyncEngine";
+import { NATIVE_TASK_REPEAT_COLUMNS } from "../../frontend/src/lib/nativeTaskFields";
 import type { NativeDatabase } from "../../frontend/src/lib/nativeDatabase";
 import { nativeReceiptKey, readNativeNoteSyncReceipt } from "../../frontend/src/lib/mobileNoteSyncReceipt";
 import { applyNativePersonalTree } from "../../frontend/src/lib/nativeKnowledgeTreeSync";
@@ -41,6 +42,10 @@ function openClientDb(file: string): NativeDatabase {
   const entityTypes = source.match(/const ENTITY_TYPE_CHECK = `([\s\S]*?)`;/)![1];
   for (const [, sql] of source.matchAll(/`(CREATE TABLE IF NOT EXISTS [\s\S]*?)`/g)) {
     raw.exec(sql.replaceAll("${SCOPE_CHECK}", scopeCheck).replaceAll("${ENTITY_TYPE_CHECK}", entityTypes));
+  }
+  const taskColumns = new Set((raw.prepare("PRAGMA table_info(tasks)").all() as Array<{ name: string }>).map(column => column.name));
+  for (const [field, type] of Object.entries(NATIVE_TASK_REPEAT_COLUMNS)) {
+    if (!taskColumns.has(field)) raw.exec(`ALTER TABLE tasks ADD COLUMN ${field} ${type}`);
   }
   let queue = Promise.resolve();
   const schedule = <T>(work: () => Promise<T>): Promise<T> => {
@@ -98,7 +103,7 @@ async function conflicts(c: Client) { return c.db.query<{ localPayload: string; 
 test("native task archive survives restart and converges with its details on a second device",async () => {
   const root=randomUUID(),child=randomUUID();
   for (const [id,parent] of [[root,null],[child,root]]) serverDb.prepare(`INSERT INTO tasks
-    (id,userId,title,description,parentId,isCompleted,status,completedAt,dueAt) VALUES (?,?,'Project','Preserved task details',?,1,'done',?,'2026-10-13T18:00')`)
+    (id,userId,title,description,parentId,isCompleted,status,completedAt,dueAt,repeatRule,repeatInterval,repeatEndCount) VALUES (?,?,'Project','Preserved task details',?,1,'done',?,'2026-10-13T18:00','daily',2,7)`)
     .run(id,USER,parent,new Date().toISOString());
   const first=await client("task-archive-first");await first.sync();
   assert.equal((await first.db.query<any>("SELECT * FROM tasks WHERE id=?",[root]))[0].description,"Preserved task details");
@@ -114,7 +119,7 @@ test("native task archive survives restart and converges with its details on a s
   const second=await client("task-archive-second");await second.sync();
   for (const id of [root,child]) {
     const row=(await second.db.query<any>("SELECT * FROM tasks WHERE id=?",[id]))[0];
-    assert.ok(row.archivedAt);assert.equal(row.description,"Preserved task details");assert.equal(row.dueAt,"2026-10-13T18:00");assert.equal(row.status,"done");
+    assert.ok(row.archivedAt);assert.equal(row.description,"Preserved task details");assert.equal(row.dueAt,"2026-10-13T18:00");assert.equal(row.status,"done");assert.equal(row.repeatRule,"daily");assert.equal(row.repeatInterval,2);assert.equal(row.repeatEndCount,7);
   }
   await second.repository.archiveTaskTree(root,false);await second.sync();await reopened.sync();
   assert.equal((await reopened.db.query<any>("SELECT * FROM tasks WHERE id=?",[root]))[0].archivedAt,null);
