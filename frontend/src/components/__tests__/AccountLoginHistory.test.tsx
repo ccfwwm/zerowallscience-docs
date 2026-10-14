@@ -12,7 +12,7 @@ vi.mock("@/lib/accountLoginSwitch", () => ({
 }));
 
 vi.mock("react-i18next", async (importOriginal) => ({
-  ...await importOriginal<typeof import("react-i18next")>(),
+  ...(await importOriginal<typeof import("react-i18next")>()),
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 

@@ -442,7 +442,7 @@ function createTaskRecord(db: ReturnType<typeof getDb>, userId: string, workspac
   if (effectiveIsCompleted && Object.prototype.hasOwnProperty.call(body,"completedAt")) {
     if (body.completedAt === null) effectiveCompletedAt = null;
     else if (typeof body.completedAt === "string" && Number.isFinite(Date.parse(body.completedAt))) effectiveCompletedAt = new Date(body.completedAt).toISOString();
-    else throw new TaskCreateError({error:"Invalid completion time",code:"INVALID_COMPLETED_AT"},400);
+    else throw new TaskCreateError({ error: "Invalid completion time", code: "INVALID_COMPLETED_AT" }, 400);
   }
 
   const effectiveRepeatEndDate = repeatRule === "none" ? null : repeatEndDate;

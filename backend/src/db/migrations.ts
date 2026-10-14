@@ -419,8 +419,8 @@ export const MIGRATIONS: Migration[] = [
   wechatAssistantMigration,
   wechatAssistantQueueColumnsMigration,
   encryptedContentV2Migration,
-  taskComposerMigration,
   taskLifecycleMigration,
+  taskComposerMigration,
 ].sort((a, b) => a.version - b.version);
 
 export const CURRENT_SCHEMA_VERSION: number = MIGRATIONS.reduce(

@@ -1,4 +1,8 @@
 import { isTaskCompletedToday } from "@/components/tasks/taskLifecycle";
+import { getTaskComposerContext, isTaskComposerContextCurrent, registerTaskComposerCache, TaskComposerApiError, updateRepeatingTaskOnline } from "./taskComposerApi";
+import i18n from "@/i18n";
+import { cacheConfirmedNativeTasks } from "./nativeTaskComposerCache";
+import { NATIVE_TASK_REPEAT_FIELDS, nativeTaskRepeatValues } from "./nativeTaskFields";
 import type {
   Diary,
   DiaryStats,
@@ -20,10 +24,6 @@ import { isMobileLocalMode } from "./mobileLocalMode";
 import { ensureMobileLocalMindMapTree } from "./mobileLocalMindMapTree";
 import type { NativeDatabase } from "./nativeDatabase";
 import type { NativeLocalRepository } from "./nativeLocalRepository";
-import { getTaskComposerContext, isTaskComposerContextCurrent, registerTaskComposerCache, TaskComposerApiError, updateRepeatingTaskOnline } from "./taskComposerApi";
-import i18n from "@/i18n";
-import { cacheConfirmedNativeTasks } from "./nativeTaskComposerCache";
-import { NATIVE_TASK_REPEAT_FIELDS, nativeTaskRepeatValues } from "./nativeTaskFields";
 
 type SyncEntityType = "task" | "task_reminder" | "diary" | "mindmap" | "attachment";
 
