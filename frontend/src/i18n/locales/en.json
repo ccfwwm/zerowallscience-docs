@@ -1632,6 +1632,14 @@
     }
   },
   "tasks": {
+    "contextMenu": {
+      "actions": "Task actions",
+      "open": "View details",
+      "complete": "Mark complete",
+      "reopen": "Reopen task",
+      "moveProject": "Move to project",
+      "confirmDelete": "Delete task “{{title}}”? This cannot be undone."
+    },
     "lifecycle": {
       "scopeChanged": "Account or server changed. Reopen the task before saving.",
       "waitAttachments": "Attachments are uploading. Wait before saving as a note.",

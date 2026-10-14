@@ -1639,6 +1639,14 @@
     }
   },
   "tasks": {
+    "contextMenu": {
+      "actions": "任务操作",
+      "open": "查看详情",
+      "complete": "标记为完成",
+      "reopen": "重新打开任务",
+      "moveProject": "移动到项目",
+      "confirmDelete": "删除任务“{{title}}”？此操作无法撤销。"
+    },
     "lifecycle": {
       "scopeChanged": "账号或服务器已切换，请重新打开任务后保存",
       "waitAttachments": "附件仍在上传，请完成后再保存为笔记",

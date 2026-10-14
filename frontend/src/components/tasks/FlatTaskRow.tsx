@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  CheckCircle2, Circle, Flag, Trash2, User as UserIcon, Plus, Repeat, Link2, Bell,
+  CheckCircle2, Circle, Flag, MoreHorizontal, Trash2, User as UserIcon, Plus, Repeat, Link2, Bell,
 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
@@ -181,6 +181,9 @@ export const FlatTaskRow = React.forwardRef<HTMLDivElement, {
               "transition-opacity",
             )}
           />
+          <button type="button" data-task-menu-trigger aria-label={t("tasks.contextMenu.actions")} title={t("tasks.contextMenu.actions")} className="p-1 rounded text-tx-tertiary hover:bg-app-hover hover:text-tx-primary md:opacity-0 md:group-hover:opacity-100 focus:opacity-100">
+            <MoreHorizontal size={14} />
+          </button>
           <button
             onClick={(e) => { e.stopPropagation(); onDelete(task.id); }}
             className="hidden md:inline-flex md:opacity-0 md:group-hover:opacity-100 text-tx-tertiary hover:text-accent-danger transition-all"

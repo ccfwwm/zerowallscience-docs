@@ -23,6 +23,14 @@
 
 创建成功后，快捷属性会重置；创建失败时保留设置，便于重试。
 
+## 任务右键菜单 / Task context menu
+
+在列表、子任务树、看板、日历或甘特视图中右键任务，可查看详情、完成或重新打开、添加子任务、调整优先级、移动项目、保存为笔记，以及归档、恢复或删除。菜单只操作指向的任务；带子任务的删除会说明影响范围，取消确认不会删除。已归档任务保持只读，归档与恢复以根任务树为单位，归档时整棵任务树必须已经完成。
+
+列表中的「任务操作」按钮提供相同入口。键盘聚焦任务后可按 Shift+F10 或菜单键打开，使用 Tab 和 Enter 选择操作，Escape 或点击菜单外部关闭。
+
+Right-click a task in list, tree, board, calendar or Gantt views for its existing actions. The menu operates on that task, confirms deletion, preserves archived tasks as read-only, and archives/restores a completed tree from its root. List rows also expose a Task actions button. Focus a task and press Shift+F10 or the menu key; use Tab and Enter to choose, or Escape to close.
+
 ## AI 智能生成待办 / AI Task Composer
 
 在任务中心顶部点击「AI 生成待办」，描述计划或粘贴待办文字。复用设置中的 AI 服务；无需配置第二套密钥。高级选项可设置日期范围、项目、候选上限（默认 12，最多 30）以及时间和重复识别。

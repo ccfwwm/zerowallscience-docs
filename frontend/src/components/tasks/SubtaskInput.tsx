@@ -58,6 +58,8 @@ export function SubtaskInput({
         className="flex-1 min-w-0 bg-transparent text-sm text-tx-primary placeholder:text-tx-tertiary focus:outline-none border-b border-app-border focus:border-accent-primary transition-colors py-1"
       />
       <button
+        type="button"
+        aria-label={t("common.cancel")}
         onClick={onCancel}
         className="flex-shrink-0 p-0.5 rounded hover:bg-app-hover text-tx-tertiary transition-colors"
       >

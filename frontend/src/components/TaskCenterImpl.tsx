@@ -55,7 +55,11 @@ import { openTaskQuickCapture } from "@/lib/taskInboxApi";
 import { consumePendingTaskNotificationTaskId } from "@/lib/taskNotifications";
 import { TASK_NOTIFICATION_OPEN_EVENT } from "@/lib/taskNotificationSchedule";
 import { useUserPreferences } from "@/hooks/useUserPreferences";
+import { useContextMenu } from "@/hooks/useContextMenu";
+import { SubtaskInput } from "./tasks/SubtaskInput";
 import { isTaskCenterModuleVisible } from "@/lib/navigationVisibility";
+const TaskSaveNoteDialog = React.lazy(() => import("./tasks/TaskSaveNoteDialog").then(module => ({ default: module.TaskSaveNoteDialog })));
+const TaskContextMenu = React.lazy(() => import("./tasks/TaskContextMenu"));
 const TaskComposer = React.lazy(() => import("./tasks/TaskComposer"));
 
 export function formatLocalDateKey(date = new Date()): string {
@@ -127,6 +131,10 @@ export default function TaskCenter() {
   const [newHabitTitle, setNewHabitTitle] = useState("");
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const { menu: taskMenu, menuRef: taskMenuRef, openMenu: openTaskMenu, openMenuAt: openTaskMenuAt, closeMenu: closeTaskMenu } = useContextMenu();
+  const [contextChildTask, setContextChildTask] = useState<Task | null>(null);
+  const [contextNoteTask, setContextNoteTask] = useState<Task | null>(null);
+  const contextTask = tasks.find(task => task.id === taskMenu.targetId);
   const [newTitle, setNewTitle] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -387,6 +395,7 @@ export default function TaskCenter() {
 
   useEffect(() => {
     const onWs = () => {
+      closeTaskMenu(); setContextChildTask(null); setContextNoteTask(null);
       setSelectedTaskId(null);
       setSearchQuery("");
       setSelectedIds(new Set());
@@ -399,7 +408,7 @@ export default function TaskCenter() {
     };
     window.addEventListener("nowen:workspace-changed", onWs);
     return () => window.removeEventListener("nowen:workspace-changed", onWs);
-  }, [centerMode, loadHabits, loadStatsCenter, loadTasks]);
+  }, [centerMode, loadHabits, loadStatsCenter, loadTasks, closeTaskMenu]);
 
   useEffect(() => {
     if (centerMode === "stats") {
@@ -458,6 +467,7 @@ export default function TaskCenter() {
   // === Keyboard shortcuts ===
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      if (taskMenu.isOpen || contextChildTask || contextNoteTask) return;
       const tag = (e.target as HTMLElement)?.tagName;
       const isInput = tag === "INPUT" || tag === "TEXTAREA" || (e.target as HTMLElement)?.isContentEditable;
 
@@ -479,7 +489,11 @@ export default function TaskCenter() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [selectMode, selectedTaskId, searchQuery]);
+  }, [selectMode, selectedTaskId, searchQuery, taskMenu.isOpen, contextChildTask, contextNoteTask]);
+
+  useEffect(() => {
+    closeTaskMenu(); setContextChildTask(null); setContextNoteTask(null);
+  }, [centerMode, filter, selectedProjectId, viewMode, workspaceVersion, closeTaskMenu]);
 
   // === CRUD Handlers ===
   const handleToggle = async (id: string) => {
@@ -846,8 +860,59 @@ export default function TaskCenter() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [taskFullscreen]);
 
+  const getContextTaskTarget = (target: EventTarget | null) => {
+    if (!(target instanceof Element) || isLoading || centerMode !== "tasks") return null;
+    if (target.closest("input, textarea, [contenteditable='true']")) return null;
+    return target.closest<HTMLElement>("[data-task-context-id]");
+  };
+  const contextDescendants = new Set(contextTask ? getDescendantIds(contextTask.id, tasks) : []);
+  const canArchiveContextTask = !!contextTask && tasks.every(task => !contextDescendants.has(task.id) || task.isCompleted === 1);
+  const handleTaskMenuAction = (action: string) => {
+    const task = contextTask;
+    closeTaskMenu();
+    if (!task) return;
+    if (action === "open") { setSelectedTaskId(task.id); return; }
+    if (action === "save-note") { setContextNoteTask(task); return; }
+    if (action === "delete") {
+      if (getDescendantIds(task.id, tasks).length === 1 && !window.confirm(t("tasks.contextMenu.confirmDelete", { title: task.title }))) return;
+      void handleDelete(task.id); return;
+    }
+    if (action === "restore") { if (task.archivedAt && !task.parentId) void handleArchive(task.id, false); return; }
+    if (task.archivedAt) return;
+    if (action === "toggle") void handleToggle(task.id);
+    else if (action === "add-child") setContextChildTask(task);
+    else if (action === "archive" && canArchiveContextTask && !task.parentId) void handleArchive(task.id, true);
+    else if (action.startsWith("priority:")) {
+      const priority = Number(action.slice(9));
+      if (priority === 1 || priority === 2 || priority === 3) void handleUpdate(task.id, { priority });
+    } else if (action.startsWith("project:")) {
+      const projectId = action.slice(8);
+      if (projectId === "none" || projects.some(project => project.id === projectId)) void handleUpdate(task.id, { projectId: projectId === "none" ? null : projectId });
+    }
+  };
+
   return (
-    <div className={cn(TASK_CENTER_ROOT_CLASS, taskFullscreen && "fixed inset-0 z-[80] bg-app-bg")}>
+    <div className={cn(TASK_CENTER_ROOT_CLASS, taskFullscreen && "fixed inset-0 z-[80] bg-app-bg")}
+      onContextMenu={event => {
+        const target = getContextTaskTarget(event.target);
+        if (target) openTaskMenu(event, target.dataset.taskContextId!, "task");
+      }}
+      onKeyDown={event => {
+        if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+        const target = getContextTaskTarget(event.target);
+        if (!target) return;
+        event.preventDefault(); event.stopPropagation();
+        const rect = target.getBoundingClientRect();
+        openTaskMenuAt(rect.left + 16, rect.top + 16, target.dataset.taskContextId!, "task");
+      }}
+      onClickCapture={event => {
+        if (!(event.target instanceof Element) || !event.target.closest("[data-task-menu-trigger]")) return;
+        const target = getContextTaskTarget(event.target);
+        if (!target) return;
+        event.preventDefault(); event.stopPropagation();
+        const rect = event.target.closest("button")!.getBoundingClientRect();
+        openTaskMenuAt(rect.right, rect.bottom, target.dataset.taskContextId!, "task");
+      }}>
       {/* Left: Sidebar Filters + Projects (desktop) */}
       <div className="hidden md:flex w-56 shrink-0 flex-col border-r border-app-border bg-app-surface overflow-y-auto" style={{ paddingTop: "var(--safe-area-top)" }}>
         <nav className="flex-1 px-2 py-1.5 space-y-0.5">
@@ -1460,6 +1525,8 @@ export default function TaskCenter() {
                     displayFlatOrdered.map((item) => (
                       <div
                         key={item.node.id}
+                        data-task-context-id={item.node.id}
+                        tabIndex={0}
                         className={cn(
                           "relative",
                           dragOverId === item.node.id && dragId !== item.node.id && "before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-accent-primary before:rounded-full before:-translate-y-1"
@@ -1498,6 +1565,8 @@ export default function TaskCenter() {
                     displayTasks.map((task) => (
                       <div
                         key={task.id}
+                        data-task-context-id={task.id}
+                        tabIndex={0}
                         className={cn(
                           "relative",
                           dragOverId === task.id && dragId !== task.id && "before:absolute before:inset-x-0 before:top-0 before:h-0.5 before:bg-accent-primary before:rounded-full before:-translate-y-1"
@@ -1564,6 +1633,16 @@ export default function TaskCenter() {
           </div>
         )}
       </div>
+
+      {taskMenu.isOpen && contextTask && <React.Suspense fallback={null}><TaskContextMenu menu={taskMenu} menuRef={taskMenuRef} task={contextTask} projects={projects} canArchive={canArchiveContextTask} onAction={handleTaskMenuAction} /></React.Suspense>}
+      {contextNoteTask && <React.Suspense fallback={null}><TaskSaveNoteDialog task={contextNoteTask} draft={{ title: contextNoteTask.title, description: contextNoteTask.description || "" }} onClose={() => setContextNoteTask(null)} /></React.Suspense>}
+      {contextChildTask && <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/40 p-4" onClick={() => setContextChildTask(null)}>
+        <div role="dialog" aria-modal="true" aria-labelledby="task-context-child-title" className="w-full max-w-md rounded-xl border border-app-border bg-app-surface p-4 shadow-xl" onClick={event => event.stopPropagation()} onKeyDown={event => { if (event.key === "Escape") setContextChildTask(null); }}>
+          <h2 id="task-context-child-title" className="font-semibold text-tx-primary">{t("tasks.addChild")}</h2>
+          <p className="mb-3 truncate text-sm text-tx-secondary">{contextChildTask.title}</p>
+          <SubtaskInput parentId={contextChildTask.id} onSubmit={handleCreateChild} onCancel={() => setContextChildTask(null)} />
+        </div>
+      </div>}
 
       {/* Project edit dialog */}
       {editingProject && (
