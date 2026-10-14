@@ -59,7 +59,7 @@ export function applyKnowledgeTreeLifecycle(db: Database.Database, userId: strin
     if(protectedAncestor) throw new SyncError("SCOPE_FORBIDDEN","受密码保护的目录需要使用在线回收站操作");
     if(node.resourceType==="note") {
       const note=db.prepare("SELECT contentFormat,isLocked FROM notes WHERE id=?").get(node.resourceId) as {contentFormat:string;isLocked:number}|undefined;
-      if(!note || note.isLocked || !["markdown","tiptap-json"].includes(note.contentFormat)) throw new SyncError("SCOPE_FORBIDDEN","当前文档需要使用在线回收站操作");
+      if(!note || note.isLocked || !["markdown","tiptap-json","plaintext"].includes(note.contentFormat)) throw new SyncError("SCOPE_FORBIDDEN","当前文档需要使用在线回收站操作");
     }
   }
   if (restoring) {

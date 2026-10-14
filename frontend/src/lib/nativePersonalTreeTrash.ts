@@ -55,7 +55,7 @@ export async function writeNativePersonalTreeLifecycle(tx:NativeDatabase,id:stri
     if(!access.access.capabilities.canDelete || !["notebook","note"].includes(String(node.resourceType))) unavailable();
     if(node.resourceType==="note") {
       const note=(await tx.query<{contentFormat:string;isLocked:number}>("SELECT contentFormat,isLocked FROM notes WHERE scopeKey='personal' AND id=?",[node.resourceId]))[0];
-      if(!note || note.isLocked || !["markdown","tiptap-json"].includes(note.contentFormat)) unavailable();
+      if(!note || note.isLocked || !["markdown","tiptap-json","plaintext"].includes(note.contentFormat)) unavailable();
     }
   }
   const timestamp=new Date().toISOString(), mutationId=newLocalId();

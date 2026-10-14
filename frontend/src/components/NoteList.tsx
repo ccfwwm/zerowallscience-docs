@@ -1569,7 +1569,7 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
   const createMenuAnchorMobileRef = useRef<HTMLButtonElement>(null);
   const createMenuAnchorFabRef = useRef<HTMLButtonElement>(null);
   // picker 模式下记住即将创建的笔记类型；用户选 notebook 后据此分支。
-  const [pendingNoteType, setPendingNoteType] = useState<"normal" | "markdown" | "word">("normal");
+  const [pendingNoteType, setPendingNoteType] = useState<"normal" | "markdown" | "plaintext" | "word">("normal");
   const [dateFilter, setDateFilter] = useState<string | null>(null); // YYYY-MM-DD
   const [notesLoadError, setNotesLoadError] = useState<string | null>(null);
   const [showCalendar, setShowCalendar] = useState(false);
@@ -2089,7 +2089,7 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
     });
   };
 
-  const handleCreateNote = async (noteType: "normal" | "markdown" | "word" | "journal" = "normal") => {
+  const handleCreateNote = async (noteType: "normal" | "markdown" | "plaintext" | "word" | "journal" = "normal") => {
     haptic.light();
     // 今日日记：不需要选择笔记本，直接调用 API
     if (noteType === "journal") {
@@ -2171,7 +2171,7 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
   // noteType="word" 时：弹文件选择器，走 importDocxAsNote（解析 .docx 为富文本笔记）。
   const createNoteInNotebook = async (
     notebookId: string,
-    noteType: "normal" | "markdown" | "word" | "journal" = "normal",
+    noteType: "normal" | "markdown" | "plaintext" | "word" | "journal" = "normal",
   ) => {
     try {
       let note: any;
@@ -2183,6 +2183,8 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
         const result = await importDocxAsNote({ notebookId, file });
         note = result.note;
         toast.success("导入成功");
+      } else if (noteType === "plaintext") {
+        note = await api.createNote({ notebookId, title: t("common.untitledNote"), contentFormat: "plaintext", content: "", contentText: "" });
       } else if (noteType === "markdown") {
         // 新建原生 Markdown 笔记
         note = await api.createNote({
@@ -2582,7 +2584,7 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
           id: "convert_format",
           label: targetNote.contentFormat === "markdown" ? t("note.contextMenu.convertToRichText") : t("note.contextMenu.convertToMarkdown"),
           icon: <ArrowLeftRight size={14} />,
-          disabled: targetNote.isLocked === 1,
+          disabled: targetNote.isLocked === 1 || targetNote.contentFormat === "plaintext",
         },
         {
           id: "save_as_template",

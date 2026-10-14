@@ -2982,6 +2982,10 @@
     "exportImageFailed": "Failed to export image",
     "exportImageLongConfirm": "This note is long. Image export may be slow or fail. Continue?",
     "format": {
+      "plainText": "Plain text (TXT)",
+      "plainTextDocument": "Plain text document (TXT)",
+      "plainTextDescription": "Text only, without formatting",
+      "exportTxt": "Export TXT",
       "markdown": "Markdown note",
       "markdownShort": "MD",
       "convertTitle": "Convert to {{target}}?",

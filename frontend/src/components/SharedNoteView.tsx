@@ -14,6 +14,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import { sanitizeForShare, sanitizeSvg } from "@/lib/sanitizeHtml";
+import PlainTextEditor from "@/components/PlainTextEditor";
 import TiptapEditor from "@/components/TiptapEditor";
 import { MotionPhotoOverlay, SharedPhotoMotionBridge } from "@/components/MotionPhotoOverlay";
 import { AttachmentPhotoPreview } from "@/components/attachmentPreview/AttachmentPreview";
@@ -144,10 +145,10 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
   } | null>(null);
   const isReadOnlyContent = !(isEditing && (content?.permission === "edit" || content?.permission === "edit_auth"));
   const sharedMarkdownForDisplay = useMemo(
-  () => content && detectFormat(content.content) === "md"
+  () => content && content.contentFormat !== "plaintext" && detectFormat(content.content) === "md"
     ? preprocessSharedMindMapMarkdown(prepareSharedMarkdownForDisplay(content.content))
     : "",
-  [content?.content],
+  [content?.content, content?.contentFormat],
 );
 
   // DOM 后处理 + DEBUG：统一给分享页正文图片补 width style
@@ -1207,13 +1208,15 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
         <section className="min-w-0">
           {isEditing && (content.permission === "edit" || content.permission === "edit_auth") && fakeNoteForEditing ? (
             <div className="shared-note-editor">
-              <TiptapEditor
+              {content.contentFormat === "plaintext" ? <PlainTextEditor key={fakeNoteForEditing.id} note={fakeNoteForEditing} onUpdate={handleGuestSave} editable={!content.isLocked} isGuest /> : <TiptapEditor
                 note={fakeNoteForEditing}
                 onUpdate={handleGuestSave}
                 editable={!content.isLocked}
                 isGuest
-              />
+              />}
             </div>
+          ) : content.contentFormat === "plaintext" ? (
+            <pre className="whitespace-pre-wrap break-words text-tx-primary" style={{ fontFamily: "inherit" }}>{content.content}</pre>
           ) : detectFormat(content.content) === "md" ? (
             // 新编辑器保存的 Markdown：用 react-markdown 渲染
             <div

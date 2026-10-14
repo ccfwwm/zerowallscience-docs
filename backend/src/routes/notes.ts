@@ -732,10 +732,11 @@ app.post("/", async (c) => {
     id = uuid();
   }
   // contentText 由服务端从正文派生，客户端提交值不再作为索引真源。
-  const contentFormat = body.contentFormat === "markdown" ? "markdown"
+  const contentFormat = body.contentFormat === "plaintext" ? "plaintext"
+    : body.contentFormat === "markdown" ? "markdown"
     : body.contentFormat === "html" ? "html"
     : "tiptap-json";
-  const defaultContent = contentFormat === "markdown" ? "# 无标题 Markdown\n\n" : "{}";
+  const defaultContent = contentFormat === "plaintext" ? "" : contentFormat === "markdown" ? "# 无标题 Markdown\n\n" : "{}";
   let initialContent = typeof body.content === "string" ? body.content : defaultContent;
   try {
     initialContent = stabilizePersistedNoteContent(initialContent, contentFormat);
@@ -783,7 +784,7 @@ app.post("/", async (c) => {
   // 必须放在 INSERT 之后，attachments.noteId 外键要求 note 行先存在。
   // 短路保证常规无内联图的创建零额外成本。
   let finalContent = initialContent;
-  if (typeof body.content === "string" && /data:(?:image|audio)\//i.test(body.content)) {
+  if (contentFormat !== "plaintext" && typeof body.content === "string" && /data:(?:image|audio)\//i.test(body.content)) {
     try {
       const r = extractInlineBase64Images(body.content, userId, id, inheritedWorkspaceId);
       if (r.replacedCount > 0) {
@@ -1136,7 +1137,8 @@ app.put("/:id", async (c) => {
   //   - 失败保留原 data URI 不阻断保存；
   //   - 抽取改写后会让 contentText 与 content 体积出现"不对称变化"——但 contentText 是
   //     纯文本不含 base64，本身不受影响，FTS 重排逻辑（notes_au）也不会被打扰。
-  if (typeof body.content === "string" && /data:(?:image|audio)\//i.test(body.content)) {
+  const imageSourceFormat = body.contentFormat ?? (db.prepare("SELECT contentFormat FROM notes WHERE id = ?").get(id) as { contentFormat: string }).contentFormat;
+  if (imageSourceFormat !== "plaintext" && typeof body.content === "string" && /data:(?:image|audio)\//i.test(body.content)) {
     try {
       const r = extractInlineBase64Images(body.content, userId, id, noteWorkspaceId);
       if (r.replacedCount > 0) {

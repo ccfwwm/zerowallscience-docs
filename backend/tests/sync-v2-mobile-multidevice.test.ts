@@ -227,6 +227,20 @@ test("offline folder trash and restore preserve bodies and replay their deletion
   assert.equal((await peer.repository.notes.get(old))?.isTrashed,1);
 });
 
+test("native folder trash and restore retain TXT bodies and synchronize their lifecycle", async () => {
+  const { c, node } = await movableTree("txt-trash"), id = randomUUID(), content = "# literal TXT  \n";
+  await c.repository.createPersonalTreeNote({ id, contentFormat: "plaintext", content, contentText: content }, node.slice(9));
+  await c.sync(); await cachePersonalTree(c);
+  await c.repository.trashPersonalTreeFolders([node]); await c.sync();
+  assert.equal((await c.repository.notes.get(id))?.content, content);
+  assert.equal((serverDb.prepare("SELECT isTrashed FROM notes WHERE id=?").get(id) as any).isTrashed, 1);
+  await c.repository.restorePersonalTreeFolder(node); await c.sync();
+  const peer = await client("txt-trash-peer"); await peer.sync();
+  assert.equal((await peer.repository.notes.get(id))?.content, content);
+  assert.equal((await peer.repository.notes.get(id))?.contentFormat, "plaintext");
+  assert.equal((await peer.repository.notes.get(id))?.isTrashed, 0);
+});
+
 test("remote document moves reject stale body metadata without losing the offline edit",async()=>{
   const {c,node,left}=await movableTree("document-move-body"),note=randomUUID();
   await c.repository.createPersonalTreeNote({id:note,contentFormat:"markdown",content:"Before move"},node.slice(9));
@@ -637,6 +651,25 @@ test.after(async () => {
   await new Promise<void>((resolve) => httpServer.close(() => resolve()));
   closeServerDb();
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test("TXT survives native SQLite restart and bidirectional Sync V2 without interpreting syntax", async () => {
+  const name = "txt-offline", a = await client(name), id = randomUUID();
+  const content = '  # 原文\n**bold**\n<script>literal</script>\n{"type":"doc","content":[]}\n![image](blob:literal)\n```nowen-encrypted-v1\n原文\n```\n\t尾部  \n';
+  await a.repository.createPersonalTreeNote({ id, title: "TXT", contentFormat: "plaintext", content, contentText: content }, null);
+  assert.equal((await a.db.query<{ count: number }>("SELECT COUNT(*) AS count FROM sync_outbox WHERE entityType='note' AND entityId=?", [id]))[0].count, 1);
+  await a.db.close();
+  const reopened = await client(name), b = await client("txt-peer");
+  assert.equal((await reopened.repository.notes.get(id))?.content, content);
+  await reopened.sync(); await b.sync();
+  assert.equal((await pending(reopened)).length, 0);
+  assert.equal((await b.repository.notes.get(id))?.content, content);
+  assert.equal((await b.repository.notes.get(id))?.contentFormat, "plaintext");
+  assert.equal((serverDb.prepare("SELECT content FROM notes WHERE id=?").get(id) as any).content, content);
+  await b.repository.notes.update(id, { content: "", contentText: "" });
+  await b.sync(); await reopened.sync();
+  assert.equal((await reopened.repository.notes.get(id))?.content, "");
+  assert.equal((await reopened.repository.notes.get(id))?.contentFormat, "plaintext");
 });
 
 test("personal tree creates are readable offline, survive reopen and converge with stable root identities", async () => {

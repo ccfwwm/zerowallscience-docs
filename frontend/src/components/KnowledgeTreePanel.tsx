@@ -989,7 +989,8 @@ export function KnowledgeTreePanel({
     try {
       created = await knowledgeTreeApi.create({
         parentId: snapshot.parentId,
-        nodeType: snapshot.kind,
+        nodeType: snapshot.kind === "plaintext" ? "note" : snapshot.kind,
+        ...(snapshot.kind === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
         title,
       });
     } catch (requestError: any) {
@@ -1006,7 +1007,7 @@ export function KnowledgeTreePanel({
 
     setDraft(null);
     if (snapshot.parentId) setNodeExpanded(snapshot.parentId, true);
-    if (snapshot.kind === "note" || snapshot.kind === "markdown") revealCreatedKnowledgeTreeNote(snapshot.parentId);
+    if (snapshot.kind === "note" || snapshot.kind === "markdown" || snapshot.kind === "plaintext") revealCreatedKnowledgeTreeNote(snapshot.parentId);
     emitTreeChanged("node-created-inline");
     await reload();
     actions.refreshNotebooks();

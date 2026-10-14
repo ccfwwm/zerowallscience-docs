@@ -344,6 +344,7 @@ app.post("/nodes", async (c) => {
       nodeType,
       title: typeof body.title === "string" ? body.title : "",
       sheetData: body.sheetData,
+      contentFormat: body.contentFormat === "plaintext" ? "plaintext" : undefined,
     });
     return c.json(node, 201);
   } catch (error) {

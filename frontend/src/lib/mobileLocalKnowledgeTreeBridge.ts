@@ -385,8 +385,8 @@ export function installMobileLocalKnowledgeTreeBridge(
         notebookId = parent.resourceId;
       }
       const id = newLocalId(), title = input.title.trim() || "无标题笔记";
-      await repository.createPersonalTreeNote({ id, title, contentFormat: input.nodeType === "markdown" ? "markdown" : "tiptap-json",
-        content: input.nodeType === "markdown" ? `# ${title}\n\n` : JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] }) }, notebookId);
+      await repository.createPersonalTreeNote({ id, title, contentFormat: input.nodeType === "note" && input.contentFormat === "plaintext" ? "plaintext" : input.nodeType === "markdown" ? "markdown" : "tiptap-json",
+        content: input.nodeType === "note" && input.contentFormat === "plaintext" ? "" : input.nodeType === "markdown" ? `# ${title}\n\n` : JSON.stringify({ type: "doc", content: [{ type: "paragraph" }] }) }, notebookId);
       const note = (await repository.notes.get(id))!;
       return { ...noteNode(note, false), parentId: input.parentId, access: ownerAccess(`note:${id}`, { canCreate: false }) };
     };
@@ -493,7 +493,7 @@ export function installMobileLocalKnowledgeTreeBridge(
 
   const create = async (
     workspaceId: string | undefined,
-    input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word" | "mindmap"; title: string },
+    input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word" | "mindmap"; title: string; contentFormat?: "plaintext" },
   ): Promise<KnowledgeTreeNode> => {
     const parent = await requireFolderParent(input.parentId, workspaceId);
     const effectiveWorkspaceId = parent?.workspaceId
@@ -522,14 +522,14 @@ export function installMobileLocalKnowledgeTreeBridge(
     }
 
     if (!parent) throw localOnlyUnsupported("根级文档需要先创建文件夹");
-    const contentFormat = input.nodeType === "markdown" ? "markdown" : "tiptap-json";
+    const contentFormat = input.nodeType === "note" && input.contentFormat === "plaintext" ? "plaintext" : input.nodeType === "markdown" ? "markdown" : "tiptap-json";
     await repository.notes.create({
       id,
       workspaceId: effectiveWorkspaceId,
       notebookId: parent.resourceId,
       title,
       contentFormat,
-      content: contentFormat === "markdown" ? `# ${title}\n\n` : "{}",
+      content: contentFormat === "plaintext" ? "" : contentFormat === "markdown" ? `# ${title}\n\n` : "{}",
       contentText: "",
     });
     return findNode(`note:${id}`, workspaceId);

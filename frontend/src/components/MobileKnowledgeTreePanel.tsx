@@ -699,7 +699,8 @@ export default function MobileKnowledgeTreePanel({
     try {
       const created = await knowledgeTreeApi.create({
         parentId: snapshot.parentId,
-        nodeType: snapshot.kind,
+        nodeType: snapshot.kind === "plaintext" ? "note" : snapshot.kind,
+        ...(snapshot.kind === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
         title,
       });
       setDraft(null);

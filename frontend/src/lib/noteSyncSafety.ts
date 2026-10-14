@@ -163,6 +163,7 @@ function persistLocalDraft(
   saveDraft({
     noteId,
     editorMode: data.contentFormat === "markdown" ? "md" : "tiptap",
+    ...(data.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
     content: data.content,
     contentText: typeof data.contentText === "string" ? data.contentText : "",
     title: typeof data.title === "string" ? data.title : "",

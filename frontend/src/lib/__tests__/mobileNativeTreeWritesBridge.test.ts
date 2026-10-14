@@ -6,6 +6,18 @@ import type { NativeDatabase } from "../nativeDatabase";
 import {api} from "../api";
 
 let restore: (() => void) | undefined;
+it("personal Native tree creation carries an explicit TXT format and empty body", async () => {
+  localStorage.setItem("nowen-current-workspace", "personal");
+  let saved: Record<string, unknown>;
+  const create = vi.fn(async (input: Record<string, unknown>) => { saved = { ...input, userId: "u", workspaceId: null }; });
+  const repository = { createPersonalTreeNote: create, notes: { get: async () => saved } } as unknown as NativeLocalRepository;
+  const remote = vi.spyOn(knowledgeTreeApi, "createForWorkspace");
+  restore = installMobileLocalKnowledgeTreeBridge(repository, { deviceOnly: false }, {} as NativeDatabase);
+  const result = await knowledgeTreeApi.create({ parentId: null, nodeType: "note", title: "TXT", contentFormat: "plaintext" });
+  expect(create).toHaveBeenCalledWith(expect.objectContaining({ title: "TXT", contentFormat: "plaintext", content: "" }), null);
+  expect(result.contentFormat).toBe("plaintext"); expect(result.nodeType).toBe("note");
+  expect(remote).not.toHaveBeenCalled();
+});
 afterEach(() => { restore?.(); vi.restoreAllMocks(); localStorage.removeItem("nowen-current-workspace"); });
 function node(id: string, parentId: string | null = null): KnowledgeTreeNode {
   return { id,resourceId:id.slice(9),resourceType:"notebook",nodeType:"folder",parentId,userId:"u",workspaceId:null,

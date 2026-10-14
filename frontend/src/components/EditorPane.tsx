@@ -15,6 +15,7 @@ import TiptapEditor from "@/components/TiptapEditor";
 import NoteReadingPositionBridge from "@/components/NoteReadingPositionBridge";
 import { PhaseAPerfProfiler } from "@/components/PhaseAPerfProfiler";
 import type { NoteEditorHeading, NoteEditorUpdatePayload } from "@/components/editors/types";
+import PlainTextEditor from "@/components/PlainTextEditor";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import HtmlPreviewPane, { isFullHtmlDocument } from "@/components/HtmlPreviewPane";
 import type { NoteEditorHandle } from "@/components/editors/types";
@@ -327,12 +328,12 @@ function OrdinaryEditorPane({
   // Waiting for a useEffect causes one Tiptap mount (and unauthorized <img> requests)
   // before the preview takes over.
   const [htmlPreviewMode, setHtmlPreviewMode] = useState(
-    () => !!activeNote && detectFormat(activeNote.content) === "html",
+    () => !!activeNote && activeNote.contentFormat !== "plaintext" && detectFormat(activeNote.content) === "html",
   );
   const previewInitializedNoteIdRef = useRef(activeNote?.id);
   const isPendingHtmlNoteSwitch = previewInitializedNoteIdRef.current !== activeNote?.id
-    && !!activeNote && detectFormat(activeNote.content) === "html";
-  const shouldRenderHtmlPreview = htmlPreviewMode || isPendingHtmlNoteSwitch;
+    && !!activeNote && activeNote.contentFormat !== "plaintext" && detectFormat(activeNote.content) === "html";
+  const shouldRenderHtmlPreview = activeNote?.contentFormat !== "plaintext" && (htmlPreviewMode || isPendingHtmlNoteSwitch);
   const [showHtmlEditWarning, setShowHtmlEditWarning] = useState(false);
   // 记住当前笔记的原始格式是否为 HTML。
   // 切换到编辑模式后，内容会被 normalize 为 Markdown，此时 detectFormat 返回 "md"。
@@ -714,6 +715,7 @@ function OrdinaryEditorPane({
         saveDraft({
           noteId: note.id,
           editorMode: editorModeRef.current,
+          ...(note.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
           content: snap.content,
           contentText: snap.contentText || "",
           title: note.title,
@@ -771,7 +773,7 @@ function OrdinaryEditorPane({
     targetFormat,
   }: NoteFormatConversionRequest) => {
     const initialNote = activeNoteRef.current;
-    if (!initialNote || initialNote.id !== noteId || modeSwitchInflightRef.current) return;
+    if (!initialNote || initialNote.id !== noteId || initialNote.contentFormat === "plaintext" || modeSwitchInflightRef.current) return;
     if (initialNote.isLocked || viewLockedIdsRef.current.has(noteId)) {
       toast.warning(t("editorOps.convertLocked"));
       return;
@@ -1125,6 +1127,7 @@ function OrdinaryEditorPane({
       saveDraft({
         noteId: current.id,
         editorMode: editorModeRef.current,
+        ...(current.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
         content: snapshot.content,
         contentText: snapshot.contentText,
         title,
@@ -1394,6 +1397,7 @@ function OrdinaryEditorPane({
    * ����������־û��������������Զ��ϲ���
    */
   const collabReady = !!(activeNote && !activeNote.isLocked && selfUser && editorMode === "md"
+    && activeNote.contentFormat !== "plaintext"
     && !isAndroidNativeRuntime()
     && !/nowen-encrypted/i.test(activeNote.content || ""));
   const { doc: collabYDoc, provider: collabProvider, synced: collabSynced } = useYDoc({
@@ -1452,7 +1456,7 @@ function OrdinaryEditorPane({
     if (!activeNote) return;
     previewInitializedNoteIdRef.current = activeNote.id;
     const fmt = detectFormat(activeNote.content);
-    const isHtml = fmt === "html";
+    const isHtml = activeNote.contentFormat !== "plaintext" && fmt === "html";
     const isFullDoc = isHtml && isFullHtmlDocument(activeNote.content);
     setHtmlPreviewMode(isHtml);
     setNoteIsHtml(isHtml);
@@ -1694,6 +1698,7 @@ function OrdinaryEditorPane({
         saveDraft({
           noteId: currentNote.id,
           editorMode: editorModeRef.current,
+          ...(currentNote.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
           content: data.content,
           contentText: data.contentText || "",
           title: data.title,
@@ -1801,6 +1806,7 @@ function OrdinaryEditorPane({
               saveDraft({
                 noteId: currentNote.id,
                 editorMode: editorModeRef.current,
+                ...(currentNote.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
                 content: snap.content,
                 contentText: snap.contentText,
                 title: data.title,
@@ -2832,7 +2838,7 @@ const moveToTrash = useCallback(async () => {
                   }}
                 >
                   {/* �ö� / ȡ���ö� */}
-                  {!Capacitor.isNativePlatform() && <button onClick={beginEncryption} disabled={effectiveLocked || !canEditActiveNote || syncStatus === "saving"}
+                  {!Capacitor.isNativePlatform() && activeNote.contentFormat !== "plaintext" && <button onClick={beginEncryption} disabled={effectiveLocked || !canEditActiveNote || syncStatus === "saving"}
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-tx-secondary active:bg-app-hover transition-colors disabled:opacity-40">
                     <Lock size={15} className="text-tx-tertiary" /><span>{t("encryptedConversion.title")}</span>
                   </button>}
@@ -3286,7 +3292,7 @@ const moveToTrash = useCallback(async () => {
             disabled={effectiveLocked || activeNote.isTrashed === 1 || !canWriteNote(activeNote)}
             onChange={setNoteColorMark}
           />
-          <button
+          {activeNote.contentFormat === "plaintext" ? <span className="text-xs text-tx-secondary">TXT</span> : <button
             type="button"
             data-note-format-switch=""
             disabled={modeSwitching || effectiveLocked || noteIsHtml || !canWriteNote(activeNote)}
@@ -3313,7 +3319,7 @@ const moveToTrash = useCallback(async () => {
           >
             {activeNote.contentFormat === "markdown" ? <FileCode size={11} /> : <FileText size={11} />}
             {activeNote.contentFormat === "markdown" ? t("note.format.markdownShort") : t("note.format.richTextShort")}
-          </button>
+          </button>}
         </div>
 
         {/* Sync Indicator + Grouped Actions */}
@@ -3443,7 +3449,7 @@ const moveToTrash = useCallback(async () => {
               ��ť���ֿɵ������ CRDT ��δ sync ֻ�� toast ��ִ���л���sync ��ɺ�
               �ٵ㼴��˳���л�����Զ��������"��ť����"����״̬��
           */}
-          {SHOW_EDITOR_MODE_TOGGLE && (
+          {SHOW_EDITOR_MODE_TOGGLE && activeNote.contentFormat !== "plaintext" && (
             <button
               onClick={toggleEditorMode}
               disabled={modeSwitching}
@@ -3511,7 +3517,7 @@ const moveToTrash = useCallback(async () => {
                 >
                   <div className="px-3 py-2 border-b border-app-border">
                     <div className="flex items-center justify-between gap-2 text-[11px] text-tx-tertiary">
-                      <span>{activeNote.contentFormat === "markdown" ? t('note.format.markdown') : t('note.format.richText')}</span>
+                      <span>{activeNote.contentFormat === "plaintext" ? t("note.format.plainText") : activeNote.contentFormat === "markdown" ? t('note.format.markdown') : t('note.format.richText')}</span>
                       {noteIsHtml && <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-blue-500">HTML</span>}
                     </div>
                     <div className="mt-1">
@@ -3527,7 +3533,7 @@ const moveToTrash = useCallback(async () => {
                     <FolderInput size={15} className="text-tx-tertiary" />
                     <span>{t('editor.moveToNotebook')}</span>
                   </button>
-                  {!Capacitor.isNativePlatform() && <button onClick={beginEncryption} disabled={effectiveLocked || !canEditActiveNote || syncStatus === "saving"}
+                  {!Capacitor.isNativePlatform() && activeNote.contentFormat !== "plaintext" && <button onClick={beginEncryption} disabled={effectiveLocked || !canEditActiveNote || syncStatus === "saving"}
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-tx-secondary hover:bg-app-hover transition-colors disabled:opacity-40">
                     <Lock size={15} className="text-tx-tertiary" /><span>{t("encryptedConversion.title")}</span>
                   </button>}
@@ -3684,7 +3690,9 @@ const moveToTrash = useCallback(async () => {
               �ײ㻹�ܴ� console �� [EditorErrorBoundary] ��־�� window.__lastDirtyDoc */}
           <EditorErrorBoundary resetKey={activeNote.id}>
           {/* 文件夹同步的 PDF / DOCX 笔记默认直接显示原文件，并隐藏内部同步元数据。 */}
-          {isFolderSyncAttachmentNote(activeNote.content) ? (
+          {activeNote.contentFormat === "plaintext" ? (
+            <PlainTextEditor key={`txt-${activeNote.id}`} ref={editorHandleRef} note={activeNote} onUpdate={handleUpdate} onLocalUpdate={handleLocalMirrorUpdate} onHeadingsChange={setHeadings} editable={canEditActiveNote && !effectiveLocked && !modeSwitching} />
+          ) : isFolderSyncAttachmentNote(activeNote.content) ? (
             <FolderSyncAttachmentPreviewPane
               key={`folder-sync-attachment-${activeNote.id}-${activeNote.version}`}
               noteId={activeNote.id}

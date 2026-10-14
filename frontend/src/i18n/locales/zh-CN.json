@@ -2989,6 +2989,10 @@
     "exportImageFailed": "图片导出失败",
     "exportImageLongConfirm": "当前笔记较长，导出图片可能较慢或失败，是否继续？",
     "format": {
+      "plainText": "纯文本（TXT）",
+      "plainTextDocument": "纯文本文档（TXT）",
+      "plainTextDescription": "只记录文字，不添加格式",
+      "exportTxt": "导出 TXT",
       "markdown": "Markdown 笔记",
       "markdownShort": "MD",
       "convertTitle": "转换为 {{target}}？",
