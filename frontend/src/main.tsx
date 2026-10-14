@@ -73,7 +73,9 @@ import { installKnowledgeTreeMarkdownDrop } from "./lib/knowledgeTreeMarkdownDro
 import { installInlineCommentTooltipMount } from "./lib/inlineCommentTooltipMount";
 import { resolveCurrentAppPathname } from "./lib/appPathNavigation";
 import { installUgreenCredentialedFetch } from "./lib/ugreenRemoteAccess";
-import { observeBootSplashReadiness } from "./lib/bootSplash";
+import { observeBootSplashReadiness, reportBootStage } from "./lib/bootSplash";
+
+reportBootStage("runtime");
 
 const App = React.lazy(() => import("./App"));
 const PublicNotebookView = React.lazy(() => import("./components/PublicNotebookView"));
@@ -210,6 +212,7 @@ let applicationRendered = false;
 
 function renderApplication() {
   if (applicationRendered) return;
+  reportBootStage("rendering");
   applicationRendered = true;
   try {
     const root = document.getElementById("root");

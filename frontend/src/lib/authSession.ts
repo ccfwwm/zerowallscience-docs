@@ -48,12 +48,31 @@ class RefreshUnavailableError extends Error {
 }
 
 async function requestNewAccessToken(apiBaseUrl: string, refreshToken: string): Promise<string> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(new RefreshUnavailableError());
+    }, 8000);
+  });
+  // Bound both headers and body reads, even if a remote WebView ignores abort.
+  // Only the race result may reach token persistence; a late response is discarded.
+  try {
+    return await Promise.race([readNewAccessToken(apiBaseUrl, refreshToken, controller.signal), timeout]);
+  } finally {
+    clearTimeout(timer!);
+  }
+}
+
+async function readNewAccessToken(apiBaseUrl: string, refreshToken: string, signal: AbortSignal): Promise<string> {
   let response: Response;
   try {
     response = await fetch(`${apiBaseUrl}/auth/refresh`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken }),
+      signal,
     });
   } catch {
     throw new RefreshUnavailableError();

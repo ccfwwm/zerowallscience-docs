@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **startup / NAS**：改善 FN ID 等慢速远程入口的启动体验：12 秒后提示继续加载，60 秒后才报告超时，资源就绪后自动进入；登录续期与响应读取增加 8 秒超时，超时保留凭据并丢弃迟到响应；诊断补充启动阶段和脱敏资源耗时。Improve slow NAS gateway startup with a loading notice at 12s, a 60s timeout and automatic recovery; bound token refresh/body reads to 8s without clearing credentials on timeout or persisting late responses, and add sanitized startup diagnostics. FN ID 真机验收仍待完成，见 [验证说明](./docs/fn-connect-startup-compatibility.md)。FN ID device acceptance is still pending.
+
 - **sdk**：修复浏览器默认 fetch 绑定，开放登录、两步验证和 Token 管理；普通请求与附件共用认证状态，阻止切账号、迟到登录响应和 401 重试使用错误身份；对齐日记时间线与 Token 验证的真实接口类型（#803）。Bind browser fetch, expose login/2FA/token management, share authentication across REST and attachments, prevent stale responses or retries from crossing accounts, and align diary/verification contracts. SDK 调用方需调整旧接口类型，新包尚未发布；SDK consumers must update the affected types; no new package has been published.
 
 - **tasks**：循环任务明确区分仅删除本次、终止后续循环和删除整个系列，展示包含历史、归档及子任务的影响范围；持久化删除与终止意图，补齐 Web 离线队列、Native 原子写入、旧服务端协商和多设备同步回归，防止迟到更新复活已删除任务；规范化 SQLite 日期时间并阻止 NaN 日期生成，旧异常日期不再使任务中心白屏。Distinguish occurrence deletion, recurrence termination and whole-series deletion, with affected-range confirmation, durable lifecycle intents, offline/Native atomic writes, server capability checks and multi-device regressions; normalize SQLite timestamps and prevent invalid recurrence dates from blanking the task center. 安装包与真实设备验收待完成，见 `docs/qa/v1.5.2/task-recurrence-deletion.md`。

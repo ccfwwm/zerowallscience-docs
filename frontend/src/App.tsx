@@ -66,6 +66,7 @@ import { isAccountLoginHistorySupported, saveAccountLoginHistory } from "@/lib/a
 import SidebarSearchExperienceBridge from "@/components/SidebarSearchExperienceBridge";
 import FloatingLayerHost from "@/components/FloatingLayerHost";
 import { isNativeClientRuntime, stripServerBasePath } from "@/lib/serverUrl";
+import { reportBootStage } from "@/lib/bootSplash";
 import {
   APP_PATH_CHANGED_EVENT,
   replaceAppPathState,
@@ -1071,6 +1072,7 @@ function AuthGate() {
   const isClientMode = isNativeClientRuntime();
 
   const checkAuth = useCallback(() => {
+    reportBootStage("authentication");
     const token = getAccessToken();
     if (isMobileLocalMode()) {
       setUser(getMobileLocalUser());
