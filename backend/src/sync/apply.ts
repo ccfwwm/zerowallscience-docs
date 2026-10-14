@@ -1,3 +1,4 @@
+import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
 import { withEncryptedBlockWrite } from "../lib/encryptedBlockWrites.js";
 import type Database from "better-sqlite3";
 import { guardEncryptedNoteMutation, guardEncryptedBlockWriter } from "../lib/encryptedNotes.js";
@@ -439,7 +440,7 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
     `SELECT * FROM tasks WHERE id = ? AND workspaceId IS ?
       AND (? IS NOT NULL OR userId = ?)`,
   ).get(input.entityId, workspaceIdOf(input), workspaceIdOf(input), input.userId) as
-    | { updatedAt: string; archivedAt: string | null; [key: string]: any }
+    | ({ updatedAt: string; archivedAt: string | null } & Record<string, unknown>)
     | undefined;
 
   if (existing) {
@@ -455,25 +456,21 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
   if (archivedAt && !p.isCompleted) throw new SyncError("VERSION_CONFLICT", "请先恢复已归档任务");
   db.prepare(`
     INSERT INTO tasks (
-      id, userId, title, isCompleted, completedAt, archivedAt, description, dueAt, startDate, projectId, status, priority, dueDate,
-      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'), ?)
+      id, userId, title, isCompleted, completedAt, archivedAt, priority, dueDate,
+      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId, ${TASK_SYNC_FIELDS.join(",")}
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'), ?, ${TASK_SYNC_FIELDS.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       isCompleted = excluded.isCompleted,
       completedAt = excluded.completedAt,
       archivedAt = excluded.archivedAt,
-      description = excluded.description,
-      dueAt = excluded.dueAt,
-      startDate = excluded.startDate,
-      projectId = excluded.projectId,
-      status = excluded.status,
       priority = excluded.priority,
       dueDate = excluded.dueDate,
       noteId = excluded.noteId,
       parentId = excluded.parentId,
       sortOrder = excluded.sortOrder,
-      updatedAt = datetime('now')
+      updatedAt = datetime('now'),
+      ${TASK_SYNC_FIELDS.map(field => `${field}=excluded.${field}`).join(",")}
   `).run(
     input.entityId,
     input.userId,
@@ -481,11 +478,6 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
     p.isCompleted ? 1 : 0,
     typeof p.completedAt === "string" ? p.completedAt : null,
     archivedAt,
-    Object.prototype.hasOwnProperty.call(p,"description") ? p.description : (existing?.description ?? ""),
-    Object.prototype.hasOwnProperty.call(p,"dueAt") ? p.dueAt : (existing?.dueAt ?? null),
-    Object.prototype.hasOwnProperty.call(p,"startDate") ? p.startDate : (existing?.startDate ?? null),
-    Object.prototype.hasOwnProperty.call(p,"projectId") ? p.projectId : (existing?.projectId ?? null),
-    Object.prototype.hasOwnProperty.call(p,"status") ? p.status : (existing?.status ?? (p.isCompleted ? "done" : "todo")),
     Number.isFinite(p.priority as number) ? Number(p.priority) : 2,
     typeof p.dueDate === "string" ? p.dueDate : null,
     requestedNoteId,
@@ -493,6 +485,7 @@ function applyTask(db: Database.Database, input: ApplyMutationInput): number | n
     Number.isFinite(p.sortOrder as number) ? Number(p.sortOrder) : 0,
     typeof p.createdAt === "string" ? p.createdAt : null,
     workspaceIdOf(input),
+    ...taskSyncValues(p, existing),
   );
   return null;
 }

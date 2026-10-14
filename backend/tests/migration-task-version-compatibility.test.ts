@@ -60,3 +60,32 @@ test("repairs task migrations recorded as versions 71 through 73 without replayi
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
+
+
+test("upgrades lifecycle schema 124 with composer idempotency without losing archives", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nowen-composer-migration-compat-"));
+  const previousDbPath = process.env.DB_PATH;
+  process.env.DB_PATH = path.join(tempDir, "test.db");
+  const [{ getDb, closeDb }, { runMigrations, MIGRATIONS }] = await Promise.all([
+    import("../src/db/schema.js"), import("../src/db/migrations.js"),
+  ]);
+  const db = getDb();
+  try {
+    db.exec("DROP TABLE task_composer_batches; DELETE FROM schema_migrations WHERE version=125");
+    db.prepare("INSERT INTO users(id,username,passwordHash) VALUES ('migration-user','migration-user','hash')").run();
+    db.prepare("INSERT INTO tasks(id,userId,title,isCompleted,status,archivedAt) VALUES ('archived','migration-user','Preserved',1,'done','archive-time')").run();
+    const task = db.prepare("SELECT * FROM tasks WHERE id='archived'").get();
+    assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=124").get().name, "task-archive-and-note-snapshots");
+    assert.equal(new Set(MIGRATIONS.map(m => m.version)).size, MIGRATIONS.length);
+    runMigrations(db);
+    assert.deepEqual(db.prepare("SELECT * FROM tasks WHERE id='archived'").get(), task);
+    assert.equal(db.prepare("SELECT name FROM schema_migrations WHERE version=125").get().name, "task-composer-idempotency");
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_composer_batches'").get());
+    assert.ok(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='task_note_snapshots'").get());
+  } finally {
+    closeDb();
+    if (previousDbPath === undefined) delete process.env.DB_PATH;
+    else process.env.DB_PATH = previousDbPath;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});

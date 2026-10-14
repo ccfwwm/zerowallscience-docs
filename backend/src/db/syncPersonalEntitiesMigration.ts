@@ -18,6 +18,7 @@
 import type { Migration } from "./migrations.impl.js";
 import { installSyncChangesV2Triggers } from "./syncChangesV2Migration.js";
 import { installSyncOutboxCaptureTriggers } from "./syncOutboxCaptureMigration.js";
+import { TASK_SYNC_FIELDS } from "../sync/taskFields.js";
 
 /** 需要接入的实体：表名 → 同步实体类型。 */
 const ENTITY_TABLES: Array<{
@@ -53,9 +54,10 @@ function payloadExpr(entityType: string, alias: string, baseAlias?: string, arch
         'title', ${alias}.title,
         'isCompleted', ${alias}.isCompleted,
         'completedAt', ${alias}.completedAt,
-        ${archived ? `'archivedAt', ${alias}.archivedAt, 'description', ${alias}.description, 'dueAt', ${alias}.dueAt, 'startDate', ${alias}.startDate, 'projectId', ${alias}.projectId, 'status', ${alias}.status,` : ""}
+        ${archived ? `'archivedAt', ${alias}.archivedAt,` : ""}
         'priority', ${alias}.priority,
         'dueDate', ${alias}.dueDate,
+        ${TASK_SYNC_FIELDS.map(field => `'${field}', ${alias}.${field}`).join(",")},
         'noteId', ${alias}.noteId,
         'parentId', ${alias}.parentId,
         'sortOrder', ${alias}.sortOrder,

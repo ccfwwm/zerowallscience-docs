@@ -1,3 +1,4 @@
+import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
 import { withEncryptedBlockWrite } from "../lib/encryptedBlockWrites.js";
 import type Database from "better-sqlite3";
 import { runWithOutboxSuppressed } from "./context";
@@ -324,30 +325,26 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
   const parentId = typeof p.parentId === "string"
     && db.prepare("SELECT 1 FROM tasks WHERE id = ? AND workspaceId IS ?").get(p.parentId,workspaceId) ? p.parentId : null;
 
-  const currentArchive = db.prepare("SELECT * FROM tasks WHERE id=?").get(item.entityId) as { archivedAt: string | null; [key: string]: any } | undefined;
-  const archivedAt = Object.prototype.hasOwnProperty.call(p,"archivedAt") ? (typeof p.archivedAt === "string" ? p.archivedAt : null) : (currentArchive?.archivedAt ?? null);
+  const current = db.prepare("SELECT * FROM tasks WHERE id=? AND workspaceId IS ?").get(item.entityId, workspaceId) as Record<string, unknown> | undefined;
+  const archivedAt = Object.prototype.hasOwnProperty.call(p,"archivedAt") ? (typeof p.archivedAt === "string" ? p.archivedAt : null) : (current?.archivedAt ?? null);
   db.prepare(`
     INSERT INTO tasks (
-      id, userId, title, isCompleted, completedAt, archivedAt, description, dueAt, startDate, projectId, status, priority, dueDate,
-      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), ?)
+      id, userId, title, isCompleted, completedAt, archivedAt, priority, dueDate,
+      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId, ${TASK_SYNC_FIELDS.join(",")}
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+              COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), ?, ${TASK_SYNC_FIELDS.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       isCompleted = excluded.isCompleted,
       completedAt = excluded.completedAt,
       archivedAt = excluded.archivedAt,
-      description = excluded.description,
-      dueAt = excluded.dueAt,
-      startDate = excluded.startDate,
-      projectId = excluded.projectId,
-      status = excluded.status,
       priority = excluded.priority,
       dueDate = excluded.dueDate,
       noteId = excluded.noteId,
       parentId = excluded.parentId,
       sortOrder = excluded.sortOrder,
-      updatedAt = excluded.updatedAt
+      updatedAt = excluded.updatedAt,
+      ${TASK_SYNC_FIELDS.map(field => `${field}=excluded.${field}`).join(",")}
   `).run(
     item.entityId,
     userId,
@@ -355,11 +352,6 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
     p.isCompleted ? 1 : 0,
     p.completedAt ?? null,
     archivedAt,
-    Object.prototype.hasOwnProperty.call(p,"description") ? p.description : (currentArchive?.description ?? ""),
-    Object.prototype.hasOwnProperty.call(p,"dueAt") ? p.dueAt : (currentArchive?.dueAt ?? null),
-    Object.prototype.hasOwnProperty.call(p,"startDate") ? p.startDate : (currentArchive?.startDate ?? null),
-    Object.prototype.hasOwnProperty.call(p,"projectId") ? p.projectId : (currentArchive?.projectId ?? null),
-    Object.prototype.hasOwnProperty.call(p,"status") ? p.status : (currentArchive?.status ?? (p.isCompleted ? "done" : "todo")),
     num(p.priority) || 2,
     p.dueDate ?? null,
     noteId,
@@ -370,6 +362,7 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
     // 它是下一次 Push 的 baseUpdatedAt 依据，改写会导致误判冲突。
     p.updatedAt ?? null,
     workspaceId,
+    ...taskSyncValues(p, current),
   );
 }
 

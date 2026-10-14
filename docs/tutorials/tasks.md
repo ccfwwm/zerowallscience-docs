@@ -23,6 +23,16 @@
 
 创建成功后，快捷属性会重置；创建失败时保留设置，便于重试。
 
+## AI 智能生成待办 / AI Task Composer
+
+在任务中心顶部点击「AI 生成待办」，描述计划或粘贴待办文字。复用设置中的 AI 服务；无需配置第二套密钥。高级选项可设置日期范围、项目、候选上限（默认 12，最多 30）以及时间和重复识别。
+
+生成结果仅为草稿。可以编辑标题、描述、项目、优先级、日期、时间和重复规则，删除或添加候选项，再勾选需要的任务。疑似重复项默认不选中；确实需要同名同日期任务时，勾选「仍然创建此重复任务」。点击「确认创建」后整批事务保存，任何项失败都会回滚本批次。请求结果不确定时，请用「重试确认创建」重试原批次，不必重新生成。
+
+只提供日期的任务保持全天日期语义；精确时间沿用当前任务系统的本地时间语义。离线或移动端仅此设备模式不进行在线生成或确认，草稿在当前账号、服务器和空间的浏览器会话中保留。每日重点数量只指导优先级建议，不自动加入「我的一天」。笔记提取和已有任务智能规划属于后续阶段。
+
+In Task Center, choose **AI tasks**, describe a plan, and generate drafts using your existing AI settings. Edit, add/remove and select candidates before confirming. The default limit is 12 candidates, with a server limit of 30. Possible duplicates start unselected and need an explicit override. Confirmation saves the entire batch atomically; uncertain responses retry the same request ID. Offline and device-only mobile modes preserve the session draft without submitting tasks. Date-only tasks and local wall times follow the existing task calendar contract. Daily priority suggestions do not automatically change My Day.
+
 ## 记住任务视图
 
 列表、看板、日历、时间线的选择会保存在当前设备的浏览器本地。刷新页面或重新进入待办后会恢复上次选择；手机端点击视图切换按钮可依次切换这四种视图。不同设备的视图选择独立保存。

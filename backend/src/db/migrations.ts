@@ -4,6 +4,7 @@ import { wechatAssistantMigration } from "./wechatAssistantMigration.js";
 import { pluginInboundMigration } from "./pluginInboundMigration.js";
 import { encryptedNoteConversionMigration } from "./encryptedNoteConversionMigration.js";
 import { encryptedContentV2Migration } from "./encryptedContentV2Migration.js";
+import { taskComposerMigration } from "./taskComposerMigration.js";
 /**
  * Compatibility wrapper around the historical migration list.
  *
@@ -418,6 +419,7 @@ export const MIGRATIONS: Migration[] = [
   wechatAssistantMigration,
   wechatAssistantQueueColumnsMigration,
   encryptedContentV2Migration,
+  taskComposerMigration,
   taskLifecycleMigration,
 ].sort((a, b) => a.version - b.version);
 

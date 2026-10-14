@@ -309,8 +309,7 @@ export function readLocalState(
 
     case "task":
       return (db.prepare(`
-        SELECT id, title, isCompleted, completedAt, archivedAt, description, dueAt, startDate, projectId, status, priority, dueDate,
-               noteId, parentId, sortOrder, createdAt, updatedAt
+        SELECT *
         FROM tasks WHERE userId = ? AND workspaceId IS NULL
         ORDER BY createdAt ASC
       `).all(userId) as Array<Record<string, unknown>>).map((r) => ({
