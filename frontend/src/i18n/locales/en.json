@@ -770,6 +770,8 @@
     "blockMenu": "Block actions"
   },
   "settings": {
+    "plugins": "Plugins",
+    "pluginsUnavailable": "Plugins are being improved and are temporarily unavailable",
     "title": "Settings",
     "appearance": "Appearance",
     "switches": "Switches",

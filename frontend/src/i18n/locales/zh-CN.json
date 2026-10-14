@@ -777,6 +777,8 @@
     "blockMenu": "块操作"
   },
   "settings": {
+    "plugins": "插件",
+    "pluginsUnavailable": "插件功能完善中，暂不可用",
     "title": "设置",
     "appearance": "外观设置",
     "switches": "开关",
