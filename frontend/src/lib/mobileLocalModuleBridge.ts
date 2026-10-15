@@ -400,6 +400,16 @@ export function installMobileLocalModuleBridge(
     get: unsupportedOrganization, createTag: unsupportedOrganization, renameTag: unsupportedOrganization,
     deleteTag: unsupportedOrganization, tagFiles: unsupportedOrganization, saveSmartFolder: unsupportedOrganization, deleteSmartFolder: unsupportedOrganization,
   };
+  target.files.prepareInsert = async (id: string, noteId: string) => {
+    assertPersonalFileScope();
+    const note = await target.getNote(noteId);
+    const row = (await fileRows()).find((item) => item.id === id);
+    if (!row || row.userId !== userId || note.userId !== userId || note.workspaceId || note.isTrashed) {
+      throw Object.assign(new Error("文件与笔记不属于同一个可编辑空间"), { code: "FILE_SCOPE_MISMATCH" });
+    }
+    // Keep persisted content portable; the attachment bridge resolves this ID locally.
+    return { ...await toFileItem(row), url: `/api/attachments/${id}` };
+  };
   target.files.stats = async ():Promise<FileStats>=>{const rows=await fileRows();const images=rows.filter((row)=>String(row.mimeType).startsWith("image/"));const files=rows.filter((row)=>!String(row.mimeType).startsWith("image/"));const sum=(items:Array<Record<string,unknown>>)=>items.reduce((total,row)=>total+(Number(row.size)||0),0);const byMime=[...new Set(rows.map((row)=>String(row.mimeType)))].map((mime)=>{const items=rows.filter((row)=>row.mimeType===mime);return {mime,count:items.length,bytes:sum(items)};});return {total:rows.length,totalBytes:sum(rows),images:{count:images.length,bytes:sum(images)},files:{count:files.length,bytes:sum(files)},unreferenced:{count:0,bytes:0},myUploads:{total:rows.length,referenced:rows.length,unreferenced:0},storage:{mode:"local",driver:"local",source:"default"},byMime};};
   target.files.list = async (params:Record<string,unknown>={}):Promise<FileListResponse>=>{
     if (["tagIds", "minSize", "maxSize", "createdBefore", "referenceState", "duplicateOnly"].some((key) => params[key] !== undefined)) await unsupportedOrganization();

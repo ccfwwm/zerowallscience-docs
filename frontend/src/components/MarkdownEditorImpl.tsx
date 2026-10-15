@@ -934,6 +934,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
 
   const closeAttachmentLibrary = useCallback(() => {
     setAttachmentLibraryOpen(false);
+    if (attachmentLibrarySelectionRef.current) asyncPasteAnchorsRef.current.delete(attachmentLibrarySelectionRef.current);
     attachmentLibrarySelectionRef.current = null;
   }, []);
 
@@ -945,10 +946,14 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
       from: selection.from,
       to: selection.to,
     };
+    asyncPasteAnchorsRef.current.add(attachmentLibrarySelectionRef.current);
     setAttachmentLibraryOpen(true);
   }, [editable]);
 
+  useEffect(() => { closeAttachmentLibrary(); }, [note.id, closeAttachmentLibrary]);
+
   const insertExistingAttachment = useCallback((item: FileItem) => {
+    if (!editable || noteRef.current.isTrashed) return;
     const view = viewRef.current;
     const selection = attachmentLibrarySelectionRef.current;
     if (!view || !selection || selection.to > view.state.doc.length) {
@@ -968,7 +973,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     closeAttachmentLibrary();
     queueMicrotask(() => view.focus());
     toast.success(tr("tiptap.attachmentLinkInserted", { defaultValue: "附件链接已插入" }));
-  }, [closeAttachmentLibrary, tr]);
+  }, [closeAttachmentLibrary, editable, tr]);
 
   // slash 菜单项：基础 Markdown、附件、AI 与日期日记命令共享同一个 CodeMirror 菜单。
   const openVoiceRecorder = useCallback(() => {
@@ -2653,6 +2658,9 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
       />
 
       <AttachmentLibraryPicker
+        key={note.id}
+        noteId={note.id}
+        workspaceId={note.workspaceId}
         open={attachmentLibraryOpen}
         onClose={closeAttachmentLibrary}
         onSelect={insertExistingAttachment}

@@ -1,5 +1,7 @@
 export const zhCNAssetOrganizationTranslations = {
   assetOrganization: {
+    previousPage: "上一页",
+    nextPage: "下一页",
     tags: "标签",
     smartFolders: "智能文件夹",
     filters: "筛选",
@@ -48,6 +50,8 @@ export const zhCNAssetOrganizationTranslations = {
 };
 export const enAssetOrganizationTranslations = {
   assetOrganization: {
+    previousPage: "Previous",
+    nextPage: "Next",
     tags: "Tags",
     smartFolders: "Smart folders",
     filters: "Filters",

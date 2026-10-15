@@ -80,6 +80,8 @@ import {
   type FileAttachmentAccessRow,
 } from "../services/fileAttachmentAccess";
 
+import { hasKnowledgeCapability, resolveResourceKnowledgeAccess } from "../services/knowledgeCapabilities";
+
 import assetOrganization from "./asset-organization.js";
 
 const app = new Hono();
@@ -829,6 +831,30 @@ app.get("/:id", (c) => {
     references,
     accessUrls: createUserAttachmentAccessUrls(userId, [base]),
   });
+});
+
+// Authorization preflight only: the editor's normal save owns reference indexing.
+app.post("/:id/prepare-insert", async (c) => {
+  const userId = c.req.header("X-User-Id") || "";
+  if (!userId) return c.json({ error: "未授权", code: "UNAUTHORIZED" }, 401);
+  const body = await c.req.json().catch(() => null);
+  if (typeof body?.noteId !== "string" || !body.noteId.trim()) return c.json({ error: "请选择目标笔记", code: "INVALID_NOTE" }, 400);
+  const db = getDb();
+  const note = db.prepare("SELECT id,userId,workspaceId,isTrashed FROM notes WHERE id=?").get(body.noteId) as
+    { id: string; userId: string; workspaceId: string | null; isTrashed: number } | undefined;
+  if (!note || !hasKnowledgeCapability(resolveResourceKnowledgeAccess("note", note.id, userId), "canEdit")) {
+    return c.json({ error: "无权编辑目标笔记", code: "FORBIDDEN" }, 403);
+  }
+  if (note.isTrashed) return c.json({ error: "请先恢复笔记", code: "NOTE_TRASHED" }, 409);
+  const file = db.prepare("SELECT * FROM attachments WHERE id=?").get(c.req.param("id")) as (FileRow & FileAttachmentAccessRow) | undefined;
+  if (!file || !resolveFileAttachmentAccess(file, userId).canDownload) return c.json({ error: "文件不存在或不可用", code: "FILE_NOT_FOUND" }, 404);
+  if ((file.workspaceId || null) !== (note.workspaceId || null) || (!file.workspaceId && file.userId !== note.userId)) {
+    return c.json({ error: "只能插入与笔记属于同一空间的文件", code: "FILE_SCOPE_MISMATCH" }, 409);
+  }
+  if (!isManualFileManagerUpload(file) && !hasKnowledgeCapability(resolveResourceKnowledgeAccess("note", file.noteId, userId), "canReshare")) {
+    return c.json({ error: "无权将此文件引用到其他笔记", code: "FILE_RESHARE_FORBIDDEN" }, 403);
+  }
+  return c.json({ ...toFileOut(file), primaryNote: null, accessUrls: createUserAttachmentAccessUrls(userId, [file]) });
 });
 
 // Moving files only changes their organization; note bindings and storage paths stay stable.

@@ -181,6 +181,10 @@
         {
           "file": "frontend/src/lib/__tests__/mobileFileScope.test.ts",
           "case": "rejects Native organization and metadata filters before personal SQL or server calls"
+        },
+        {
+          "file": "backend/tests/asset-note-linking.test.ts",
+          "case": "insertion rejects foreign files, cross-space reuse, read-only and trashed targets without writes"
         }
       ]
     },
@@ -392,69 +396,258 @@
       "title": "Native independent SQLite clients preserve durable edits across sync failures",
       "status": "covered",
       "checks": [
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "three independent SQLite clients converge bidirectionally" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "remote document moves reject stale body metadata without losing the offline edit" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "remote permanent deletion preserves offline body" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline create survives database close/reopen" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "missing or invalid successful ACK version cannot claim cloud confirmation" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "an old offline update cannot resurrect" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "apply failure rolls back the entire batch" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "successful push replay after client ACK crash" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "overlapping native writes read the latest revision" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent devices preserve both versions" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "two edits committed during a delayed ACK" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "invalid note ACK leaves the durable mutation" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a failed Outbox insertion rolls back note creation" },
-        { "file": "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts", "case": "rejects a late push ACK when the account changes" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "workspace Snapshot pruning preserves pending descendants" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "create then permanent delete between Pulls" },
-        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "external UI reads wait for an in-progress Apply transaction" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "personal tree creates are readable offline, survive reopen" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "tree create rolls back body, root container and provenance" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "authorized hydration persists a remote body without creation mutations" },
-        { "file": "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts", "case": "retains server checks for protected folders and workspaces" },
-        { "file": "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts", "case": "does not project an ACKed note omitted by the live authorization tree" },
-        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "reads a locally created root with live server proofs" },
-        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "does not persist or return a remote body after its native session is disposed" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "negotiated native tree preserves folder-under-document links" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a new native tree subscription rebuilds an existing legacy cursor" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "invalid remote tree rolls back incremental bodies and structure" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native structural Apply rejects foreign scopes" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native structural Apply validates final ancestry" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native tree Snapshot reconciles stale metadata" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native file tree metadata requires its scoped attachment" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native tree subscription completes multiple Snapshot pages" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "refuses to silently downgrade a persisted tree subscription" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "negotiates the complete existing set" },
-        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "upgrades schema 5 with structural metadata" },
-        { "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts", "case": "rolls back a failed schema 5 tree migration" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "lost initial tree ACK retains subscription intent" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "REST tree movement emits a committed metadata-only Sync V2 notice" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline folder creation atomically persists nested resources" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline folder creation rolls back the business row" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "lost creation ACK replays immutable mutations" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder creation fails closed for unbound" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a lost structural creation ACK retains the local folder" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "creation dependencies remain ordered" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a folder created during the final Snapshot page" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "creates personal folders through the transaction" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "restores reverse-ordered provisional nested folders" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "does not grant provisional owner access to an ACKed folder" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts", "case": "preserves subscription intent after a lost initial ACK" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "offline folder trash and restore preserve bodies" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder lifecycle rolls back the entire local subtree" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "lost folder trash ACK and a restore queued during Push" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent child moves conflict with offline folder trash" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder trash rejects missing server capability" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "acknowledged folder trash restores its cohort" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a pre-trash edit from an old device cannot revive" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "a password added after local trash was committed" },
-        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "folder trash committed during the final Snapshot page" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "persists folder trash and restores it through the unified trash facade" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "projects durable pending trash into the offline bin" },
-        { "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts", "case": "does not treat a trash authorization rejection as an offline read" },
-        { "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts", "case": "opens an explicitly restored ordinary personal body before the server acknowledges its folder restore" },
-        { "file": "backend/tests/knowledge-tree-root-documents.test.ts", "case": "moving folders and documents into root documents retains hidden containers" }
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "three independent SQLite clients converge bidirectionally"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "remote document moves reject stale body metadata without losing the offline edit"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "remote permanent deletion preserves offline body"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "offline create survives database close/reopen"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "missing or invalid successful ACK version cannot claim cloud confirmation"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "an old offline update cannot resurrect"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "apply failure rolls back the entire batch"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "successful push replay after client ACK crash"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "overlapping native writes read the latest revision"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "concurrent devices preserve both versions"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "two edits committed during a delayed ACK"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "invalid note ACK leaves the durable mutation"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "a failed Outbox insertion rolls back note creation"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts",
+          "case": "rejects a late push ACK when the account changes"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "workspace Snapshot pruning preserves pending descendants"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "create then permanent delete between Pulls"
+        },
+        {
+          "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts",
+          "case": "external UI reads wait for an in-progress Apply transaction"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "personal tree creates are readable offline, survive reopen"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "tree create rolls back body, root container and provenance"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "authorized hydration persists a remote body without creation mutations"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts",
+          "case": "retains server checks for protected folders and workspaces"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileSignedInTreeCreate.test.ts",
+          "case": "does not project an ACKed note omitted by the live authorization tree"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts",
+          "case": "reads a locally created root with live server proofs"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts",
+          "case": "does not persist or return a remote body after its native session is disposed"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "negotiated native tree preserves folder-under-document links"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "a new native tree subscription rebuilds an existing legacy cursor"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "invalid remote tree rolls back incremental bodies and structure"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native structural Apply rejects foreign scopes"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native structural Apply validates final ancestry"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native tree Snapshot reconciles stale metadata"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native file tree metadata requires its scoped attachment"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "native tree subscription completes multiple Snapshot pages"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts",
+          "case": "refuses to silently downgrade a persisted tree subscription"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts",
+          "case": "negotiates the complete existing set"
+        },
+        {
+          "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts",
+          "case": "upgrades schema 5 with structural metadata"
+        },
+        {
+          "file": "frontend/src/lib/encryptedNotes/__tests__/nativeDatabaseInitialization.test.ts",
+          "case": "rolls back a failed schema 5 tree migration"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "lost initial tree ACK retains subscription intent"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "REST tree movement emits a committed metadata-only Sync V2 notice"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "offline folder creation atomically persists nested resources"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "offline folder creation rolls back the business row"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "lost creation ACK replays immutable mutations"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "folder creation fails closed for unbound"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "a lost structural creation ACK retains the local folder"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "creation dependencies remain ordered"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "a folder created during the final Snapshot page"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts",
+          "case": "creates personal folders through the transaction"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts",
+          "case": "restores reverse-ordered provisional nested folders"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts",
+          "case": "does not grant provisional owner access to an ACKed folder"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeSubscription.test.ts",
+          "case": "preserves subscription intent after a lost initial ACK"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "offline folder trash and restore preserve bodies"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "folder lifecycle rolls back the entire local subtree"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "lost folder trash ACK and a restore queued during Push"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "concurrent child moves conflict with offline folder trash"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "folder trash rejects missing server capability"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "acknowledged folder trash restores its cohort"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "a pre-trash edit from an old device cannot revive"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "a password added after local trash was committed"
+        },
+        {
+          "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
+          "case": "folder trash committed during the final Snapshot page"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts",
+          "case": "persists folder trash and restores it through the unified trash facade"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts",
+          "case": "projects durable pending trash into the offline bin"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileNativeTreeWritesBridge.test.ts",
+          "case": "does not treat a trash authorization rejection as an offline read"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileLocalFirstPasswordAccess.test.ts",
+          "case": "opens an explicitly restored ordinary personal body before the server acknowledges its folder restore"
+        },
+        {
+          "file": "backend/tests/knowledge-tree-root-documents.test.ts",
+          "case": "moving folders and documents into root documents retains hidden containers"
+        }
       ]
     }
   ]
