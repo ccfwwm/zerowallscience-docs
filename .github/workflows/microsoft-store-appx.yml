@@ -101,7 +101,12 @@ jobs:
             $version = (node -p "require('./package.json').version").Trim()
             if (-not $identity.Version.StartsWith("$version.")) { throw "Version mismatch: $($identity.Version)" }
             if (-not $manifest.Package.Applications.Application) { throw 'No packaged desktop application' }
-            Write-Host "Verified Store package: $($files[0].Name), version=$($identity.Version), identity=$($identity.Name)"
+            # Electron full-trust Desktop Bridge apps require this restricted capability.
+            # electron-builder 25.1.8 emits it by default; appx.capabilities is NOT
+            # accepted by the schema of that pinned release.
+            $trust = @($manifest.SelectNodes("//*[local-name()='Capability' and @Name='runFullTrust']"))
+            if ($trust.Count -eq 0) { throw 'runFullTrust capability missing from generated AppX manifest' }
+            Write-Host "Verified Store package: $($files[0].Name), version=$($identity.Version), identity=$($identity.Name), runFullTrust=yes"
           } finally { $package.Dispose() }
       - name: Upload Store submission candidate (workflow artifact only)
         uses: actions/upload-artifact@v4
