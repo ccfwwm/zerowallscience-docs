@@ -35,48 +35,32 @@ test("tag 构建工作流不让 electron-builder 直接发布 GitHub Release", a
   assert.doesNotMatch(workflow, /GH_TOKEN:/);
 });
 
-test("手动 workflow 只使用 SignPath test-signing 且使用 Full Artifact Configuration", async () => {
+test("Windows GitHub Direct EXE never requires third-party signer", async () => {
   const workflow = await readRepoFile(".github/workflows/release.yml");
-  const testBlock = workflow.slice(
-    workflow.indexOf("- name: Stage Windows EXEs for SignPath test"),
-    workflow.indexOf("# ========= tag 正式发布"),
-  );
-  assert.match(testBlock, /workflow_dispatch/);
-  assert.match(testBlock, /signing-policy-slug:\s*["']test-signing["']/);
-  assert.match(testBlock, /artifact-configuration-slug:\s*\$\{\{ vars\.SIGNPATH_FULL_ARTIFACT_CONFIGURATION_SLUG \}\}/);
-  assert.match(testBlock, /version:\s*\$\{\{ toJSON\(steps\.package_version\.outputs\.version\) \}\}/);
-  assert.match(testBlock, /SIGNPATH_ORGANIZATION_ID/);
-  assert.match(testBlock, /SIGNPATH_PROJECT_SLUG/);
-  assert.match(testBlock, /nowen-note-win-signpath-test/);
-  assert.doesNotMatch(testBlock, /release-signing/);
-  assert.doesNotMatch(testBlock, /SIGNPATH_LITE_ARTIFACT_CONFIGURATION_SLUG/);
-  assert.doesNotMatch(testBlock, /refs\/tags/);
+  assert.doesNotMatch(workflow, /signpath|SIGNPATH/i);
+  assert.doesNotMatch(workflow, /NOWEN_WINDOWS_PUBLISHER_NAME/);
+  assert.doesNotMatch(workflow, /submit-signing-request/);
+  assert.match(workflow, /name: nowen-note-win-direct/);
+  assert.match(workflow, /CSC_IDENTITY_AUTO_DISCOVERY: 'false'/);
+  assert.match(workflow, /Verify direct Windows SHA-512 metadata and assets/);
+  assert.match(workflow, /scripts\/verify-release-update-assets\.mjs local/);
+  assert.match(workflow, /Nowen-Note-Lite-\$version-setup\.exe/);
+  assert.match(workflow, /latest-lite\.yml/);
+  assert.match(workflow, /if-no-files-found: error/);
 });
 
-test("tag Windows 正式发布必须经过 Full Lite 独立 SignPath 配置和签名后校验", async () => {
-  const workflow = await readRepoFile(".github/workflows/release.yml");
-  assert.match(workflow, /Check SignPath production configuration/);
-  assert.match(workflow, /SIGNPATH_FULL_ARTIFACT_CONFIGURATION_SLUG/);
-  assert.match(workflow, /SIGNPATH_LITE_ARTIFACT_CONFIGURATION_SLUG/);
-  assert.match(workflow, /SIGNPATH_SIGNING_POLICY_SLUG \|\| 'release-signing'/);
-  assert.match(workflow, /artifact-configuration-slug:\s*\$\{\{ vars\.SIGNPATH_FULL_ARTIFACT_CONFIGURATION_SLUG \}\}/);
-  assert.match(workflow, /artifact-configuration-slug:\s*\$\{\{ vars\.SIGNPATH_LITE_ARTIFACT_CONFIGURATION_SLUG \}\}/);
-  assert.equal((workflow.match(/wait-for-completion-timeout-in-seconds:\s*10800/g) || []).length, 2);
-  assert.match(workflow, /verify-windows-signatures\.mjs/);
-  assert.match(workflow, /--require full,lite/);
-  assert.match(workflow, /refresh-windows-update-metadata\.mjs/);
-  assert.match(workflow, /nowen-note-win-signed/);
-});
-
-test("本地 Release 在公开前必须用同 tag 的 SignPath Windows artifact 覆盖候选 EXE", async () => {
-  const releaseGuard = await readRepoFile("scripts/release.sh");
-  assert.match(releaseGuard, /collect_ci_signed_windows_assets/);
-  assert.match(releaseGuard, /nowen-note-win-signed/);
-  assert.match(releaseGuard, /replacing local Windows candidates/);
-  assert.match(releaseGuard, /failed to collect SignPath-signed Windows assets; keeping \$\{TAG\} as draft/);
-  const winIndex = releaseGuard.indexOf("if release_contains_windows_candidates");
-  const verifyIndex = releaseGuard.indexOf("==== 验证 GitHub Release 更新元数据与远端资产 ====");
-  assert.ok(winIndex >= 0 && verifyIndex > winIndex, "必须先替换为 SignPath 已签名 Windows 产物，再执行远端校验");
+test("Direct Windows release is gated on same-tag CI artifacts and remote metadata", async () => {
+  const guard = await readRepoFile("scripts/release.sh");
+  assert.match(guard, /collect_ci_direct_windows_assets/);
+  assert.match(guard, /nowen-note-win-direct/);
+  assert.match(guard, /required_windows_asset_names/);
+  assert.match(guard, /replacing local Windows candidates/);
+  assert.match(guard, /failed to collect same-tag Windows CI assets; keeping \$\{TAG\} as draft/);
+  assert.doesNotMatch(guard, /SignPath|NOWEN_WINDOWS_PUBLISHER_NAME/);
+  const sameTag = guard.indexOf("if release_contains_windows_candidates");
+  const remote = guard.indexOf("==== 验证 GitHub Release 更新元数据与远端资产 ====");
+  assert.ok(sameTag >= 0 && remote > sameTag, "must replace local Windows EXEs before remote verification");
+  assert.match(guard, /node "\$VERIFY_SCRIPT" remote/);
 });
 
 test("本地发布守卫在正式校验前汇总完整 CI macOS 产物", async () => {
@@ -91,15 +75,15 @@ test("本地发布守卫在正式校验前汇总完整 CI macOS 产物", async (
   const macIndex = releaseGuard.indexOf('if grep -q "PC 产物" "$LOG_FILE"; then');
   const winIndex = releaseGuard.indexOf("if release_contains_windows_candidates");
   const verifyIndex = releaseGuard.indexOf("==== 验证 GitHub Release 更新元数据与远端资产 ====");
-  assert.ok(macIndex >= 0 && winIndex > macIndex, "macOS 产物必须先于 Windows SignPath 门禁汇总");
-  assert.ok(verifyIndex > winIndex, "Windows 签名门禁仍必须先于最终远端校验");
+  assert.ok(macIndex >= 0 && winIndex > macIndex, "macOS 产物必须先于 Windows CI 资产校验汇总");
+  assert.ok(verifyIndex > winIndex, "Windows CI 资产校验必须先于最终远端校验");
 });
 
 test("完整桌面 Release 会写明四个平台支持情况", async () => {
   const releaseGuard = await readRepoFile("scripts/release.sh");
   assert.match(releaseGuard, /ensure_desktop_platform_notes/);
   assert.match(releaseGuard, /### 桌面端支持/);
-  assert.match(releaseGuard, /Windows x64（SignPath 签名）/);
+  assert.match(releaseGuard, /Windows x64（GitHub 直接下载，安装包当前未提供代码签名）/);
   assert.match(releaseGuard, /macOS Intel x64/);
   assert.match(releaseGuard, /macOS Apple Silicon arm64/);
   assert.match(releaseGuard, /Linux x64/);

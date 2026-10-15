@@ -517,7 +517,7 @@ module.exports = {
     // 若使用 Azure Code Signing / Cloud HSM，可改用 signingHashAlgorithms + signtoolOptions
     signingHashAlgorithms: ["sha256"],
     verifyUpdateCodeSignature: true,
-    publisherName: "Nowen",
+    // No trusted publisher identity for unsigned GitHub Direct Windows installers.
   },
   nsis: {
     oneClick: false,
