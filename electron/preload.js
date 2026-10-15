@@ -55,6 +55,11 @@ contextBridge.exposeInMainWorld("nowenDesktop", {
     return ipcRenderer.invoke("updater:check");
   },
 
+  /** Store 专用固定入口，无法由网页决定外部 URL */
+  openMicrosoftStoreUpdates() {
+    return ipcRenderer.invoke("updater:open-store");
+  },
+
   /** 下载完成后由用户触发安装 */
   quitAndInstall() {
     return ipcRenderer.invoke("updater:quit-and-install");
