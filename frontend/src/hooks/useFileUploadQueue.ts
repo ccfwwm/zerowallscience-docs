@@ -53,7 +53,7 @@ export function useFileUploadQueue(scope: string, onUploaded: () => void, isCurr
       }).catch((error: unknown) => {
         if (!controller.signal.aborted) update(task.id, { status: "failed", error: error instanceof Error ? error.message : String(error) });
       }).finally(() => {
-        active.current.delete(task.id);
+        if (active.current.delete(task.id)) setTasks((previous) => [...previous]);
       });
     }
   }, [tasks, update]);

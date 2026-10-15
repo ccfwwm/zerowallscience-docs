@@ -73,4 +73,20 @@ describe("real upload queue semantics", () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
     expect(queue.tasks).toEqual([]);
   });
+  it("starts waiting jobs after active cancellations settle asynchronously", async () => {
+    const rejectRequests: Array<() => void> = [];
+    const upload = vi.spyOn(api.files, "upload").mockImplementation((_file, options) => new Promise((_resolve, reject) => {
+      options!.signal!.addEventListener("abort", () => {
+        rejectRequests.push(() => reject(new DOMException("Cancelled", "AbortError")));
+      });
+    }));
+    await mount();
+    await act(async () => queue.enqueue(Array.from({ length: 6 }, (_, index) => new File(["x"], `${index}.txt`)), null));
+    const activeIds = queue.tasks.slice(0, 3).map((task) => task.id);
+    await act(async () => activeIds.forEach(queue.cancel));
+    expect(upload).toHaveBeenCalledTimes(3);
+    await act(async () => rejectRequests.forEach((reject) => reject()));
+    expect(upload).toHaveBeenCalledTimes(6);
+    expect(queue.tasks.filter((task) => task.status === "uploading")).toHaveLength(3);
+  });
 });

@@ -1,4 +1,4 @@
-// Run with Electron Node + --import tsx. Only creates a new, isolated QA database.
+// Run with Node + --import tsx. Only creates a new, isolated QA database.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";

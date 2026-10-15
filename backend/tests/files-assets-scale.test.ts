@@ -46,5 +46,5 @@ for (const count of [100, 1000, 10000]) test(`scoped pagination/search with ${co
   assert.deepEqual(warm.payload.items.map((item: any) => item.id), cold.payload.items.map((item: any) => item.id));
   const search = await query("/api/files?fileKind=document&q=file-00042&pageSize=60");
   assert.equal(search.payload.total, 1);
-  console.log(`[assets-scale] rows=${count} first-query=${cold.elapsed.toFixed(1)}ms warm=${warm.elapsed.toFixed(1)}ms search=${search.elapsed.toFixed(1)}ms; metadata-only fixtures, Windows/Electron ABI ${process.versions.modules}`);
+  console.log(`[assets-scale] rows=${count} first-query=${cold.elapsed.toFixed(1)}ms warm=${warm.elapsed.toFixed(1)}ms search=${search.elapsed.toFixed(1)}ms; metadata-only fixtures, ${process.platform}/Node ${process.versions.node} ABI ${process.versions.modules}`);
 });

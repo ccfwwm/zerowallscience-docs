@@ -161,6 +161,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
   };
   const deleteFiles = async (ids: string[]) => {
     if (!await confirm({ title: t("attachmentDetail.deleteConfirmTitle"), description: t("fileExplorer.deleteHint", { count: ids.length }), danger: true })) return;
+    if (identity() !== scope) return;
     setSaving(true);
     try {
       const result = await api.files.batchRemove(ids);
@@ -270,7 +271,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
         <MenuAction onClick={() => setNameDialog({ name: "", parentId: menu.folder!.id })} close={() => setMenu(null)}>{t("fileExplorer.newSubfolder")}</MenuAction>
         <MenuAction onClick={() => setNameDialog({ id: menu.folder!.id, name: menu.folder!.name })} close={() => setMenu(null)}>{t("attachmentDetail.rename")}</MenuAction>
         <MenuAction onClick={() => setMoveFolder(menu.folder!)} close={() => setMenu(null)}>{t("fileManager.moveFiles")}</MenuAction>
-        <MenuAction danger onClick={async () => { if (!await confirm({ title: t("fileExplorer.deleteFolder"), description: t("fileExplorer.emptyFolderOnly"), danger: true })) return; try { await api.attachmentFolders.remove(menu.folder!.id); refresh(); } catch (failure: unknown) { toast.error(failure instanceof Error ? failure.message : String(failure)); } }} close={() => setMenu(null)}>{t("fileExplorer.deleteFolder")}</MenuAction>
+        <MenuAction danger onClick={async () => { if (!await confirm({ title: t("fileExplorer.deleteFolder"), description: t("fileExplorer.emptyFolderOnly"), danger: true }) || identity() !== scope) return; try { await api.attachmentFolders.remove(menu.folder!.id); refresh(); } catch (failure: unknown) { toast.error(failure instanceof Error ? failure.message : String(failure)); } }} close={() => setMenu(null)}>{t("fileExplorer.deleteFolder")}</MenuAction>
       </>}
     </div></>}
   </div>;
