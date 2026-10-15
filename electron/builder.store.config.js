@@ -19,7 +19,9 @@ function createStoreConfig(identity) {
       ...identity,
       displayName: "Nowen Note",
       languages: ["zh-CN", "en-US"],
-      capabilities: ["runFullTrust", "internetClient", "privateNetworkClientServer"],
+      // electron-builder 25.1.8 does not accept appx.capabilities in its schema.
+      // Its AppX generator declares the mandatory runFullTrust capability by default.
+      // Validate the generated manifest in CI, rather than passing an unsupported key.
       minVersion: "10.0.19041.0",
     },
   };
