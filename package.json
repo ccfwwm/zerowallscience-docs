@@ -48,7 +48,9 @@
     "zip": "node scripts/export-zip.mjs",
     "zip:jszip": "node scripts/export-zip-jszip.mjs",
     "fpk": "node scripts/fpk/build-fpk.mjs",
-    "build:upk": "node scripts/upk/build-upk.mjs"
+    "build:upk": "node scripts/upk/build-upk.mjs",
+    "test:microsoft-store": "node --test scripts/tests/microsoft-store-config.test.cjs scripts/tests/microsoft-store-updater.test.cjs scripts/tests/update-builder-config.test.cjs scripts/tests/updater-manual-download-policy.test.cjs",
+    "electron:build:store": "npm run fetch:node && npm run build:all && npm run rebuild:native && electron-builder --config electron/builder.store.config.js --win appx --publish never"
   },
   "devDependencies": {
     "@capacitor/android": "^8.2.0",

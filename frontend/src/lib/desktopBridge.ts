@@ -81,6 +81,7 @@ export interface UpdaterPayload {
 export interface AppInfo {
   version: string;
   name: string;
+  distribution?: "direct" | "microsoft-store";
   platform: string;
   arch: string;
   mode?: "full" | "lite";
@@ -319,6 +320,7 @@ export interface DesktopHttpAPI {
 interface NowenDesktopAPI {
   on: (channel: string, listener: (payload: unknown) => void) => () => void;
   checkForUpdates: () => Promise<{ ok: boolean; reason?: string; version?: string }>;
+  openMicrosoftStoreUpdates?: () => Promise<{ ok: boolean; reason?: string }>;
   quitAndInstall: () => Promise<{ ok: boolean }>;
   getAppInfo: () => Promise<AppInfo>;
   getDiagnosticsInfo?: () => Promise<DiagnosticsInfo>;
@@ -468,6 +470,12 @@ export async function checkForUpdates(): Promise<{ ok: boolean; reason?: string;
   const bridge = getBridge();
   if (!bridge) return { ok: false, reason: "not-desktop" };
   return bridge.checkForUpdates();
+}
+
+export async function openMicrosoftStoreUpdates(): Promise<{ ok: boolean; reason?: string }> {
+  const bridge = getBridge();
+  if (!bridge?.openMicrosoftStoreUpdates) return { ok: false, reason: "not-supported" };
+  return bridge.openMicrosoftStoreUpdates();
 }
 
 export async function quitAndInstall(): Promise<void> {
