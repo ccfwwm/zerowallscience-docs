@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { runTestFile } from "../backend/scripts/run-tests-serial.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const matrixPath = path.join(root, "docs/architecture/data-consistency-contract.matrix.json");
@@ -101,14 +102,20 @@ if ([...argumentsSet].some((arg) => !supported.includes(arg)) || argumentsSet.si
     // an implicit SQLite singleton or DB_PATH between unrelated test fixtures.
     if (backend) {
       for (const file of [...backendFiles].sort()) {
-        run(process.execPath, ["--import", "tsx", "--test", file], path.join(root, "backend"));
+        const result = await runTestFile(file, file);
+        process.stdout.write(result.stdout);
+        process.stderr.write(result.stderr);
+        if (result.status !== "passed") {
+          console.error("[data-consistency] regression suite failed:", file, result.firstError);
+          process.exit(result.code || 1);
+        }
       }
     }
     // Vitest isolates modules/globals per test file. Give it one test run so
     // a large suite doesn't spawn the Vite compiler for every single case.
     if (frontend) {
-      run(process.platform === "win32" ? "npx.cmd" : "npx",
-        ["vitest", "run", ...[...frontendFiles].sort(), "--reporter=verbose"],
+      run(process.execPath,
+        [path.join(root, "frontend/node_modules/vitest/vitest.mjs"), "run", ...[...frontendFiles].sort(), "--reporter=verbose"],
         path.join(root, "frontend"));
     }
   }
