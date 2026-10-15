@@ -47,7 +47,7 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci --silent
-      - run: node --import tsx --test tests/backup-schedule.test.ts tests/auto-full-backup.test.ts
+      - run: node --import tsx --import ./tests/setup-db-isolation.ts --test tests/backup-schedule.test.ts tests/auto-full-backup.test.ts
       - run: npm run build:tsc -- --pretty false
 
   frontend:
