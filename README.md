@@ -7,8 +7,9 @@
   </p>
   <p>
     <a href="./README.en.md">English</a> ·
-    <a href="https://cropflre.github.io/">官方网站 / 帮助中心</a> ·
-    <a href="http://nowen.cn/">nowen.cn（维护中）</a> ·
+    <a href="https://nowen.cn/">官方网站</a> ·
+    <a href="https://nowen.cn/#/note/download">下载中心</a> ·
+    <a href="https://nowen.cn/#/note/tutorials">帮助中心</a> ·
     <a href="http://note.nowen.cn/">在线体验</a> ·
     <a href="https://github.com/cropflre/nowen-note/releases">下载客户端</a> ·
     <a href="./docs/tutorials/README.md">教程中心</a> ·
@@ -116,13 +117,13 @@ v1.5.0 重点引入了 **Sync V2 与离线工作区、插件生态、统一知�
 
 ## 官网与在线体验
 
-- 当前官方网站 / 帮助中心：<https://cropflre.github.io/>
-- 后续官网：<http://nowen.cn/>（维护中）
+- 官方网站：<https://nowen.cn/>
+- Nowen Note 产品介绍：<https://nowen.cn/#/note>
+- 多平台下载中心：<https://nowen.cn/#/note/download>
+- 使用教程与帮助中心：<https://nowen.cn/#/note/tutorials>
 - 在线体验：<http://note.nowen.cn/>
 - 账号：`demo`
 - 密码：`demo123456`
-
-> `nowen.cn` 仍在维护中。当前请以 <https://cropflre.github.io/> 作为 Nowen 官方帮助与使用文档入口。
 
 > 演示账号仅用于体验，数据可能被定期重置。请勿存放敏感或重要内容。
 
@@ -357,7 +358,7 @@ nowen-note/
 
 ## 文档导航
 
-- [Nowen 官方帮助中心](https://cropflre.github.io/#/note)
+- [Nowen 官方帮助中心](https://nowen.cn/#/note)
 - [仓库内教程索引](./docs/tutorials/README.md)
 - [MCP Server 安装与使用](./docs/tutorials/mcp.md)
 - [完整部署指南](./docs/deployment.md)
