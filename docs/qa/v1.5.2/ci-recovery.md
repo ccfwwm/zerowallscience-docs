@@ -20,6 +20,7 @@ Data Consistency Contract and Encrypted Notes CI on that original commit ultimat
 | Issue 612 Data Protection | [Backend](https://github.com/cropflre/nowen-note/actions/runs/38739914458/job/116438594507) has an unisolated repository import; [frontend](https://github.com/cropflre/nowen-note/actions/runs/38739914458/job/116438594661) expects old HTML-preview source strings and reports two lint deltas | Use the preloader; execute actual preview-gate expressions and cover plaintext exclusion; type the boot diagnostic and the recurrence mock |
 | Frontend Loading Performance | [Follow-up job](https://github.com/cropflre/nowen-note/actions/runs/38741906637/job/116445479242) reaches the existing bundle budget and finds the entry at 2.39 MiB raw / 686.5 KiB gzip; the full Tiptap emoji catalog is bundled into it | Give the existing emoji dependency its own vendor chunk; retain all budget thresholds and application loading behavior |
 | Editor Runtime | [Follow-up job](https://github.com/cropflre/nowen-note/actions/runs/38743457239/job/116450812427), newly triggered by the Vite change, has the same incomplete `react-i18next` mock in the main `MarkdownPreview` suite | Preserve the real exports and replace only `useTranslation`, as in the Issue 494 suite |
+| Attachment Markdown Math | [Follow-up job](https://github.com/cropflre/nowen-note/actions/runs/38744099495/job/116453064716), triggered by the preview test change, exposes the same missing export in the attachment math suite | Preserve the real i18n exports while retaining the translation stub and all math/PDF assertions |
 
 The database guard is deliberately retained. Before-case commands for all four import-time failures
 exit with the isolation refusal, before opening the repository DB. All subsequent backend verification
@@ -51,6 +52,7 @@ it does not claim to defer emoji loading or materially reduce the first-screen d
 | Startup, WebKit compatibility, auth, paste and rich-text safety suites after chunk split | 8 files / 58 passed |
 | FN Connect slow/failed module startup against the production preview | 2 passed in local Edge Chromium; WebKit runs in Linux CI |
 | Editor Runtime focused selection after fixing its mock | 29 files / 156 passed; the previous missing-export failure reproduced locally |
+| Attachment math / shared Markdown / PDF selection after fixing its mock | 3 files / 17 passed; the previous missing-export failure reproduced locally |
 | Backend `build:tsc` | Passed |
 | DCC mapping | 12 invariants / 153 references verified |
 | `git diff --check` | Passed |
