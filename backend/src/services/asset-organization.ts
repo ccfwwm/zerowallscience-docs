@@ -140,7 +140,7 @@ export function assetDuplicates(
   const rows = getDb()
     .prepare(
       `SELECT id, noteId, userId, workspaceId, uploadSource, filename, hash FROM attachments
-    WHERE hash = ? AND id <> ? AND ((? IS NULL AND workspaceId IS NULL AND userId = ?) OR workspaceId = ?)
+    WHERE trashedAt IS NULL AND hash = ? AND id <> ? AND ((? IS NULL AND workspaceId IS NULL AND userId = ?) OR workspaceId = ?)
     ORDER BY createdAt, id`,
     )
     .all(

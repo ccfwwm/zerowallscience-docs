@@ -641,16 +641,15 @@ export function FileManagerAdvanced() {
   const handleDelete = useCallback(
     async (id: string) => {
       const ok = await confirmDialog({
-        title: "确定要删除此文件吗？",
-        description:
-          "删除后，引用该文件的笔记里将显示为破图 / 失效链接。该操作不可撤销。",
-        confirmText: "删除",
+        title: t("assetTrash.move"),
+        description: t("assetTrash.moveHint", { count: 1 }),
+        confirmText: t("assetTrash.move"),
         danger: true,
       });
       if (!ok) return;
       try {
         await api.files.remove(id);
-        toast.success("已删除");
+        toast.success(t("assetTrash.moved", { count: 1 }));
         // 如果当前打开的就是这个详情，顺手关掉
         setDetailId((cur) => (cur === id ? null : cur));
         afterDelete(id);
@@ -659,7 +658,7 @@ export function FileManagerAdvanced() {
         toast.error(err?.message || "删除失败");
       }
     },
-    [afterDelete],
+    [afterDelete, t],
   );
 
   // ---- 重命名：列表层面同步（更新 items 里对应行的 filename） ----
@@ -720,10 +719,9 @@ export function FileManagerAdvanced() {
     if (selectedIds.size === 0) return;
     const count = selectedIds.size;
     const ok = await confirmDialog({
-      title: `确定要删除选中的 ${count} 个文件吗？`,
-      description:
-        "删除后，引用这些文件的笔记里将显示为破图 / 失效链接。该操作不可撤销。",
-      confirmText: `删除 ${count} 个`,
+      title: t("assetTrash.move"),
+      description: t("assetTrash.moveHint", { count }),
+      confirmText: t("assetTrash.move"),
       danger: true,
     });
     if (!ok) {
@@ -748,12 +746,12 @@ export function FileManagerAdvanced() {
       if (detailId && succeededIds.has(detailId)) closeDetail();
 
       if (res.failed.length === 0) {
-        toast.success(`已删除 ${res.deleted} 个文件`);
+        toast.success(t("assetTrash.moved", { count: res.deleted }));
         // 全部成功 → 退出选择模式
         setSelectionMode(false);
       } else {
         toast.error(
-          `已删除 ${res.deleted} 个，${res.failed.length} 个失败：${res.failed[0].reason}${res.failed.length > 1 ? " 等" : ""}`,
+          `${t("assetTrash.moved", { count: res.deleted })}; ${res.failed.map((failure) => failure.reason).join("; ")}`,
         );
       }
       // v12：清列表缓存，避免下一次 loadList 命中陈旧（含已删项）的列表
@@ -775,7 +773,7 @@ export function FileManagerAdvanced() {
     } finally {
       setBatchDeleting(false);
     }
-  }, [selectedIds, detailId, closeDetail, loadStats, loadReclaimable, loadList, items.length, page]);
+  }, [selectedIds, detailId, closeDetail, loadStats, loadReclaimable, loadList, items.length, page, t]);
 
   // 切换分类 / 搜索 / 排序 / 翻页时，已勾选的 id 可能不再在当前 items 里，
   // 体验上保留集合也容易让用户产生"幽灵勾选"。统一在这些维度变化时清空。

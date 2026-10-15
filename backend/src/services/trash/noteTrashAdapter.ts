@@ -39,6 +39,10 @@ function deleteTrashedNoteData(id: string, userId: string): { freedBytesEstimate
     throw new KnowledgeTreeError("NOTE_NOT_TRASHED", 409, "请先将笔记移入回收站，再永久删除");
   }
 
+  if (db.prepare("SELECT 1 FROM attachments WHERE noteId=? AND trashedAt IS NOT NULL LIMIT 1").get(id)) {
+    throw new KnowledgeTreeError("ATTACHMENT_TRASH_RETAINED", 409, "请先恢复或永久删除这篇笔记的文件回收站内容");
+  }
+
   // ⚠ 先清理磁盘附件物理文件（必须在 DELETE FROM notes 之前，否则 CASCADE 后查不到 path）
   let removedFiles = 0;
   try {

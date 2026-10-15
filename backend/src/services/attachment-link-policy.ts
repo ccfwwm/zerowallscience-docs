@@ -21,6 +21,7 @@ export function isAttachmentExternalAccessEnabled(attachmentId: string): boolean
   const row = getDb().prepare(
     "SELECT externalAccessEnabled FROM attachment_link_policies WHERE attachmentId = ?",
   ).get(attachmentId) as { externalAccessEnabled: number } | undefined;
+  if (getDb().prepare("SELECT 1 FROM attachments WHERE id=? AND trashedAt IS NOT NULL").get(attachmentId)) return false;
   return row?.externalAccessEnabled !== 0;
 }
 

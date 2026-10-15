@@ -51,3 +51,18 @@ it("keeps Native recently-added browsing available without organization support"
     expect(resolveUrl).toHaveBeenCalledWith("recent");
   } finally { restore(); }
 });
+
+it("rejects Native file recycle-bin mutations before local deletion or server fallback", async () => {
+  const query = vi.fn(), run = vi.fn();
+  localStorage.setItem("nowen-current-workspace", "personal");
+  const original = api.files.trash;
+  const restore = installMobileLocalModuleBridge({} as NativeLocalRepository, { query, run } as unknown as NativeDatabase, "owner");
+  try {
+    expect((await api.files.trash.list()).supported).toBe(false);
+    for (const mutation of [() => api.files.remove("file"), () => api.files.batchRemove(["file"]), () => api.files.trash.restore(["file"]), () => api.files.trash.purge(["file"])]) {
+      await expect(mutation()).rejects.toMatchObject({ code: "MOBILE_ASSET_TRASH_UNSUPPORTED" });
+    }
+    expect(query).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled();
+  } finally { restore(); }
+  expect(api.files.trash).toBe(original);
+});

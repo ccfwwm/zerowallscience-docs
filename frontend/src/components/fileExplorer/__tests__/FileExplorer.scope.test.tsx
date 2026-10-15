@@ -6,7 +6,7 @@ import FileExplorer from "../FileExplorer";
 const state = vi.hoisted(() => ({
   workspace: "personal", confirm: vi.fn(), removeFiles: vi.fn(), removeFolder: vi.fn(),
 }));
-vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (key: string) => key }) }));
+vi.mock("react-i18next", () => ({ initReactI18next: { type: "3rdParty", init() {} }, useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("@/lib/api", () => ({
   getCurrentWorkspace: () => state.workspace, getServerUrl: () => "http://qa.local", getBaseUrl: () => "/api",
   resolveAttachmentUrl: (url: string) => url,
@@ -50,7 +50,7 @@ it.each([
   });
   await act(async () => {
     [...host.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')]
-      .find((button) => button.textContent === (kind === "file" ? "attachmentDetail.delete" : "fileExplorer.deleteFolder"))!.click();
+      .find((button) => button.textContent === (kind === "file" ? "assetTrash.move" : "fileExplorer.deleteFolder"))!.click();
   });
   expect(state.confirm).toHaveBeenCalledTimes(1);
   if (changeWorkspace) await act(async () => {

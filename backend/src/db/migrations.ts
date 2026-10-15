@@ -1,3 +1,4 @@
+import { attachmentTrashMigration } from "./attachmentTrashMigration.js";
 import { assetOrganizationMigration } from "./assetOrganizationMigration.js";
 import { taskLifecycleMigration } from "./taskLifecycleMigration.js";
 import { taskRecurrenceDeletionMigration } from "./taskRecurrenceDeletionMigration.js";
@@ -425,6 +426,7 @@ export const MIGRATIONS: Migration[] = [
   taskComposerMigration,
   taskRecurrenceDeletionMigration,
   assetOrganizationMigration,
+  attachmentTrashMigration,
 ].sort((a, b) => a.version - b.version);
 
 export const CURRENT_SCHEMA_VERSION: number = MIGRATIONS.reduce(

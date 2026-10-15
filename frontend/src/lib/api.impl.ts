@@ -3473,11 +3473,22 @@ export const api = {
       return payload;
     }),
 
+    trash: {
+      list: (page = 1) => {
+        const qs = new URLSearchParams({ page: String(page) });
+        const ws = getCurrentWorkspace();
+        if (ws && ws !== "personal") qs.set("workspaceId", ws);
+        return request<{ supported: boolean; entries: Array<{ id: string; filename: string; mimeType: string; size: number; trashedAt: string; originalFolderId: string | null }>; total: number }>(`/files/trash?${qs}`);
+      },
+      restore: (ids: string[]) => request<{ count: number; restored: Array<{ id: string; folderId: string | null; fallback: boolean }> }>("/files/trash/restore", { method: "POST", body: JSON.stringify({ ids }) }),
+      purge: (ids: string[]) => request<{ count: number; cleanupPending: string[] }>("/files/trash/purge", { method: "POST", body: JSON.stringify({ ids, confirmation: "PERMANENTLY_DELETE" }) }),
+    },
+
     prepareInsert: (id: string, noteId: string) => request<FileItem>(`/files/${id}/prepare-insert`, {
       method: "POST", body: JSON.stringify({ noteId }),
     }).then((payload) => { registerAttachmentAccessResponse(payload); return payload; }),
 
-    /** 删除单个附件（含磁盘文件）。会做 ACL 校验，被别的笔记引用也一并断链。 */
+    /** Move an unused attachment to the recoverable recycle bin after ACL and reference checks. */
     remove: (id: string) =>
       request<{ success: boolean }>(`/files/${id}`, { method: "DELETE" }),
 

@@ -240,6 +240,10 @@
         {
           "file": "backend/tests/asset-organization.test.ts",
           "case": "smart folders persist whitelisted filters without moving files and stay private to their owner"
+        },
+        {
+          "file": "backend/tests/attachment-trash.test.ts",
+          "case": "purge requires explicit confirmation, trash state and a fresh backend reference check"
         }
       ]
     },

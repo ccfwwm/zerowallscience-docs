@@ -82,10 +82,13 @@ import {
 
 import { hasKnowledgeCapability, resolveResourceKnowledgeAccess } from "../services/knowledgeCapabilities";
 
+import attachmentTrash from "./attachment-trash";
+import { retainAttachmentInTrash } from "../services/attachment-trash";
 import assetOrganization from "./asset-organization.js";
 
 const app = new Hono();
 app.route("/organization", assetOrganization);
+app.route("/trash", attachmentTrash);
 
 // ---------------------------------------------------------------------------
 // 共用工具
@@ -105,6 +108,7 @@ type MutableFileRow = FileAttachmentAccessRow & { path?: string; filename?: stri
  * 普通附件继续使用原有笔记 write 权限，避免绕过目录/笔记 ACL。
  */
 function canWriteManagedFile(row: MutableFileRow, userId: string): boolean {
+  if (row.id && getDb().prepare("SELECT 1 FROM attachments WHERE id=? AND trashedAt IS NOT NULL").get(row.id)) return false;
   if (isManualFileManagerUpload(row)) {
     return resolveFileAttachmentAccess(row, userId).canWrite;
   }
@@ -786,7 +790,7 @@ app.get("/:id", (c) => {
     )
     .get(id) as (FileRow & FileAttachmentAccessRow) | undefined;
 
-  if (!base) return c.json({ error: "文件不存在" }, 404);
+  if (!base || getDb().prepare("SELECT 1 FROM attachments WHERE id=? AND trashedAt IS NOT NULL").get(id)) return c.json({ error: "文件不存在" }, 404);
 
   // 可见性判定：个人附件仅本人；工作区附件要求该工作区成员资格。
   if (!base.workspaceId) {
@@ -847,7 +851,7 @@ app.post("/:id/prepare-insert", async (c) => {
   }
   if (note.isTrashed) return c.json({ error: "请先恢复笔记", code: "NOTE_TRASHED" }, 409);
   const file = db.prepare("SELECT * FROM attachments WHERE id=?").get(c.req.param("id")) as (FileRow & FileAttachmentAccessRow) | undefined;
-  if (!file || !resolveFileAttachmentAccess(file, userId).canDownload) return c.json({ error: "文件不存在或不可用", code: "FILE_NOT_FOUND" }, 404);
+  if (!file || db.prepare("SELECT 1 FROM attachments WHERE id=? AND trashedAt IS NOT NULL").get(file.id) || !resolveFileAttachmentAccess(file, userId).canDownload) return c.json({ error: "文件不存在或不可用", code: "FILE_NOT_FOUND" }, 404);
   if ((file.workspaceId || null) !== (note.workspaceId || null) || (!file.workspaceId && file.userId !== note.userId)) {
     return c.json({ error: "只能插入与笔记属于同一空间的文件", code: "FILE_SCOPE_MISMATCH" }, 409);
   }
@@ -933,18 +937,8 @@ app.patch("/:id/external-access", async (c) => {
 
 // ---------------------------------------------------------------------------
 // DELETE /api/files/:id
-// 删除文件（DB 行 + 磁盘文件）。
-//
-// 权限：
-//   需对 attachments.noteId 所指笔记有 write 权限；attachments.ts 的 DELETE
-//   保持同款逻辑，这里只是做"文件管理"视角下的同义入口。
-//
-// 注意：
-//   - 如果还有其他笔记正在引用该附件（references 非空 & 非本 primary），
-//     删除后那些笔记里的 <img> 将显示为破图。返回体会带 remainingReferences
-//     让前端按需二次确认或提示。
-//   - 物理文件删不掉不阻塞（权限 / 已不存在），DB 行一定删掉——保持与
-//     attachments.ts 的语义一致。
+// Move unused files to the recycle bin; physical objects and IDs are retained.
+// Permanent deletion is exclusively exposed by /trash/purge with confirmation.
 // ---------------------------------------------------------------------------
 app.delete("/:id", async (c) => {
   const userId = c.req.header("X-User-Id") || "";
@@ -971,24 +965,12 @@ app.delete("/:id", async (c) => {
     return c.json({ error: "无权删除该文件", code: "FORBIDDEN" }, 403);
   }
 
-  // v11 引用计数：若同一物理文件还有别的 attachments 行指向，仅删本行不动磁盘
-  // （理论上 hash dedup 后不会产生这种共享，但老数据 / 并发竞态可能出现）
   const risk = db.transaction(() => {
     const risk = attachmentDeletionRisk(id);
-    if (!risk) db.prepare("DELETE FROM attachments WHERE id = ?").run(id);
+    if (!risk) retainAttachmentInTrash(id, userId);
     return risk;
   })();
   if (risk) return c.json(risk, 409);
-  const sameFileCount = db
-    .prepare("SELECT COUNT(*) AS c FROM attachments WHERE path = ? AND id <> ?")
-    .get(row.path, id) as { c: number };
-  if (sameFileCount.c === 0) {
-    try {
-      await deleteAttachmentObject(row.path);
-    } catch {
-      /* 文件删不掉不阻塞，DB 记录一致性优先 */
-    }
-  }
   return c.json({ success: true });
 });
 
@@ -1152,38 +1134,12 @@ app.post("/batch-delete", async (c) => {
         failed.push({ id: row.id, reason: risk.error, code: risk.code, referenceCount: risk.referenceCount });
         continue;
       }
-      db.prepare("DELETE FROM attachments WHERE id = ?").run(row.id);
+      retainAttachmentInTrash(row.id, userId);
       deletable.push(row);
     }
   })();
 
-  // 第二步：单事务批量删 DB 行
-  let deletedCount = 0;
-  if (deletable.length > 0) {
-    deletedCount = deletable.length;
-
-    // 第三步：删磁盘文件（DB 已经一致；磁盘层错误降级为 failed 项，
-    // 但不会让用户误以为 DB 没删——文件已经从列表里消失了）
-    //
-    // v11 引用计数：本批 DELETE 之后再查一次同 path 是否还有其它 attachments
-    // 行存在（来自本批之外的笔记/用户）。只有 0 引用才真正 unlink；否则
-    // 只删 DB 行不动磁盘，避免误清掉别处仍在用的文件。
-    const stillReferencedStmt = db.prepare(
-      "SELECT 1 FROM attachments WHERE path = ? LIMIT 1",
-    );
-    for (const row of deletable) {
-      const stillReferenced = stillReferencedStmt.get(row.path);
-      if (stillReferenced) continue;
-      try {
-        await deleteAttachmentObject(row.path);
-      } catch (err) {
-        failed.push({
-          id: row.id,
-          reason: `磁盘文件清理失败: ${err instanceof Error ? err.message : String(err)}`,
-        });
-      }
-    }
-  }
+  const deletedCount = deletable.length;
 
   return c.json({
     success: true,
@@ -1378,9 +1334,9 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
     .prepare(
       scope.workspaceId
         ? `SELECT id, noteId, userId, workspaceId, uploadSource, mimeType, size, filename, path, folderId, createdAt FROM attachments
-            WHERE userId = ? AND workspaceId = ? AND hash = ? LIMIT 1`
+            WHERE userId = ? AND workspaceId = ? AND hash = ? AND trashedAt IS NULL LIMIT 1`
         : `SELECT id, noteId, userId, workspaceId, uploadSource, mimeType, size, filename, path, folderId, createdAt FROM attachments
-            WHERE userId = ? AND workspaceId IS NULL AND hash = ? LIMIT 1`,
+            WHERE userId = ? AND workspaceId IS NULL AND hash = ? AND trashedAt IS NULL LIMIT 1`,
     )
     .get(
       ...(scope.workspaceId

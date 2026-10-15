@@ -278,21 +278,16 @@ export default function AttachmentDetailDrawer({
 
   const handleDelete = useCallback(async () => {
     if (!detail) return;
-    const isProtectedManualUpload = Boolean(
-      (detail as FileDetail & { isAutoCleanupProtected?: boolean }).isAutoCleanupProtected,
-    );
     const ok = await confirmDialog({
-      title: t("attachmentDetail.deleteConfirmTitle"),
-      description: isProtectedManualUpload
-        ? t("attachmentDetail.protectedDeleteDescription")
-        : t("attachmentDetail.deleteDescription"),
-      confirmText: t("attachmentDetail.delete"),
+      title: t("assetTrash.move"),
+      description: t("assetTrash.moveHint", { count: 1 }),
+      confirmText: t("assetTrash.move"),
       danger: true,
     });
     if (!ok) return;
     try {
       await api.files.remove(detail.id);
-      toast.success(t("attachmentDetail.deleted"));
+      toast.success(t("assetTrash.moved", { count: 1 }));
       const id = detail.id;
       onClose();
       onAfterDelete?.(id);
@@ -740,7 +735,7 @@ export default function AttachmentDetailDrawer({
                     onClick={handleDelete}
                   >
                     <Trash2 size={14} className="mr-1" />
-                    {t("attachmentDetail.deleteFile")}
+                    {t("assetTrash.move")}
                   </Button>
                 )}
               </div>

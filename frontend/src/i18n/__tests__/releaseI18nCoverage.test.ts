@@ -1,3 +1,4 @@
+import { enAssetReliabilityTranslations, zhCNAssetReliabilityTranslations } from "../assetReliabilityTranslations";
 import { enAssetOrganizationTranslations, zhCNAssetOrganizationTranslations } from "../assetOrganizationTranslations";
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -162,6 +163,7 @@ const zh = mergePatches(
   zhCNTaskRemovalTranslations,
   zhCNFileExplorerTranslations,
   zhCNAssetOrganizationTranslations,
+  zhCNAssetReliabilityTranslations,
 );
 const en = mergePatches(
   enBase as TranslationTree,
@@ -182,6 +184,7 @@ const en = mergePatches(
   enTaskRemovalTranslations,
   enFileExplorerTranslations,
   enAssetOrganizationTranslations,
+  enAssetReliabilityTranslations,
 );
 
 const criticalNamespaces = [

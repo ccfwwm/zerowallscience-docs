@@ -9,7 +9,7 @@ const KIND_CONDITIONS: Record<string, string> = {
 
 /** Shared by the legacy query and both permission/retention projections. */
 export function fileExplorerFilters(kind?: string, createdAfter?: string, query: Record<string, string> = {}) {
-  const conditions: string[] = [];
+  const conditions: string[] = ["a.trashedAt IS NULL"];
   const params: string[] = [];
   let filters;
   try { filters = parseAssetFilters({ ...query, fileKind: kind, createdAfter }); }

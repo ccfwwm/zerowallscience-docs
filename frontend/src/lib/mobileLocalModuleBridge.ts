@@ -400,6 +400,11 @@ export function installMobileLocalModuleBridge(
     get: unsupportedOrganization, createTag: unsupportedOrganization, renameTag: unsupportedOrganization,
     deleteTag: unsupportedOrganization, tagFiles: unsupportedOrganization, saveSmartFolder: unsupportedOrganization, deleteSmartFolder: unsupportedOrganization,
   };
+  const unsupportedTrash = async () => {
+    assertPersonalFileScope();
+    throw Object.assign(new Error("File recycle bin is unavailable in Native mode."), { code: "MOBILE_ASSET_TRASH_UNSUPPORTED" });
+  };
+  target.files.trash = { list: async () => ({ supported: false, entries: [], total: 0 }), restore: unsupportedTrash, purge: unsupportedTrash };
   target.files.prepareInsert = async (id: string, noteId: string) => {
     assertPersonalFileScope();
     const note = await target.getNote(noteId);
@@ -443,6 +448,8 @@ export function installMobileLocalModuleBridge(
   target.files.remove = async (id:string)=>{await assertSafeFileDeletion(id);await repository.attachments.remove(id);return {success:true};};
   target.files.batchRemove = async (ids:string[])=>{const failed:Array<{id:string;reason:string}>=[];let deleted=0;for(const id of ids){try{await target.files.remove(id);deleted+=1;}catch(error){failed.push({id,reason:error instanceof Error?error.message:"删除失败"});}}return {success:failed.length===0,deleted,failed};};
   target.files.rename = async (id:string,filename:string)=>{assertPersonalFileScope();await db.run("UPDATE attachments SET filename=?,updatedAt=? WHERE id=?",[filename,now(),id]);const row=(await db.query<Record<string,unknown>>("SELECT * FROM attachments WHERE id=?",[id]))[0];if(row)await enqueue("attachment",id,"upsert",row);return {success:true,filename};};
+  target.files.remove = unsupportedTrash;
+  target.files.batchRemove = unsupportedTrash;
   target.attachmentFolders.list = async()=>({folders:[]});
   target.dataFile.cleanupOrphans = async()=>({totalRemovedItems:0,totalFreedBytes:0,removed:{databaseRows:0,contentReferences:0,diskFiles:0}});
 
