@@ -1357,7 +1357,7 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
       ...(scope.workspaceId
         ? [userId, scope.workspaceId, sha256]
         : [userId, sha256]),
-    ) as (FileAttachmentAccessRow & { mimeType: string; size: number; filename: string; path: string; folderId: string | null; createdAt: string }) | undefined;
+    ) as (FileAttachmentAccessRow & { id: string; mimeType: string; size: number; filename: string; path: string; folderId: string | null; createdAt: string }) | undefined;
 
   if (dedupRow) {
     if (!canWriteManagedFile(dedupRow, userId)) return c.json({ error: "无权修改已有文件", code: "FORBIDDEN" }, 403);
