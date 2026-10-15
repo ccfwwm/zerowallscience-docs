@@ -50,8 +50,18 @@ test("Store-only target is AppX; never uploads NSIS or publishes to GitHub", () 
   assert.equal(c.win.artifactName, "Nowen-Note-Store-\x24{version}-\x24{arch}.\x24{ext}");
   assert.equal(c.appx.identityName, identity.NOWEN_STORE_IDENTITY_NAME);
   assert.equal(c.appx.publisher, identity.NOWEN_STORE_PUBLISHER);
-  assert.ok(c.appx.capabilities.includes("runFullTrust"));
-  assert.ok(c.appx.capabilities.includes("privateNetworkClientServer"));
+  // The pinned electron-builder 25.1.8 AppXOptions schema rejects "capabilities".
+  // The mandatory runFullTrust entry is emitted by its AppX generator, and the
+  // actual generated manifest is checked in the Windows packaging workflow.
+  assert.equal(Object.hasOwn(c.appx, "capabilities"), false);
+  const supportedAppXKeys = new Set([
+    "addAutoLaunchExtension", "applicationId", "artifactName", "backgroundColor",
+    "customExtensionsPath", "displayName", "electronUpdaterAware", "identityName",
+    "languages", "makeappxArgs", "maxVersionTested", "minVersion",
+    "publish", "publisher", "publisherDisplayName", "setBuildNumber",
+    "showNameOnTiles",
+  ]);
+  assert.deepEqual(Object.keys(c.appx).filter(key => !supportedAppXKeys.has(key)), []);
   assert.equal(c.appx.applicationId, "NowenNote");
 });
 
