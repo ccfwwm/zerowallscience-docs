@@ -7,8 +7,9 @@
   </p>
   <p>
     <a href="./README.md">简体中文</a> ·
-    <a href="https://cropflre.github.io/">Official Website / Help Center</a> ·
-    <a href="http://nowen.cn/">nowen.cn (Under Maintenance)</a> ·
+    <a href="https://nowen.cn/">Official Website</a> ·
+    <a href="https://nowen.cn/#/note/download">Download Center</a> ·
+    <a href="https://nowen.cn/#/note/tutorials">Help Center</a> ·
     <a href="http://note.nowen.cn/">Live Demo</a> ·
     <a href="https://github.com/cropflre/nowen-note/releases">Downloads</a> ·
     <a href="./docs/tutorials/README.md">Tutorials</a> ·
@@ -107,13 +108,13 @@ v1.5.0 introduced major improvements to **Sync V2 and offline workspaces, plugin
 
 ## Website and demo
 
-- Current website / help center: <https://cropflre.github.io/>
-- Future website: <http://nowen.cn/> (under maintenance)
+- Official website: <https://nowen.cn/>
+- Nowen Note product overview: <https://nowen.cn/#/note>
+- Multi-platform download center: <https://nowen.cn/#/note/download>
+- Documentation and help center: <https://nowen.cn/#/note/tutorials>
 - Demo: <http://note.nowen.cn/>
 - Username: `demo`
 - Password: `demo123456`
-
-> `nowen.cn` is still under maintenance. For now, use <https://cropflre.github.io/> as the official Nowen help and documentation entry.
 
 > The demo is reset periodically. Do not store private or important data in it.
 
@@ -355,13 +356,13 @@ Example prompt: "Read the nowen-note-development Skill first, inspect the code b
 
 ## Documentation
 
-- [Nowen official help center](https://cropflre.github.io/#/note)
+- [Nowen official help center](https://nowen.cn/#/note)
 - [MCP Server installation and usage](./docs/tutorials/mcp.en.md)
 - [MCP Server 中文安装教程](./docs/tutorials/mcp.md)
 - [Tutorial center](./docs/tutorials/README.md)
-- [Feature overview](https://cropflre.github.io/#/note)
-- [Installation and troubleshooting](https://cropflre.github.io/#/note/faq)
-- [API documentation](https://cropflre.github.io/#/note/api)
+- [Feature overview](https://nowen.cn/#/note)
+- [Installation and troubleshooting](https://nowen.cn/#/note/faq)
+- [API documentation](https://nowen.cn/#/note/api)
 - [Deployment guide](./docs/deployment.md)
 - [Docker update and recovery](./docs/docker-online-update.md)
 - [WebDAV backup](./docs/webdav-backup.md)
