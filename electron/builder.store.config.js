@@ -3,12 +3,6 @@
 // Partner Center package identity must be supplied verbatim; never guess a publisher.
 const base = require("./builder.config.js");
 
-function required(name) {
-  const value = String(process.env[name] || "").trim();
-  if (!value) throw new Error("[Microsoft Store] Missing Partner Center value: " + name);
-  return value;
-}
-
 function storeIdentity(env = process.env) {
   function field(name) {
     const value = String(env[name] || "").trim();
@@ -57,5 +51,3 @@ function createStoreConfig(identity) {
 
 // A Store submission cannot be accidentally built with guessed Microsoft identity values.
 module.exports = createStoreConfig(storeIdentity());
-module.exports.storeIdentity = storeIdentity;
-module.exports.createStoreConfig = createStoreConfig;
