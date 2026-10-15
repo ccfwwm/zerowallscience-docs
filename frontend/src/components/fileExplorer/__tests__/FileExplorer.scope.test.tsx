@@ -11,7 +11,7 @@ vi.mock("@/lib/api", () => ({
   getCurrentWorkspace: () => state.workspace, getServerUrl: () => "http://qa.local", getBaseUrl: () => "/api",
   resolveAttachmentUrl: (url: string) => url,
   api: {
-    files: { list: async () => ({ items: [{ id: "file-a", filename: "file.txt", mimeType: "text/plain", size: 1, createdAt: "2026-10-15", folderId: null }], total: 1 }), batchRemove: state.removeFiles },
+    files: { organization: { list: async () => ({supported:false,canManageTags:false,tags:[],smartFolders:[]}) }, list: async () => ({ items: [{ id: "file-a", filename: "file.txt", mimeType: "text/plain", size: 1, createdAt: "2026-10-15", folderId: null }], total: 1 }), batchRemove: state.removeFiles },
     attachmentFolders: { list: async () => ({ folders: [{ id: "folder-a", name: "Folder A", parentId: null, fileCount: 0 }] }), remove: state.removeFolder },
   },
 }));

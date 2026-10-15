@@ -248,7 +248,7 @@ function buildImmediateOrphanList(
   const noteId = c.req.query("noteId") || "";
   const folderId = c.req.query("folderId") || "";
   const q = (c.req.query("q") || "").trim();
-  const explorer = fileExplorerFilters(c.req.query("fileKind"), c.req.query("createdAfter"));
+  const explorer = fileExplorerFilters(c.req.query("fileKind"), c.req.query("createdAfter"), c.req.query());
   const page = Math.max(1, Number(c.req.query("page") || 1));
   const pageSize = Math.min(200, Math.max(1, Number(c.req.query("pageSize") || 50)));
 

@@ -1,3 +1,4 @@
+import { filterOrganizedAssets, parseAssetFilters } from "../services/asset-organization.js";
 import type { Context, Next } from "hono";
 
 import { getDb } from "../db/schema.js";
@@ -317,7 +318,7 @@ function visibleFileList(c: Context, userId: string) {
   const pageSize = normalizePositiveInteger(c.req.query("pageSize"), 50, 200);
   const whereParts: string[] = [];
   const params: Array<string | number> = [];
-  const explorer = fileExplorerFilters(c.req.query("fileKind"), c.req.query("createdAfter"));
+  const explorer = fileExplorerFilters(c.req.query("fileKind"), c.req.query("createdAfter"), c.req.query());
   whereParts.push(...explorer.conditions);
   params.push(...explorer.params);
 
@@ -403,7 +404,7 @@ function visibleFileList(c: Context, userId: string) {
     return resolved;
   };
 
-  const visibleRows = rows.filter((row) => permissions(row).canView);
+  const visibleRows = filterOrganizedAssets(rows.filter((row) => permissions(row).canView), parseAssetFilters(c.req.query()), userId);
   const start = (page - 1) * pageSize;
   const pageRows = visibleRows.slice(start, start + pageSize);
   const items = pageRows.map((row) => {

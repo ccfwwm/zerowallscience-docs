@@ -394,14 +394,22 @@ export function installMobileLocalModuleBridge(
     hash:typeof row.hash === "string"?row.hash:null,folderId:null,folderName:null,
     primaryNote:row.noteId?{id:String(row.noteId),title:String(row.noteTitle||""),notebookId:row.notebookId?String(row.notebookId):null,notebookName:row.notebookName?String(row.notebookName):null,notebookIcon:row.notebookIcon?String(row.notebookIcon):null,isTrashed:Number(row.isTrashed)||0}:null,
   });
+  const unsupportedOrganization = async () => { throw Object.assign(new Error("File tags and smart folders are not available in Native mode yet."), { code: "MOBILE_ASSET_ORGANIZATION_UNSUPPORTED" }); };
+  target.files.organization = {
+    list: async () => ({ supported: false, canManageTags: false, tags: [], smartFolders: [] }),
+    get: unsupportedOrganization, createTag: unsupportedOrganization, renameTag: unsupportedOrganization,
+    deleteTag: unsupportedOrganization, tagFiles: unsupportedOrganization, saveSmartFolder: unsupportedOrganization, deleteSmartFolder: unsupportedOrganization,
+  };
   target.files.stats = async ():Promise<FileStats>=>{const rows=await fileRows();const images=rows.filter((row)=>String(row.mimeType).startsWith("image/"));const files=rows.filter((row)=>!String(row.mimeType).startsWith("image/"));const sum=(items:Array<Record<string,unknown>>)=>items.reduce((total,row)=>total+(Number(row.size)||0),0);const byMime=[...new Set(rows.map((row)=>String(row.mimeType)))].map((mime)=>{const items=rows.filter((row)=>row.mimeType===mime);return {mime,count:items.length,bytes:sum(items)};});return {total:rows.length,totalBytes:sum(rows),images:{count:images.length,bytes:sum(images)},files:{count:files.length,bytes:sum(files)},unreferenced:{count:0,bytes:0},myUploads:{total:rows.length,referenced:rows.length,unreferenced:0},storage:{mode:"local",driver:"local",source:"default"},byMime};};
   target.files.list = async (params:Record<string,unknown>={}):Promise<FileListResponse>=>{
+    if (["tagIds", "minSize", "maxSize", "createdBefore", "referenceState", "duplicateOnly"].some((key) => params[key] !== undefined)) await unsupportedOrganization();
     let rows=await fileRows();
     if(params.category)rows=rows.filter((row)=>(String(row.mimeType).startsWith("image/")?"image":"file")===params.category);
     if(params.fileKind)rows=rows.filter((row)=>assetFileKind(String(row.mimeType))===params.fileKind);
     if(params.q)rows=rows.filter((row)=>String(row.filename).toLowerCase().includes(String(params.q).toLowerCase()));
     if(params.folderId)rows=rows.filter((row)=>params.folderId==="__unarchived"?!row.folderId:row.folderId===params.folderId);
     if(params.createdAfter)rows=rows.filter((row)=>Date.parse(String(row.createdAt))>=Date.parse(String(params.createdAfter)));
+    if(params.recentDays)rows=rows.filter((row)=>Date.parse(String(row.createdAt))>=Date.now()-Number(params.recentDays)*86400000);
     const sort=String(params.sort||"created_desc");
     rows.sort((left,right)=>{
       const compare=sort.startsWith("size")?Number(left.size)-Number(right.size)

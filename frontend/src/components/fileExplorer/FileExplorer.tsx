@@ -1,4 +1,8 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { explorerAssetFilters } from "@/lib/assetFilters";
+import AssetTagEditor from "./AssetTagEditor";
+import AssetFilterPanel from "./AssetFilterPanel";
+import AssetOrganizationSidebar from "./AssetOrganizationSidebar";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Folder, Upload, Plus, Search, Menu, ChevronRight, LayoutGrid, List, Columns3, MoreHorizontal, Loader2 } from "lucide-react";
 import { api, getBaseUrl, getServerUrl, getCurrentWorkspace, resolveAttachmentUrl } from "@/lib/api";
@@ -9,10 +13,10 @@ import { useFileUploadQueue } from "@/hooks/useFileUploadQueue";
 import { useAppActions } from "@/store/AppContext";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
-import { confirm } from "@/components/ui/confirm";
+import { confirm, prompt } from "@/components/ui/confirm";
 import { downloadAttachment } from "@/lib/downloadFile";
 import { copyText } from "@/lib/clipboard";
-import type { FileItem, FileSortKey } from "@/types";
+import type { FileItem, FileSortKey, AssetFilters, AssetOrganization, AssetSmartFolder } from "@/types";
 import AttachmentDetailDrawer from "@/components/attachmentDetail/AttachmentDetailDrawer";
 import FileMoveDialog from "@/components/FileMoveDialog";
 import FileFolderTree from "./FileFolderTree";
@@ -44,6 +48,12 @@ export default function FileExplorer() {
 function FileExplorerContent({ scope }: { scope: string }) {
   const { t } = useTranslation();
   const actions = useAppActions();
+  const [assetFilters, setAssetFilters] = useState<AssetFilters>({});
+  const [organization, setOrganization] = useState<AssetOrganization | null>(null);
+  const [organizationError, setOrganizationError] = useState("");
+  const [showFilters, setShowFilters] = useState(false);
+  const [smartFolder, setSmartFolder] = useState<AssetSmartFolder | null>(null);
+  const [batchTags, setBatchTags] = useState(false);
   const [category, setCategory] = useState<AssetCategory>("all");
   const [folderId, setFolderId] = useState<string | null>(null);
   const [folders, setFolders] = useState<AssetFolder[]>([]);
@@ -82,10 +92,11 @@ function FileExplorerContent({ scope }: { scope: string }) {
   useEffect(() => () => clearTimeout(refreshTimer.current), []);
   const queue = useFileUploadQueue(scope, uploaded, () => identity() === scope);
   const path = folderPath(folders, folderId);
-  const title = path.at(-1)?.name || t(`fileExplorer.${category}`);
+  const title = smartFolder?.name || path.at(-1)?.name || t(`fileExplorer.${category}`);
+  const currentFilters = useMemo(() => explorerAssetFilters(category, folderId, query, assetFilters), [category, folderId, query, assetFilters]);
   const pageSize = 60;
   const closeDetail = useCallback(() => setDetail(null), []);
-  const clearSelection = () => { setSelected(new Set()); anchor.current = null; setSelectionMode(false); };
+  const clearSelection = () => { setSelected(new Set()); anchor.current = null; setSelectionMode(false); setBatchTags(false); };
 
   useEffect(() => registerMobileBackHandler("sheet", () => {
     if (nameDialog) { if (!saving) setNameDialog(null); return true; }
@@ -113,12 +124,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
   useEffect(() => {
     let stale = false;
     setLoading(true); setError("");
-    const params: Parameters<typeof api.files.list>[0] = { page, pageSize, sort, q: query };
-    if (folderId) params.folderId = folderId;
-    if (category === "unorganized") params.folderId = "__unarchived";
-    if (category === "image") params.category = "image";
-    if (["document", "video", "audio", "archive"].includes(category)) params.fileKind = category as "document" | "video" | "audio" | "archive";
-    if (category === "recent") params.createdAfter = new Date(Date.now() - 7 * 86400000).toISOString();
+    const params: Parameters<typeof api.files.list>[0] = { ...currentFilters, page, pageSize, sort };
     api.files.list(params).then((result) => {
       if (stale || identity() !== scope) return;
       setItems(result.items); setTotal(result.total);
@@ -128,7 +134,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
       if (!stale && identity() === scope) { setError(failure instanceof Error ? failure.message : String(failure)); setItems([]); }
     }).finally(() => { if (!stale && identity() === scope) setLoading(false); });
     return () => { stale = true; };
-  }, [category, folderId, page, sort, query, revision, scope]);
+  }, [currentFilters, page, sort, revision, scope]);
   useEffect(() => {
     let stale = false;
     api.attachmentFolders.list().then((result) => {
@@ -140,8 +146,33 @@ function FileExplorerContent({ scope }: { scope: string }) {
     return () => { stale = true; };
   }, [revision, scope]);
 
+  useEffect(() => {
+    let stale = false;
+    api.files.organization.list().then((result) => {
+      if (!stale && identity() === scope) { setOrganization(result); setOrganizationError(""); }
+    }).catch((failure: unknown) => {
+      if (!stale && identity() === scope) setOrganizationError(failure instanceof Error ? failure.message : String(failure));
+    });
+    return () => { stale = true; };
+  }, [revision, scope]);
+  const changeFilters = (filters: AssetFilters) => { setAssetFilters(filters); setPage(1); clearSelection(); setDetail(null); };
+  const openSmartFolder = (folder: AssetSmartFolder) => {
+    setSmartFolder(folder); setCategory("all"); setFolderId(folder.filters.folderId || null);
+    setAssetFilters(folder.filters); setInput(folder.filters.q || ""); setQuery(folder.filters.q || "");
+    setPage(1); clearSelection(); setDetail(null); setShowFilters(true); if (window.innerWidth < 768) setSidebar(false);
+  };
+  const saveSmartFolder = async (update = false) => {
+    const name = update ? smartFolder?.name : await prompt({ title: t("assetOrganization.smartName") });
+    if (!name?.trim() || identity() !== scope) return;
+    try {
+      const saved = await api.files.organization.saveSmartFolder(name.trim(), currentFilters, update ? smartFolder?.id : undefined);
+      if (identity() !== scope) return;
+      setSmartFolder(saved.smartFolder); refresh(); toast.success(t("assetOrganization.saved"));
+    } catch (failure: unknown) { if (identity() === scope) toast.error(failure instanceof Error ? failure.message : String(failure)); }
+  };
+
   const navigate = (nextCategory: AssetCategory, nextFolder: string | null = null) => {
-    setCategory(nextCategory); setFolderId(nextFolder); setPage(1); setInput(""); setQuery(""); clearSelection(); setDetail(null); if (window.innerWidth < 768) setSidebar(false); setMenu(null);
+    setAssetFilters({}); setSmartFolder(null); setShowFilters(false); setCategory(nextCategory); setFolderId(nextFolder); setPage(1); setInput(""); setQuery(""); clearSelection(); setDetail(null); if (window.innerWidth < 768) setSidebar(false); setMenu(null);
   };
   const chooseView = (next: AssetView) => {
     setView(next); try { localStorage.setItem(`nowen-assets-view:${scope}:${category}`, next); } catch { /* Preference storage can be unavailable. */ }
@@ -201,7 +232,8 @@ function FileExplorerContent({ scope }: { scope: string }) {
   };
 
   if (advanced) return <div className="flex h-full min-h-0 flex-col"><button className="shrink-0 border-b border-app-border p-3 text-left text-sm text-accent-primary" onClick={() => { setAdvanced(false); refresh(); }}>{t("fileExplorer.backToFiles")}</button><div className="min-h-0 flex-1"><Suspense fallback={<Loader2 className="animate-spin" />}><Advanced /></Suspense></div></div>;
-  const childFolders = (category === "all" && !query) ? folders.filter((folder) => folder.parentId === folderId) : [];
+  const hasAssetFilters = Object.values(assetFilters).some((value) => value !== undefined && value !== false && (!Array.isArray(value) || value.length > 0));
+  const childFolders = (category === "all" && !query && !smartFolder && !hasAssetFilters) ? folders.filter((folder) => folder.parentId === folderId) : [];
   const selection = items.filter((item) => selected.has(item.id));
   const canManageSelection = selection.length > 0 && selection.every((item) => item.canManage !== false);
 
@@ -223,6 +255,8 @@ function FileExplorerContent({ scope }: { scope: string }) {
       <details className="mt-1"><summary className="cursor-pointer px-3 py-2 text-sm text-tx-secondary">{t("fileExplorer.more")}</summary>{(["video", "audio", "archive", "unorganized"] as AssetCategory[]).map((value) => <button key={value} className="block w-full rounded-md px-3 py-2 text-left text-sm hover:bg-app-hover" onClick={() => navigate(value)}>{t(`fileExplorer.${value}`)}</button>)}</details>
       <div className="mt-5 flex items-center justify-between px-2 text-xs font-medium text-tx-secondary"><span>{t("fileExplorer.myFolders")}</span><button aria-label={t("fileManager.newFolder")} disabled={!folderSupport} onClick={() => setNameDialog({ name: "", parentId: folderId })} className="p-1 disabled:opacity-30"><Plus size={15} /></button></div>
       <div className="mt-2 min-h-0 flex-1 overflow-auto"><FileFolderTree folders={folders} current={folderId} onOpen={(id) => navigate("all", id)} onMenu={(folder, event) => showMenu(event, undefined, folder)} onDrop={(target, event) => void dropOnFolder(target, event)} />
+        {organization && <AssetOrganizationSidebar state={organization} activeTags={assetFilters.tagIds || []} activeSmart={smartFolder?.id || null} onTag={(id) => { navigate("all"); setAssetFilters({ tagIds: [id] }); setShowFilters(true); }} onSmart={openSmartFolder} onChanged={refresh} isCurrent={() => identity() === scope} />}
+        {organizationError && <p role="alert" className="mt-3 text-xs text-red-500">{organizationError}<button onClick={refresh} className="ml-2 underline">{t("fileExplorer.retry")}</button></p>}
         {!folderSupport && <p className="px-2 py-3 text-xs leading-5 text-tx-tertiary">{folderError || t("fileExplorer.folderUnavailable")}</p>}
       </div>
       <button className="mt-3 flex items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-tx-secondary hover:bg-app-hover" onClick={() => setAdvanced(true)}><MoreHorizontal size={16} />{t("fileExplorer.storageTools")}</button>
@@ -235,8 +269,10 @@ function FileExplorerContent({ scope }: { scope: string }) {
           <select aria-label={t("fileExplorer.sort")} value={sort} onChange={(event) => { setSort(event.target.value as FileSortKey); setPage(1); clearSelection(); }} className="h-9 max-w-36 rounded-lg border border-app-border bg-app-surface px-2 text-xs">{sortKeys.map((value) => <option key={value} value={value}>{t(`fileExplorer.sortKeys.${value}`)}</option>)}</select>
           <div className="flex rounded-lg border border-app-border p-0.5">{(["grid", "list", ...(category === "image" ? ["masonry"] : [])] as AssetView[]).map((value) => { const Icon = value === "grid" ? LayoutGrid : value === "list" ? List : Columns3; return <button key={value} aria-label={t(`fileExplorer.views.${value}`)} aria-pressed={view === value} onClick={() => chooseView(value)} className={cn("rounded-md p-1.5", view === value && "bg-accent-primary/10 text-accent-primary")}><Icon size={17} /></button>; })}</div>
           <button className="text-xs text-tx-secondary" onClick={() => { setSelectionMode((previous) => !previous); setDetail(null); setSelected(new Set()); }}>{t("fileExplorer.select")}</button>
+          {organization?.supported && <button aria-expanded={showFilters} className="text-xs text-accent-primary" onClick={() => setShowFilters((value) => !value)}>{t("assetOrganization.filters")}</button>}
           {view === "masonry" && <input aria-label={t("fileExplorer.density")} type="range" min={130} max={260} step={10} value={density} onChange={(event) => setDensity(Number(event.target.value))} className="w-24" />}
         </div>
+        {showFilters && organization?.supported && <AssetFilterPanel filters={assetFilters} tags={organization.tags} onChange={changeFilters} onSave={() => void saveSmartFolder()} onUpdate={smartFolder ? () => void saveSmartFolder(true) : undefined} onClear={() => navigate("all")} />}
       </header>
       <input ref={picker} type="file" multiple className="hidden" onChange={(event) => { queue.enqueue(Array.from(event.target.files || []), folderId); event.target.value = ""; }} />
       <div className="min-h-0 flex-1 overflow-auto p-4" onDragOver={(event) => { if (event.dataTransfer.types.includes("Files")) event.preventDefault(); }} onDrop={(event) => { if (!event.dataTransfer.types.includes("Files")) return; event.preventDefault(); queue.enqueue(Array.from(event.dataTransfer.files), folderId); }}>
@@ -251,11 +287,12 @@ function FileExplorerContent({ scope }: { scope: string }) {
           </div>
         </>}
       </div>
-      {selected.size > 0 && <div className="flex flex-wrap items-center gap-3 border-t border-app-border bg-app-elevated p-3 text-xs"><span>{t("fileExplorer.selected", { count: selected.size })}</span><button disabled={!folderSupport || !canManageSelection || saving} className="text-accent-primary disabled:opacity-30" onClick={() => setMoveIds([...selected])}>{t("fileManager.moveFiles")}</button><button onClick={async () => { try { for (const file of selection) await downloadAttachment(resolveAttachmentUrl(file.url), file.filename); } catch (failure: unknown) { toast.error(failure instanceof Error ? failure.message : String(failure)); } }}>{t("attachmentDetail.downloadFile")}</button><button className="text-red-500 disabled:opacity-30" disabled={!canManageSelection || saving} onClick={() => void deleteFiles([...selected])}>{t("attachmentDetail.delete")}</button><button onClick={clearSelection}>{t("common.cancel")}</button></div>}
+      {selected.size > 0 && <div className="flex flex-wrap items-center gap-3 border-t border-app-border bg-app-elevated p-3 text-xs"><span>{t("fileExplorer.selected", { count: selected.size })}</span><button disabled={!folderSupport || !canManageSelection || saving} className="text-accent-primary disabled:opacity-30" onClick={() => setMoveIds([...selected])}>{t("fileManager.moveFiles")}</button><button onClick={async () => { try { for (const file of selection) await downloadAttachment(resolveAttachmentUrl(file.url), file.filename); } catch (failure: unknown) { toast.error(failure instanceof Error ? failure.message : String(failure)); } }}>{t("attachmentDetail.downloadFile")}</button><button className="text-red-500 disabled:opacity-30" disabled={!canManageSelection || saving} onClick={() => void deleteFiles([...selected])}>{t("attachmentDetail.delete")}</button><button disabled={!organization?.supported || !canManageSelection || saving} className="text-accent-primary disabled:opacity-30" onClick={() => setBatchTags((value) => !value)}>{t("assetOrganization.batchTags")}</button><button onClick={clearSelection}>{t("common.cancel")}</button></div>}
+      {batchTags && selected.size > 0 && <div className="max-h-64 overflow-auto border-t border-app-border p-3"><AssetTagEditor ids={[...selected]} onChanged={refresh} /></div>}
       <footer className="flex shrink-0 items-center justify-between border-t border-app-border px-4 py-2 text-xs text-tx-secondary"><span>{t("fileExplorer.fileCount", { count: total })} · {t("fileExplorer.page", { page, total: Math.max(1, Math.ceil(total / pageSize)) })}</span><div className="flex gap-3"><button disabled={page === 1 || loading} className="disabled:opacity-30" onClick={() => { setPage((previous) => previous - 1); clearSelection(); }}>{t("fileExplorer.previous")}</button><button disabled={page * pageSize >= total || loading} className="disabled:opacity-30" onClick={() => { setPage((previous) => previous + 1); clearSelection(); }}>{t("fileExplorer.next")}</button></div></footer>
       <FileUploadQueue queue={queue} onView={setDetail} onMove={(id) => setMoveIds([id])} />
     </main>
-    {detail && <AttachmentDetailDrawer embedded attachmentId={detail} onClose={closeDetail} onJumpToNote={jumpToNote} showDelete onAfterDelete={refresh} onAfterRename={refresh} onAfterMove={refresh} />}
+    {detail && <AttachmentDetailDrawer embedded attachmentId={detail} onClose={closeDetail} onJumpToNote={jumpToNote} showDelete onAfterDelete={refresh} onAfterRename={refresh} onAfterMove={refresh} onAfterOrganize={refresh} onOpenAttachment={setDetail} />}
     {(moveIds || moveFolder) && <FileMoveDialog ids={moveIds || []} folderToMove={moveFolder || undefined} expectedFolderIds={moveIds ? Object.fromEntries(items.filter((item) => moveIds.includes(item.id)).map((item) => [item.id, item.folderId])) : undefined} onClose={() => { setMoveIds(null); setMoveFolder(null); }} onMoved={() => { clearSelection(); refresh(); }} />}
     {nameDialog && <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 p-4"><form role="dialog" aria-modal="true" aria-label={t(nameDialog.id || nameDialog.file ? "attachmentDetail.rename" : "fileManager.newFolder")} onSubmit={(event) => { event.preventDefault(); void saveName(); }} onKeyDown={(event) => { if (event.key === "Escape" && !saving) setNameDialog(null); }} className="w-full max-w-sm rounded-xl border border-app-border bg-app-elevated p-4 shadow-xl"><h2 className="text-sm font-semibold">{t(nameDialog.id || nameDialog.file ? "attachmentDetail.rename" : "fileManager.newFolder")}</h2><input autoFocus aria-label={t("fileManager.folderName")} value={nameDialog.name} maxLength={nameDialog.file ? 255 : 100} onChange={(event) => setNameDialog({ ...nameDialog, name: event.target.value })} className="mt-4 w-full rounded-lg border border-app-border bg-app-surface p-2 text-sm" /><div className="mt-4 flex justify-end gap-3 text-sm"><button type="button" disabled={saving} onClick={() => setNameDialog(null)}>{t("common.cancel")}</button><button type="submit" disabled={saving || !nameDialog.name.trim()} className="text-accent-primary disabled:opacity-30">{t("attachmentDetail.save")}</button></div></form></div>}
     {menu && <><button className="fixed inset-0 z-[110] cursor-default" aria-label={t("common.close")} onClick={() => setMenu(null)} /><div role="menu" className="fixed z-[111] w-52 rounded-lg border border-app-border bg-app-elevated p-1 text-sm shadow-xl" style={{ left: Math.max(4, menu.x), top: Math.max(4, menu.y) }}>
