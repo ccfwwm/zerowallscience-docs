@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **calendar / mobile**：修复移动端选择日记日期后内容横向偏移；区分按修改日期筛选的笔记日历与按发布时间浏览的瞬间日历，统一本地日期、月份边界和瞬间时间显示，避免凌晨记录的徽章与筛选结果不一致。Fix touch date-picker layout shifts, distinguish note modified dates from moment published dates, and align local-day filtering, month bounds and displayed times. 不重写导入历史时间；手机重复登录的现场原因仍待核查，见 [验证记录](./docs/qa/v1.5.2/calendar-mobile-recovery.md)。Imported timestamps are preserved; repeated sign-in in the reported phone environment remains unconfirmed.
+
 - **files / Phase D1–D2**：已有文件插入增加空间与权限预检，并修复协同保存时漏更新附件反向引用；新增服务端文件回收站、原位置恢复及显式永久删除。Add authorized existing-file reuse, transactional collaborative reference indexing and a server recycle bin with recoverable IDs and explicit purge. SQLite v128 / PostgreSQL migration included; Native recycle-bin operations are explicitly unsupported. 尚未合并或发布，见 [使用说明](./docs/user/file-recycle-bin.md) 与 [实际验收](./docs/qa/files-assets-center-v2/phase-d-trash.md)。目录多端同步、相似图片与进一步整理体验仍属后续 D 模块。
 
 - **files / Phase C**：独立功能分支新增附件标签、批量添加 / 移除标签、标签搜索与组合筛选、保存为智能文件夹，以及可访问范围内的相同内容文件展示；不移动或复制原文件。SQLite v127 增量迁移保留附件身份与引用，提供 PostgreSQL 存储迁移；Native 元数据同步尚未支持并明确拒绝。Add scoped asset tags, additive batch tagging, saved smart folders, attribute filters and accessible identical-file discovery without changing attachment identity, location or bytes. SQLite schema v127 and PostgreSQL storage migration included; Native metadata synchronization is unavailable. 尚未合并或发布，见 [使用说明 / Usage](./docs/user/file-asset-organization.md) 与 [验收 / Acceptance](./docs/qa/files-assets-center-v2/phase-c.md)。

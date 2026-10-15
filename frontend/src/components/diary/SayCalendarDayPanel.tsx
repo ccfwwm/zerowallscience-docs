@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { Diary } from "@/types";
 import { getCurrentWorkspace } from "@/lib/api";
+import { formatServerTime } from "@/lib/dateTime";
 
 function DiarySummaryRow({
   item,
@@ -24,7 +25,7 @@ function DiarySummaryRow({
         </div>
         <div className="flex items-center gap-1.5 text-[10px] text-tx-tertiary mt-0.5">
           {item.mood && <span>{item.mood}</span>}
-          <span>{item.createdAt?.slice(11, 16)}</span>
+          <span>{formatServerTime(item.createdAt, { hour: "2-digit", minute: "2-digit" }, "")}</span>
           {hasImages && <Image size={10} />}
           {hasVideo && <Video size={10} />}
           {(item.creatorName && getCurrentWorkspace() !== "personal") && (

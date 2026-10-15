@@ -852,6 +852,8 @@ function MiniCalendarFilter({
 
   return (
     <div className="px-3 py-2 select-none">
+      <p className="mb-1 text-xs font-medium text-tx-secondary">{t("noteList.calendarTitle")}</p>
+      <p className="mb-2 text-[10px] text-tx-tertiary">{t("noteList.calendarSubtitle")}</p>
       {/* 月份导航 */}
       <div className="flex items-center justify-between mb-2">
         <button onClick={prevMonth} className="p-1 rounded-md hover:bg-app-hover text-tx-tertiary">
@@ -882,6 +884,7 @@ function MiniCalendarFilter({
           return (
             <button
               key={idx}
+              aria-label={dateStr}
               onClick={() => {
                 if (isSelected) onClear();
                 else onSelect(dateStr);
@@ -1680,11 +1683,9 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
           ...(currentFolderOnly ? { includeDescendants: "0" } : {}),
           ...sortParams,
         };
-        if (dateFilter) { params.dateFrom = dateFilter; params.dateTo = dateFilter; }
         notes = await api.getNotes(params);
       } else if (state.viewMode === "favorites") {
         const params: Record<string, string> = { isFavorite: "1", ...sortParams };
-        if (dateFilter) { params.dateFrom = dateFilter; params.dateTo = dateFilter; }
         notes = await api.getNotes(params);
       } else if (state.viewMode === "search" && state.searchQuery) {
         const results = await api.search(state.searchQuery);
@@ -1710,7 +1711,6 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
       } else if (state.viewMode === "tag" && state.selectedTagIds.length > 0) {
         // TAG-FILTER-MULTI-01: 多标签联合筛选
         const params: Record<string, string> = { ...sortParams };
-        if (dateFilter) { params.dateFrom = dateFilter; params.dateTo = dateFilter; }
         if (state.selectedTagIds.length === 1) {
           notes = await api.getNotesWithTag(state.selectedTagIds[0], params);
         } else {
@@ -1718,8 +1718,11 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
         }
       } else {
         const params: Record<string, string> = { ...sortParams };
-        if (dateFilter) { params.dateFrom = dateFilter; params.dateTo = dateFilter; }
         notes = await api.getNotes(params);
+      }
+      // Use the badge's local-day rule; older servers filter dateFrom/dateTo as UTC days.
+      if (dateFilter && state.viewMode !== "search") {
+        notes = notes.filter(note => noteLocalDayKey(note.updatedAt) === dateFilter);
       }
       if (requestSeq !== notesFetchSeqRef.current) return;
       actions.setNotes(notes);
@@ -1824,7 +1827,7 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
   ]);
 
   // 按本地日期聚合每日笔记数：YYYY-MM-DD → count。
-  // 取 updatedAt 与后端日期筛选保持一致（后端用 notes.updatedAt 比较 dateFrom/dateTo）。
+  // 使用与列表本地日期筛选一致的 updatedAt 日期。
   const dateCounts = useMemo(() => {
     const map: Record<string, number> = {};
     for (const n of calendarNotes) {
@@ -3476,6 +3479,8 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
           {state.viewMode !== "search" && (
             <button
               onClick={() => setShowCalendar(!showCalendar)}
+              title={t("noteList.calendarTitle")}
+              aria-label={t("noteList.calendarTitle")}
               className={cn(
                 "p-1.5 rounded-md transition-colors relative",
                 showCalendar || dateFilter

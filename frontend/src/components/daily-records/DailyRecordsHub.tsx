@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
   BookOpen,
   CalendarDays,
@@ -36,6 +37,7 @@ const VIEW_OPTIONS: Array<{
 ];
 
 export default function DailyRecordsHub() {
+  const { t } = useTranslation();
   const [view, setViewState] = useState<DailyRecordsView>(() => loadDailyRecordsView());
   const [selectedDate, setSelectedDate] = useState(() => relativeLocalDateKey(0));
   const [workspaceId, setWorkspaceId] = useState(() => getCurrentWorkspace());
@@ -108,7 +110,7 @@ export default function DailyRecordsHub() {
                   aria-current={view === key ? "page" : undefined}
                 >
                   <Icon size={14} className="shrink-0" />
-                  <span className="truncate">{label}</span>
+                  <span className="truncate">{key === "calendar" ? t("diary.calendarTitle") : label}</span>
                 </button>
               ))}
             </nav>
@@ -150,14 +152,17 @@ export default function DailyRecordsHub() {
                 {item.label}
               </button>
             ))}
-            <label className="flex min-h-10 shrink-0 snap-start cursor-pointer items-center gap-1.5 rounded-lg border border-app-border bg-app-surface px-3 py-2 text-xs text-tx-secondary hover:border-accent-primary/40 hover:bg-app-hover">
+            <label className="relative flex min-h-10 shrink-0 snap-start cursor-pointer items-center gap-1.5 rounded-lg border border-app-border bg-app-surface px-3 py-2 text-xs text-tx-secondary hover:border-accent-primary/40 hover:bg-app-hover focus-within:ring-2 focus-within:ring-accent-primary/40">
               <CalendarDays size={14} className="text-accent-primary" />
-              选择日期
+              {t("diary.selectJournalDate")}
               <input
                 type="date"
+                aria-label={t("diary.selectJournalDate")}
                 value={selectedDate}
                 onChange={(event) => event.target.value && selectJournalDate(event.target.value)}
-                className="sr-only"
+                // Keep the native focus target inside the visible shortcut so
+                // touch focus cannot scroll the entire hub to an offscreen input.
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
               />
             </label>
           </div>
