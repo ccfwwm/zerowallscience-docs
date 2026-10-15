@@ -130,10 +130,11 @@ export function installMobileLocalFirstBridge(
       );
       throw error;
     };
-    target.attachmentFolders.list = async () => ({ folders: [] });
+    target.attachmentFolders.list = async () => ({ folders: [], supported: false, code: "MOBILE_SYNC_ATTACHMENT_FOLDER_UNSUPPORTED" });
     target.attachmentFolders.create = unsupportedAttachmentFolders;
     target.attachmentFolders.rename = unsupportedAttachmentFolders;
     target.attachmentFolders.remove = unsupportedAttachmentFolders;
+    target.files.move = unsupportedAttachmentFolders;
   }
 
   target.getWorkspaces = async (): Promise<Workspace[]> => repository.listWorkspaces();

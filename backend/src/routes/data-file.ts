@@ -22,6 +22,7 @@
  */
 
 import { Hono } from "hono";
+import { attachmentDeletionRisk } from "../services/attachment-deletion-safety";
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
@@ -394,6 +395,7 @@ app.post("/cleanup-orphans", (c) => {
     const tx = db.transaction((list: { id: string; path: string; size: number }[]) => {
       for (const r of list) {
         try {
+          if (attachmentDeletionRisk(r.id)) continue;
           const info = delStmt.run(r.id);
           if (info.changes > 0) dbOrphansRemoved++;
         } catch { /* ignore */ }
@@ -403,6 +405,7 @@ app.post("/cleanup-orphans", (c) => {
 
     for (const [p, list] of pathToRows.entries()) {
       if (!pathsSafeToUnlink.has(p)) continue;
+      if (db.prepare("SELECT 1 FROM attachments WHERE path = ? LIMIT 1").get(p)) continue;
       try {
         const abs = path.join(attachmentsDir, p);
         if (fs.existsSync(abs)) {
@@ -478,6 +481,7 @@ app.post("/cleanup-orphans", (c) => {
     const tx = db.transaction((list: { id: string; path: string; size: number }[]) => {
       for (const r of list) {
         try {
+          if (attachmentDeletionRisk(r.id)) continue;
           const info = delStmt.run(r.id);
           if (info.changes > 0) contentOrphansRemoved++;
         } catch {
@@ -489,6 +493,7 @@ app.post("/cleanup-orphans", (c) => {
 
     for (const [p, list] of pathToRows.entries()) {
       if (!pathsSafeToUnlink.has(p)) continue;
+      if (db.prepare("SELECT 1 FROM attachments WHERE path = ? LIMIT 1").get(p)) continue;
       try {
         const abs = path.join(attachmentsDir, p);
         if (fs.existsSync(abs)) {

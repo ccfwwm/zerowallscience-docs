@@ -121,6 +121,11 @@ export function getCurrentWorkspace(): string {
   return localStorage.getItem(WORKSPACE_KEY) || "personal";
 }
 
+function attachmentFolderScopeQuery(): string {
+  const workspace = getCurrentWorkspace();
+  return workspace === "personal" ? "" : `?workspaceId=${encodeURIComponent(workspace)}`;
+}
+
 export function setCurrentWorkspace(workspaceId: string) {
   localStorage.setItem(WORKSPACE_KEY, workspaceId);
 }
@@ -2182,19 +2187,19 @@ export const api = {
 
   // Attachment folders
   attachmentFolders: {
-    list: () => request<{ folders: Array<{ id: string; name: string; parentId: string | null; fileCount: number; createdAt: string }> }>(`/attachment-folders`),
+    list: () => request<{ supported?: boolean; code?: string; folders: Array<{ id: string; name: string; parentId: string | null; fileCount: number; createdAt: string }> }>(`/attachment-folders${attachmentFolderScopeQuery()}`),
     create: (name: string, parentId?: string) =>
-      request<{ id: string; name: string; parentId: string | null; fileCount: number }>(`/attachment-folders`, {
+      request<{ id: string; name: string; parentId: string | null; fileCount: number }>(`/attachment-folders${attachmentFolderScopeQuery()}`, {
         method: "POST",
         body: JSON.stringify({ name, parentId }),
       }),
     rename: (id: string, name: string) =>
-      request<{ id: string; name: string; parentId: string | null }>(`/attachment-folders/${id}`, {
+      request<{ id: string; name: string; parentId: string | null }>(`/attachment-folders/${id}${attachmentFolderScopeQuery()}`, {
         method: "PATCH",
         body: JSON.stringify({ name }),
       }),
     remove: (id: string) =>
-      request<{ success: boolean }>(`/attachment-folders/${id}`, { method: "DELETE" }),
+      request<{ success: boolean }>(`/attachment-folders/${id}${attachmentFolderScopeQuery()}`, { method: "DELETE" }),
   },
 
   // Security

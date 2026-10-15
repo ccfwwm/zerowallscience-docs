@@ -138,14 +138,9 @@ export function installMobileLocalAttachmentFolderBridge(
   target.attachmentFolders.remove = async (id: string) => {
     await readFolder(id);
     await db.transaction(async (tx) => {
-      await tx.run("UPDATE attachments SET folderId=NULL,updatedAt=? WHERE scopeKey='personal' AND userId=? AND folderId=?",[
-        now(),userId,id,
-      ]);
-      // 后端目前没有文件夹移动 API；若未来 UI 创建了子文件夹，删除父级后把子级提升到根，
-      // 避免留下不可达 parentId。
-      await tx.run("UPDATE mobile_local_attachment_folders SET parentId=NULL,updatedAt=? WHERE userId=? AND parentId=?",[
-        now(),userId,id,
-      ]);
+      const files = await tx.query("SELECT id FROM attachments WHERE folderId=? LIMIT 1",[id]);
+      const children = await tx.query("SELECT id FROM mobile_local_attachment_folders WHERE parentId=? LIMIT 1",[id]);
+      if (files.length || children.length) throw Object.assign(new Error("文件夹非空，请先移出文件和子文件夹"), { code: "FOLDER_NOT_EMPTY" });
       await tx.run("DELETE FROM mobile_local_attachment_folders WHERE id=? AND userId=?",[id,userId]);
     });
     return { success:true };
@@ -197,16 +192,13 @@ export function installMobileLocalAttachmentFolderBridge(
     const folderId = options?.folderId || null;
     const folder = folderId ? await readFolder(folderId) : null;
     const item = await originals.filesUpload(file, options);
-    if (folderId) {
+    if (folderId && !(item as FileItem & { deduplicated?: boolean }).deduplicated) {
       await db.run("UPDATE attachments SET folderId=?,updatedAt=? WHERE scopeKey='personal' AND id=?",[
         folderId,now(),item.id,
       ]);
     }
-    return {
-      ...item,
-      folderId,
-      folderName:folder?.name || null,
-    };
+    if ((item as FileItem & { deduplicated?: boolean }).deduplicated) return (await decorateItems([item]))[0];
+    return { ...item, folderId, folderName:folder?.name || null };
   };
 
   target.files.move = async (rawIds: string[], folderId: string | null) => {

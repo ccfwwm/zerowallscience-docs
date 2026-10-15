@@ -41,6 +41,7 @@
  *     记录了 noteId + userId，后续需要审计哪位用户上传的附件也可追溯。
  */
 import { Hono } from "hono";
+import { attachmentDeletionRisk } from "../services/attachment-deletion-safety";
 import {
   resolveFileAttachmentAccess,
   type FileAttachmentAccessRow,
@@ -894,6 +895,12 @@ app.delete("/:id", async (c) => {
   // 之前的老数据、并发上传竞态）可能多行共享同一物理文件。删除前确认：
   // 若还有其它 attachments 行指向同一 path，仅删本行不动磁盘文件，避免造成
   // 另一行的引用变成"裂图/404"。
+  const risk = db.transaction(() => {
+    const risk = attachmentDeletionRisk(id);
+    if (!risk) db.prepare("DELETE FROM attachments WHERE id = ?").run(id);
+    return risk;
+  })();
+  if (risk) return c.json(risk, 409);
   const sameFileCount = db
     .prepare("SELECT COUNT(*) AS c FROM attachments WHERE path = ? AND id <> ?")
     .get(row.path, id) as { c: number };
@@ -914,8 +921,6 @@ app.delete("/:id", async (c) => {
     // 物理文件仍被其它行引用，但当前 id 的缩略图缓存已不可访问，可以清掉。
     deleteThumbnailsFor(ATTACHMENTS_DIR, id);
   }
-  db.prepare("DELETE FROM attachments WHERE id = ?").run(id);
-
   return c.json({ success: true });
 });
 
@@ -1456,6 +1461,7 @@ export function cleanOrphanAttachments(opts: {
     const tx = db.transaction(() => {
       for (const o of scan.contentOrphans) {
         try {
+          if (attachmentDeletionRisk(o.id)) continue;
           const info = del.run(o.id);
           if (info.changes > 0) removedRows++;
         } catch {
@@ -1468,6 +1474,7 @@ export function cleanOrphanAttachments(opts: {
 
     for (const [p, list] of pathToOrphans.entries()) {
       if (!pathsSafeToUnlink.has(p)) continue;
+      if (db.prepare("SELECT 1 FROM attachments WHERE path = ? LIMIT 1").get(p)) continue;
       try {
         fs.unlinkSync(path.join(ATTACHMENTS_DIR, p));
         removedFiles++;
