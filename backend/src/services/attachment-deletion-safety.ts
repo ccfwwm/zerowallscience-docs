@@ -1,12 +1,15 @@
 import { getDb } from "../db/schema";
 
 /** Recheck inside the deletion transaction, including trashed and inaccessible notes. */
-export function attachmentDeletionRisk(id: string): {
-  code: "FILE_IN_USE" | "FILE_SHARED";
+export function attachmentDeletionRisk(id: string, options: { allowTrashed?: boolean } = {}): {
+  code: "FILE_IN_USE" | "FILE_SHARED" | "FILE_TRASHED";
   error: string;
   referenceCount?: number;
 } | null {
   const db = getDb();
+  if (!options.allowTrashed && db.prepare("SELECT 1 FROM attachments WHERE id=? AND trashedAt IS NOT NULL").get(id)) {
+    return { code: "FILE_TRASHED", error: "文件已在回收站中，请恢复或从回收站明确永久删除" };
+  }
   const references = db.prepare(`SELECT COUNT(*) AS count FROM (
     SELECT noteId FROM attachment_references WHERE attachmentId = ?
     UNION

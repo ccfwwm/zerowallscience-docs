@@ -94,6 +94,7 @@ export function getImmediateOrphanSummary(
   userId: string,
 ): { count: number; bytes: number } {
   const where: string[] = [
+    "a.trashedAt IS NULL",
     "EXISTS(SELECT 1 FROM notes owner_note WHERE owner_note.id = a.noteId)",
     "NOT EXISTS(SELECT 1 FROM attachment_references ar WHERE ar.attachmentId = a.id)",
     "COALESCE(a.uploadSource, '') <> 'file_manager'",

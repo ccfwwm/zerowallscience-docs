@@ -21,7 +21,7 @@ app.get("/", (c) => {
   const db = getDb();
   const userId = c.req.header("X-User-Id")!;
   const counts = db.prepare(`SELECT folderId, COUNT(*) AS count FROM attachments
-    WHERE userId = ? AND workspaceId IS NULL AND folderId IS NOT NULL GROUP BY folderId`)
+    WHERE trashedAt IS NULL AND userId = ? AND workspaceId IS NULL AND folderId IS NOT NULL GROUP BY folderId`)
     .all(userId) as Array<{ folderId: string; count: number }>;
   const countMap = new Map(counts.map((r) => [r.folderId, r.count]));
   return c.json({ supported: true, folders: attachmentFoldersRepository.listByUser(userId)

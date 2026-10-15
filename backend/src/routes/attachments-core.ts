@@ -1,3 +1,4 @@
+import { retainAttachmentInTrash } from "../services/attachment-trash";
 /**
  * 附件管理路由（/api/attachments）
  * ---------------------------------------------------------------------------
@@ -145,6 +146,14 @@ export function deleteAttachmentFilesByNoteIds(noteIds: string[]): number {
   // SQLite 的绑定参数存在上限。清空包含数万篇笔记的回收站时，不能把所有
   // noteId 塞进同一个 IN (...)；固定分块后仍只在服务端执行，不增加 HTTP 请求。
   const QUERY_CHUNK_SIZE = 400;
+  // Check the whole deletion cohort before unlinking any object. The DB retention
+  // trigger alone is too late for callers that remove physical bytes first.
+  for (let offset = 0; offset < noteIds.length; offset += QUERY_CHUNK_SIZE) {
+    const chunk = noteIds.slice(offset, offset + QUERY_CHUNK_SIZE);
+    if (db.prepare(`SELECT 1 FROM attachments WHERE trashedAt IS NOT NULL AND noteId IN (${chunk.map(() => "?").join(",")}) LIMIT 1`).get(...chunk)) {
+      throw Object.assign(new Error("请先恢复或永久删除这些笔记的文件回收站内容"), { code: "ATTACHMENT_TRASH_RETAINED" });
+    }
+  }
   const targetNoteIds = new Set(noteIds);
   let rows: { id: string; path: string }[] = [];
   try {
@@ -760,9 +769,9 @@ app.post("/", async (c) => {
     .prepare(
       noteWorkspaceId
         ? `SELECT id, path, mimeType, size, filename, hash FROM attachments
-            WHERE userId = ? AND workspaceId = ? AND hash = ? LIMIT 1`
+            WHERE userId = ? AND workspaceId = ? AND hash = ? AND trashedAt IS NULL LIMIT 1`
         : `SELECT id, path, mimeType, size, filename, hash FROM attachments
-            WHERE userId = ? AND workspaceId IS NULL AND hash = ? LIMIT 1`,
+            WHERE userId = ? AND workspaceId IS NULL AND hash = ? AND trashedAt IS NULL LIMIT 1`,
     )
     .get(
       ...(noteWorkspaceId
@@ -891,36 +900,13 @@ app.delete("/:id", async (c) => {
     return c.json({ error: "无权删除该附件", code: "FORBIDDEN" }, 403);
   }
 
-  // v11 引用计数：dedup 启用后理论上同一 path 不会重复，但极小概率下（迁移
-  // 之前的老数据、并发上传竞态）可能多行共享同一物理文件。删除前确认：
-  // 若还有其它 attachments 行指向同一 path，仅删本行不动磁盘文件，避免造成
-  // 另一行的引用变成"裂图/404"。
+  // Retain the object; permanent deletion is a separate confirmed trash action.
   const risk = db.transaction(() => {
     const risk = attachmentDeletionRisk(id);
-    if (!risk) db.prepare("DELETE FROM attachments WHERE id = ?").run(id);
+    if (!risk) retainAttachmentInTrash(id, userId);
     return risk;
   })();
   if (risk) return c.json(risk, 409);
-  const sameFileCount = db
-    .prepare("SELECT COUNT(*) AS c FROM attachments WHERE path = ? AND id <> ?")
-    .get(row.path, id) as { c: number };
-  const shouldUnlink = sameFileCount.c === 0;
-
-  if (shouldUnlink) {
-    try {
-      await deleteAttachmentObject(row.path);
-    } catch {
-      /* 文件删不掉不阻塞，DB 记录仍然要清掉 */
-    }
-    // v12：清理对应缩略图缓存（仅当确实 unlink 原图时）。
-    // 阶段 B 后 id 与 path basename 可能不同，两个 key 都尝试清理。
-    deleteThumbnailsFor(ATTACHMENTS_DIR, id);
-    const baseName = (row.path || "").replace(/\.[^.]+$/, "");
-    if (baseName && baseName !== id) deleteThumbnailsFor(ATTACHMENTS_DIR, baseName);
-  } else {
-    // 物理文件仍被其它行引用，但当前 id 的缩略图缓存已不可访问，可以清掉。
-    deleteThumbnailsFor(ATTACHMENTS_DIR, id);
-  }
   return c.json({ success: true });
 });
 
@@ -992,9 +978,9 @@ export function extractInlineBase64Images(
   const dedupSelect = db.prepare(
     workspaceId
       ? `SELECT id, path, filename, mimeType, size, hash FROM attachments
-          WHERE userId = ? AND workspaceId = ? AND hash = ? LIMIT 1`
+          WHERE userId = ? AND workspaceId = ? AND hash = ? AND trashedAt IS NULL LIMIT 1`
       : `SELECT id, path, filename, mimeType, size, hash FROM attachments
-          WHERE userId = ? AND workspaceId IS NULL AND hash = ? LIMIT 1`,
+          WHERE userId = ? AND workspaceId IS NULL AND hash = ? AND trashedAt IS NULL LIMIT 1`,
   );
 
   const attachmentIds: string[] = [];
@@ -1185,8 +1171,8 @@ export function scanOrphanAttachments(graceHours = 24): OrphanScanResult {
 
   // 2) DB 中所有附件
   const dbRows = db
-    .prepare("SELECT id, noteId, path, size, createdAt FROM attachments")
-    .all() as { id: string; noteId: string; path: string; size: number; createdAt: string }[];
+    .prepare("SELECT id, noteId, path, size, createdAt, trashedAt FROM attachments")
+    .all() as { id: string; noteId: string; path: string; size: number; createdAt: string; trashedAt: string | null }[];
   const templatePaths = db
     .prepare("SELECT path FROM note_template_attachments")
     .all() as Array<{ path: string }>;
@@ -1224,6 +1210,7 @@ export function scanOrphanAttachments(graceHours = 24): OrphanScanResult {
   const cutoff = Date.now() - graceHours * 3600 * 1000;
   const contentOrphans: OrphanScanResult["contentOrphans"] = [];
   for (const r of dbRows) {
+    if (r.trashedAt) continue;
     // 仅扫描宽限期之外的附件
     const created = new Date(r.createdAt).getTime();
     if (Number.isFinite(created) && created > cutoff) continue;

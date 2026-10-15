@@ -1,3 +1,4 @@
+import { enAssetReliabilityTranslations, zhCNAssetReliabilityTranslations } from "./assetReliabilityTranslations";
 import { enAssetOrganizationTranslations, zhCNAssetOrganizationTranslations } from "./assetOrganizationTranslations";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -86,6 +87,7 @@ const zhCNWithReleaseTranslations = mergeTranslationPatches(
   zhCNTaskComposerTranslations,
   zhCNFileExplorerTranslations,
   zhCNAssetOrganizationTranslations,
+  zhCNAssetReliabilityTranslations,
   zhCNTaskRemovalTranslations,
 );
 
@@ -107,6 +109,7 @@ const enWithReleaseTranslations = mergeTranslationPatches(
   enTaskComposerTranslations,
   enFileExplorerTranslations,
   enAssetOrganizationTranslations,
+  enAssetReliabilityTranslations,
   enTaskRemovalTranslations,
 );
 

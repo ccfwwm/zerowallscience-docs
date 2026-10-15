@@ -358,14 +358,14 @@ app.post("/cleanup-orphans", (c) => {
         `SELECT a.id, a.path, COALESCE(a.size, 0) AS size FROM attachments a
          LEFT JOIN notes n ON n.id = a.noteId
          WHERE n.id IS NULL
-           AND COALESCE(a.uploadSource, '') <> 'file_manager'`,
+           AND COALESCE(a.uploadSource, '') <> 'file_manager' AND a.trashedAt IS NULL`,
       ).all()
     : db.prepare(
         `SELECT a.id, a.path, COALESCE(a.size, 0) AS size FROM attachments a
          LEFT JOIN notes n ON n.id = a.noteId
          WHERE n.id IS NULL
            AND a.userId = ?
-           AND COALESCE(a.uploadSource, '') <> 'file_manager'`,
+           AND COALESCE(a.uploadSource, '') <> 'file_manager' AND a.trashedAt IS NULL`,
       ).all(userId)) as { id: string; path: string; size: number }[];
 
   let dbOrphansRemoved = 0;
@@ -435,14 +435,14 @@ app.post("/cleanup-orphans", (c) => {
         `SELECT a.id, a.path, COALESCE(a.size, 0) AS size, a.createdAt
            FROM attachments a
           INNER JOIN notes n ON n.id = a.noteId
-          WHERE COALESCE(a.uploadSource, '') <> 'file_manager'`,
+          WHERE COALESCE(a.uploadSource, '') <> 'file_manager' AND a.trashedAt IS NULL`,
       ).all()
     : db.prepare(
         `SELECT a.id, a.path, COALESCE(a.size, 0) AS size, a.createdAt
            FROM attachments a
           INNER JOIN notes n ON n.id = a.noteId
           WHERE a.userId = ?
-            AND COALESCE(a.uploadSource, '') <> 'file_manager'`,
+            AND COALESCE(a.uploadSource, '') <> 'file_manager' AND a.trashedAt IS NULL`,
       ).all(userId)) as { id: string; path: string; size: number; createdAt: string }[];
 
   const contentOrphanRows: { id: string; path: string; size: number }[] = [];

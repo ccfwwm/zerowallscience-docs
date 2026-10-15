@@ -141,13 +141,13 @@ function visibleAttachmentStats(workspaceId: string | null, userId: string) {
         SELECT a.id, a.noteId, a.userId, a.workspaceId, a.uploadSource, a.mimeType, a.size,
           EXISTS (SELECT 1 FROM attachment_references ar WHERE ar.attachmentId = a.id) AS isReferenced
         FROM attachments a
-        WHERE a.workspaceId = ?
+        WHERE a.trashedAt IS NULL AND a.workspaceId = ?
       `).all(workspaceId)
     : db.prepare(`
         SELECT a.id, a.noteId, a.userId, a.workspaceId, a.uploadSource, a.mimeType, a.size,
           EXISTS (SELECT 1 FROM attachment_references ar WHERE ar.attachmentId = a.id) AS isReferenced
         FROM attachments a
-        WHERE a.workspaceId IS NULL AND a.userId = ?
+        WHERE a.trashedAt IS NULL AND a.workspaceId IS NULL AND a.userId = ?
       `).all(userId);
 
   const byMime = new Map<string, { count: number; bytes: number }>();
@@ -245,13 +245,13 @@ function buildUnreferencedSet(scope: FileScope, userId: string): Set<string> {
         SELECT a.id, a.createdAt
         FROM attachments a
         INNER JOIN notes n ON n.id = a.noteId
-        WHERE a.workspaceId = ?
+        WHERE a.trashedAt IS NULL AND a.workspaceId = ?
       `).all(scope.workspaceId!)
     : db.prepare(`
         SELECT a.id, a.createdAt
         FROM attachments a
         INNER JOIN notes n ON n.id = a.noteId
-        WHERE a.userId = ? AND a.workspaceId IS NULL
+        WHERE a.trashedAt IS NULL AND a.userId = ? AND a.workspaceId IS NULL
       `).all(userId)) as Array<{ id: string; createdAt: string }>;
 
   const ids = new Set<string>();

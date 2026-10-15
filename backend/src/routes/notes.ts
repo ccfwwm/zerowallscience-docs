@@ -333,6 +333,12 @@ app.delete("/trash/empty", (c) => {
 
   const ids = targets.map((r) => r.id);
 
+  for (const id of ids) {
+    if (db.prepare("SELECT 1 FROM attachments WHERE noteId=? AND trashedAt IS NOT NULL LIMIT 1").get(id)) {
+      return c.json({ error: "请先恢复或永久删除这些笔记的文件回收站内容", code: "ATTACHMENT_TRASH_RETAINED" }, 409);
+    }
+  }
+
   // ⚠ 必须在 DELETE FROM notes 之前清理磁盘附件文件：
   // attachments 表的 ON DELETE CASCADE 只会删 DB 行，磁盘 data/attachments/*.png
   // 不会被自动清理。删完 DB 就再也查不到 path 了。
