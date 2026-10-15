@@ -25,7 +25,7 @@ function createRuntime({ windowsStore, portable = false }) {
     quitAndInstall() { updaterCalls++; },
   };
   const electron = {
-    app: { isPackaged: true, getVersion: () => "1.5.2", getPath: () => "C:\\test\\nowen" },
+    app: { isPackaged: true, getVersion: () => "1.5.2", getPath: () => "C:\\test\\nowen", on() {} },
     BrowserWindow: { getAllWindows: () => [] },
     ipcMain: {
       removeHandler(name) { handles.delete(name); },
