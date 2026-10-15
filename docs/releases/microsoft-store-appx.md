@@ -7,27 +7,29 @@
 - Fixed, native-validated `ms-windows-store://downloadsandupdates` action from **Settings → About**. No arbitrary renderer-supplied URI is accepted.
 - Existing GitHub Direct Windows installers, Lite channel and macOS/Linux clients keep their preexisting behavior. The Direct Windows channel currently opens the browser for manual package updates; Store publishing does not change it.
 
-## Required Partner Center values (DO NOT invent these)
-Retrieve **Product management → Product identity** for reserved `Nowen Note` from https://partner.microsoft.com/dashboard.
-Configure GitHub repository **Actions Variables**:
+## Confirmed Microsoft Partner Center identity (2026-10-15)
+The public package identity from **Nowen Note → Product management → Product identity** is now pinned in `electron/storeIdentity.js`. No Actions Variables or signing certificate required for Store submission.
 
-| Variable | Description |
+| Partner Center field | Verified value |
 | --- | --- |
-| `NOWEN_STORE_IDENTITY_NAME` | Exact `Package/Identity/Name` from Partner Center |
-| `NOWEN_STORE_PUBLISHER` | Exact `Package/Identity/Publisher` DN, usually starting with `CN=` |
-| `NOWEN_STORE_PUBLISHER_DISPLAY_NAME` | Actual publisher display name from Partner Center |
-| `NOWEN_STORE_APPLICATION_ID` | Optional internal entry-point ID (default `NowenNote`); keep stable after first Store submission |
+| `Package/Identity/Name` | `Nowen.NowenNote` |
+| `Package/Identity/Publisher` | `CN=74C7CC89-20E0-4BEA-AD68-6A3238278EF3` |
+| `PublisherDisplayName` | `Nowen` |
+| Microsoft Store Product ID | `9MZ7Z6S39LL3` |
+| Internal `appx.applicationId` | `NowenNote` (stable build entry point, NOT Store Product ID) |
 
-The build **fails before dependencies install** if mandatory identity metadata is absent or invalid. Do not use fake `CN=ms` or local test certificates for the formal submission.
+Identity values are *public*, unlike signing keys. Accidentally overriding identity in Actions Variables causes a validation failure rather than publishing an unrelated app. Do not change identity after Store publication or updates may fail.
+
+`https://apps.microsoft.com/detail/9MZ7Z6S39LL3` is the **reserved Store listing URL**; it may not be publicly accessible until certification and publication.
 
 ## Build
-1. Open [Microsoft Store AppX workflow](https://github.com/cropflre/nowen-note/actions/workflows/microsoft-store-appx.yml).
-2. Select the branch containing these changes (initially `feat/ms-store-appx-v1-5-2`), click **Run workflow**. Subsequent official builds should use `release/v1.5.2` after code review.
+1. AppX candidate now builds automatically in the PR when the Store code changes (or open [Microsoft Store AppX workflow](https://github.com/cropflre/nowen-note/actions/workflows/microsoft-store-appx.yml).
+2. For a manual build, select `feat/ms-store-appx-v1-5-2` and click **Run workflow**. Once reviewed, official builds should use `release/v1.5.2`.
 3. Wait for `contracts` and `store-package` jobs. Download `nowen-note-store-appx` artifact from this run.
 4. Upload the verified `.appx` to your reserved Nowen Note application's Partner Center submission. Microsoft Store signs the release as part of its publication process. An unsigned local package may not install via `Add-AppxPackage`.
 5. Provide store listing description, screenshots, privacy/support policy, category, age rating, availability, and certification notes. Publish only after passing Store certification.
 
-Local test/config: `npm run test:microsoft-store`. On a Windows host with dependencies/native modules prepared, set the above environment variables and run `npm run electron:build:store` (prepares backend/frontend and binaries, then invokes the independent Store builder).
+Local test/config: `npm run test:microsoft-store`. On a Windows machine, `npm run electron:build:store` prepares the embedded runtime, backend, frontend and native modules, then invokes the independent Store builder. No GitHub Actions Variables are needed.
 
 ## Mandatory real-Windows acceptance before publication
 - Validate package identity, version, **full-trust execution**, launch via Start Menu, and actual Microsoft Store signing on a private Store flight. No CI test can substitute for installation.

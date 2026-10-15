@@ -7,9 +7,9 @@ const repoRoot = path.resolve(__dirname, "../..");
 const configPath = path.join(repoRoot, "electron", "builder.store.config.js");
 const runtime = require(path.join(repoRoot, "electron", "storeChannel.js"));
 const identity = {
-  NOWEN_STORE_IDENTITY_NAME: "ExampleCompany.NowenNote",
-  NOWEN_STORE_PUBLISHER: "CN=00000000-0000-0000-0000-000000000001",
-  NOWEN_STORE_PUBLISHER_DISPLAY_NAME: "Example Publisher",
+  NOWEN_STORE_IDENTITY_NAME: "Nowen.NowenNote",
+  NOWEN_STORE_PUBLISHER: "CN=74C7CC89-20E0-4BEA-AD68-6A3238278EF3",
+  NOWEN_STORE_PUBLISHER_DISPLAY_NAME: "Nowen",
 };
 
 function readStoreConfig(env = {}) {
@@ -24,12 +24,20 @@ function readStoreConfig(env = {}) {
   });
 }
 
-test("Store config fails closed without Partner Center identity", () => {
-  const bad = readStoreConfig();
-  assert.notEqual(bad.status, 0);
-  assert.match(bad.stderr, /NOWEN_STORE_IDENTITY_NAME/);
-  assert.equal(readStoreConfig({ ...identity, NOWEN_STORE_PUBLISHER: "CN=ms" }).status !== 0, true);
-  assert.equal(readStoreConfig({ ...identity, NOWEN_STORE_IDENTITY_NAME: "../../fake" }).status !== 0, true);
+test("Verified Partner Center identity is available without GitHub Variables", () => {
+  const result = readStoreConfig();
+  assert.equal(result.status, 0, result.stderr);
+  const config = JSON.parse(result.stdout);
+  assert.equal(config.appx.identityName, identity.NOWEN_STORE_IDENTITY_NAME);
+  assert.equal(config.appx.publisher, identity.NOWEN_STORE_PUBLISHER);
+  assert.equal(config.appx.publisherDisplayName, "Nowen");
+  assert.equal(require(path.join(repoRoot, "electron/storeIdentity.js")).STORE_IDENTITY.storeId, "9MZ7Z6S39LL3");
+});
+
+test("An incorrect variable override must fail closed", () => {
+  assert.notEqual(readStoreConfig({ ...identity, NOWEN_STORE_PUBLISHER: "CN=ms" }).status, 0);
+  assert.notEqual(readStoreConfig({ ...identity, NOWEN_STORE_IDENTITY_NAME: "../../fake" }).status, 0);
+  assert.notEqual(readStoreConfig({ ...identity, NOWEN_STORE_APPLICATION_ID: "OtherApp" }).status, 0);
 });
 
 test("Store-only target is AppX; never uploads NSIS or publishes to GitHub", () => {

@@ -29,6 +29,7 @@ jobs:
         run: |
           node --check electron/storeChannel.js
           node --check electron/builder.store.config.js
+          node --check electron/storeIdentity.js
           node --check electron/updater.js
           node --check electron/preload.js
       - name: Store/NSIS packaging isolation and runtime tests
@@ -41,15 +42,12 @@ jobs:
         run: npx tsc -b --pretty false
 
   store-package:
-    if: github.event_name == 'workflow_dispatch'
+    # Partner Center identity is verified and public: build the first candidate on PR.
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     needs: contracts
     runs-on: windows-latest
     timeout-minutes: 120
     env:
-      NOWEN_STORE_IDENTITY_NAME: ${{ vars.NOWEN_STORE_IDENTITY_NAME }}
-      NOWEN_STORE_PUBLISHER: ${{ vars.NOWEN_STORE_PUBLISHER }}
-      NOWEN_STORE_PUBLISHER_DISPLAY_NAME: ${{ vars.NOWEN_STORE_PUBLISHER_DISPLAY_NAME }}
-      NOWEN_STORE_APPLICATION_ID: ${{ vars.NOWEN_STORE_APPLICATION_ID }}
       CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       NODE_OPTIONS: --max-old-space-size=4096
     steps:
@@ -96,8 +94,10 @@ jobs:
             try { [xml]$manifest = $reader.ReadToEnd() }
             finally { $reader.Dispose() }
             $identity = $manifest.Package.Identity
-            if ($identity.Name -cne $env:NOWEN_STORE_IDENTITY_NAME) { throw 'Identity.Name mismatch' }
-            if ($identity.Publisher -cne $env:NOWEN_STORE_PUBLISHER) { throw 'Identity.Publisher mismatch' }
+            $expectedName = (node -p "require('./electron/storeIdentity.js').STORE_IDENTITY.identityName").Trim()
+            $expectedPublisher = (node -p "require('./electron/storeIdentity.js').STORE_IDENTITY.publisher").Trim()
+            if ($identity.Name -cne $expectedName) { throw 'Identity.Name mismatch' }
+            if ($identity.Publisher -cne $expectedPublisher) { throw 'Identity.Publisher mismatch' }
             $version = (node -p "require('./package.json').version").Trim()
             if (-not $identity.Version.StartsWith("$version.")) { throw "Version mismatch: $($identity.Version)" }
             if (-not $manifest.Package.Applications.Application) { throw 'No packaged desktop application' }
