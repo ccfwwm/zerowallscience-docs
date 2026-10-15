@@ -21,7 +21,7 @@ test("real product explorer: folders, masonry, details, move, upload queue and r
   await expect(page.getByRole("button", { name: "插入加密内容", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "文件管理", exact: true }).click();
   await expect(page.getByRole("heading", { name: "全部文件", exact: true })).toBeVisible({ timeout: 15_000 });
-  await expect(page.locator("main footer")).toContainText("102 个文件");
+  await expect(page.locator("main footer")).toContainText("103 个文件");
   const initialImages = await (await request.get("/api/files?category=image", { headers })).json() as { items: Array<{ id: string; filename: string }>; accessUrls: Record<string, string> };
   const original = initialImages.items.find((image) => image.filename === "项目参考图-1.png")!;
   const originalBytes = await (await request.get(initialImages.accessUrls[original.id])).body();

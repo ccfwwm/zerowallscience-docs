@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **files / Phase C**：独立功能分支新增附件标签、批量添加 / 移除标签、标签搜索与组合筛选、保存为智能文件夹，以及可访问范围内的相同内容文件展示；不移动或复制原文件。SQLite v127 增量迁移保留附件身份与引用，提供 PostgreSQL 存储迁移；Native 元数据同步尚未支持并明确拒绝。Add scoped asset tags, additive batch tagging, saved smart folders, attribute filters and accessible identical-file discovery without changing attachment identity, location or bytes. SQLite schema v127 and PostgreSQL storage migration included; Native metadata synchronization is unavailable. 尚未合并或发布，见 [使用说明 / Usage](./docs/user/file-asset-organization.md) 与 [验收 / Acceptance](./docs/qa/files-assets-center-v2/phase-c.md)。
+
 - **startup / NAS**：改善 FN ID 等慢速远程入口的启动体验：12 秒后提示继续加载，60 秒后才报告超时，资源就绪后自动进入；登录续期与响应读取增加 8 秒超时，超时保留凭据并丢弃迟到响应；诊断补充启动阶段和脱敏资源耗时。Improve slow NAS gateway startup with a loading notice at 12s, a 60s timeout and automatic recovery; bound token refresh/body reads to 8s without clearing credentials on timeout or persisting late responses, and add sanitized startup diagnostics. FN ID 真机验收仍待完成，见 [验证说明](./docs/fn-connect-startup-compatibility.md)。FN ID device acceptance is still pending.
 
 - **sdk**：修复浏览器默认 fetch 绑定，开放登录、两步验证和 Token 管理；普通请求与附件共用认证状态，阻止切账号、迟到登录响应和 401 重试使用错误身份；对齐日记时间线与 Token 验证的真实接口类型（#803）。Bind browser fetch, expose login/2FA/token management, share authentication across REST and attachments, prevent stale responses or retries from crossing accounts, and align diary/verification contracts. SDK 调用方需调整旧接口类型，新包尚未发布；SDK consumers must update the affected types; no new package has been published.

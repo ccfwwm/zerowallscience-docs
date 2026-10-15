@@ -173,6 +173,14 @@
         {
           "file": "frontend/src/lib/__tests__/mobileSyncEndpoint.test.ts",
           "case": "blocks cross-account outbox requests during session reconfiguration"
+        },
+        {
+          "file": "backend/tests/asset-organization.test.ts",
+          "case": "scoped tag uniqueness, viewer rejection and atomic batch tagging preserve asset identity"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileFileScope.test.ts",
+          "case": "rejects Native organization and metadata filters before personal SQL or server calls"
         }
       ]
     },
@@ -224,6 +232,10 @@
         {
           "file": "backend/tests/task-recurrence-delete.test.ts",
           "case": "a delayed successor cannot recreate a deleted or stopped series"
+        },
+        {
+          "file": "backend/tests/asset-organization.test.ts",
+          "case": "smart folders persist whitelisted filters without moving files and stay private to their owner"
         }
       ]
     },
@@ -243,6 +255,14 @@
         {
           "file": "backend/tests/backup-restore-corrupt-hotfix.test.ts",
           "case": "corrupt zip db.sqlite is rejected before touching current database or jwt secret"
+        },
+        {
+          "file": "backend/tests/asset-organization.test.ts",
+          "case": "upgrading an old database preserves attachments and an interrupted migration rolls back"
+        },
+        {
+          "file": "backend/tests/asset-organization.test.ts",
+          "case": "migration is idempotent, relation constraints reject cross-scope rows and snapshots retain metadata"
         }
       ]
     },
@@ -266,6 +286,10 @@
         {
           "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
           "case": "native recurrence stop survives restart and whole-series deletion converges across three SQLite devices"
+        },
+        {
+          "file": "frontend/src/lib/__tests__/mobileFileScope.test.ts",
+          "case": "rejects Native organization and metadata filters before personal SQL or server calls"
         }
       ]
     },

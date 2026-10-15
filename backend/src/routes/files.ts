@@ -80,7 +80,10 @@ import {
   type FileAttachmentAccessRow,
 } from "../services/fileAttachmentAccess";
 
+import assetOrganization from "./asset-organization.js";
+
 const app = new Hono();
+app.route("/organization", assetOrganization);
 
 // ---------------------------------------------------------------------------
 // 共用工具
@@ -460,7 +463,7 @@ app.get("/", requireWorkspaceFeature("files"), (c) => {
     params.push(mime.toLowerCase());
   }
 
-  const explorer = fileExplorerFilters(c.req.query("fileKind"), c.req.query("createdAfter"));
+  const explorer = fileExplorerFilters(c.req.query("fileKind"), c.req.query("createdAfter"), c.req.query());
   if (explorer.error) return c.json({ error: explorer.error, code: explorer.code }, 400);
   whereParts.push(...explorer.conditions);
   params.push(...explorer.params);

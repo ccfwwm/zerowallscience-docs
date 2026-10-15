@@ -18,3 +18,36 @@ it("rejects Native workspace file operations before using personal rows or write
     expect(query).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled(); expect(notebooks).not.toHaveBeenCalled();
   } finally { restore(); }
 });
+
+it("rejects Native organization and metadata filters before personal SQL or server calls", async () => {
+  const query = vi.fn(); const run = vi.fn();
+  const restore = installMobileLocalModuleBridge({} as NativeLocalRepository, { query, run } as unknown as NativeDatabase, "native-assets-user");
+  try {
+    expect((await api.files.organization.list()).supported).toBe(false);
+    for (const operation of [() => api.files.organization.get("file"), () => api.files.organization.createTag("Design"),
+      () => api.files.organization.tagFiles(["file"], ["tag"], "add"), () => api.files.organization.saveSmartFolder("Images", { category: "image" }),
+      () => api.files.list({ tagIds: ["tag"] }), () => api.files.list({ duplicateOnly: true })]) {
+      await expect(operation()).rejects.toMatchObject({ code: "MOBILE_ASSET_ORGANIZATION_UNSUPPORTED" });
+    }
+    expect(query).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled();
+  } finally { restore(); }
+});
+
+it("keeps Native recently-added browsing available without organization support", async () => {
+  const recent = new Date().toISOString();
+  const old = new Date(Date.now() - 30 * 86400000).toISOString();
+  const query = vi.fn().mockResolvedValue([
+    { id: "recent", filename: "recent.txt", mimeType: "text/plain", createdAt: recent },
+    { id: "old", filename: "old.txt", mimeType: "text/plain", createdAt: old },
+  ]);
+  const resolveUrl = vi.fn().mockResolvedValue("native://recent");
+  const restore = installMobileLocalModuleBridge({ attachments: { resolveUrl } } as unknown as NativeLocalRepository,
+    { query } as unknown as NativeDatabase, "native-assets-user");
+  try {
+    const result = await api.files.list({ recentDays: 7 });
+    expect(result.total).toBe(1);
+    expect(result.items[0].id).toBe("recent");
+    expect(resolveUrl).toHaveBeenCalledTimes(1);
+    expect(resolveUrl).toHaveBeenCalledWith("recent");
+  } finally { restore(); }
+});

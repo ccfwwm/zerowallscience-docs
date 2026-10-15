@@ -45,6 +45,9 @@ for (let index = 0; index < imageSpecs.length; index++) {
   fs.writeFileSync(path.join(getAttachmentsDir(), `${id}.png`), bytes);
   insert.run(id, owner, `项目参考图-${index + 1}.png`, "image/png", bytes.length, `${id}.png`, crypto.createHash("sha256").update(bytes).digest("hex"), "qa-references");
 }
+// Legacy duplicate fixture: a second record shares the original object, without copying bytes.
+db.prepare(`INSERT INTO attachments (id,noteId,userId,filename,mimeType,size,path,hash,uploadSource)
+  SELECT ?,noteId,userId,'legacy-identical-copy.png',mimeType,size,path,hash,uploadSource FROM attachments WHERE id=?`).run(crypto.randomUUID(),firstImage);
 for (const [index, title] of ["项目开发记录", "UI 设计规范", "产品需求文档"].entries()) {
   const noteId = `assets-qa-reference-${index}`;
   db.prepare("INSERT INTO notes (id, userId, notebookId, title, content, contentFormat) VALUES (?, ?, 'assets-qa-notebook', ?, ?, 'markdown')")
@@ -57,5 +60,5 @@ for (let index = 0; index < 96; index++) {
   fs.writeFileSync(path.join(getAttachmentsDir(), `${id}.txt`), bytes);
   insert.run(id, owner, `开发记录-${String(index + 1).padStart(3, "0")}.txt`, "text/plain", bytes.length, `${id}.txt`, crypto.createHash("sha256").update(bytes).digest("hex"), index < 6 ? "qa-documents" : null);
 }
-console.log(`[assets-qa] Isolated database: ${directory}; 102 actual attachments; port ${process.env.PORT}`);
+console.log(`[assets-qa] Isolated database: ${directory}; 103 actual attachments; port ${process.env.PORT}`);
 await import("../src/index.hardened.ts");

@@ -1,3 +1,4 @@
+import { assetOrganizationMigration } from "./assetOrganizationMigration.js";
 import { taskLifecycleMigration } from "./taskLifecycleMigration.js";
 import { taskRecurrenceDeletionMigration } from "./taskRecurrenceDeletionMigration.js";
 import { wechatAssistantQueueColumnsMigration } from "./wechatAssistantQueueColumnsMigration.js";
@@ -423,6 +424,7 @@ export const MIGRATIONS: Migration[] = [
   taskLifecycleMigration,
   taskComposerMigration,
   taskRecurrenceDeletionMigration,
+  assetOrganizationMigration,
 ].sort((a, b) => a.version - b.version);
 
 export const CURRENT_SCHEMA_VERSION: number = MIGRATIONS.reduce(

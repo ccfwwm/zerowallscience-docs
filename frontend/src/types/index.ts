@@ -895,3 +895,20 @@ export interface ShareComment {
   createdAt: string;
   updatedAt: string;
 }
+
+/** File organization is server-owned metadata; it does not alter attachment identity. */
+export interface AssetTag { id: string; name: string; color: string }
+export interface AssetFilters {
+  category?: FileCategory;
+  fileKind?: "document" | "video" | "audio" | "archive";
+  mime?: string; q?: string; folderId?: string;
+  createdAfter?: string; createdBefore?: string; recentDays?: number;
+  minSize?: number; maxSize?: number; tagIds?: string[];
+  referenceState?: "referenced" | "unreferenced" | "multiple";
+  duplicateOnly?: boolean;
+}
+export interface AssetSmartFolder { id: string; name: string; filters: AssetFilters }
+export interface AssetOrganization {
+  supported: boolean; canManageTags: boolean; tags: AssetTag[]; smartFolders: AssetSmartFolder[];
+  tagPage?: number; smartPage?: number; hasMoreTags?: boolean; hasMoreSmartFolders?: boolean;
+}

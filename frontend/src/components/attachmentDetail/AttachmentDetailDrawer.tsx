@@ -1,3 +1,4 @@
+import AssetTagEditor from "../fileExplorer/AssetTagEditor";
 /**
  * AttachmentDetailDrawer
  * ---------------------------------------------------------------------------
@@ -92,6 +93,8 @@ function formatLocalTime(s: string): string {
 
 export interface AttachmentDetailDrawerProps {
   embedded?: boolean;
+  onAfterOrganize?: () => void;
+  onOpenAttachment?: (id: string) => void;
   attachmentId: string | null;
   onClose: () => void;
   onJumpToNote?: (noteId: string) => void;
@@ -111,6 +114,8 @@ export default function AttachmentDetailDrawer({
   onAfterDelete,
   onAfterRename,
   onAfterMove,
+  onAfterOrganize,
+  onOpenAttachment,
   showDelete = false,
   isImageHostMode = false,
   extraHeaderActions,
@@ -509,6 +514,8 @@ export default function AttachmentDetailDrawer({
                   />
                 )}
               </div>
+
+              <AssetTagEditor key={detail.id} ids={[detail.id]} onChanged={onAfterOrganize} onOpen={onOpenAttachment} />
 
               {isAutoCleanupProtected && (
                 <div className="flex items-start gap-2.5 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5">

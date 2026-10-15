@@ -1,3 +1,4 @@
+import { enAssetOrganizationTranslations, zhCNAssetOrganizationTranslations } from "./assetOrganizationTranslations";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import LanguageDetector from "i18next-browser-languagedetector";
@@ -84,6 +85,7 @@ const zhCNWithReleaseTranslations = mergeTranslationPatches(
   zhCNEncryptedConversionTranslations,
   zhCNTaskComposerTranslations,
   zhCNFileExplorerTranslations,
+  zhCNAssetOrganizationTranslations,
   zhCNTaskRemovalTranslations,
 );
 
@@ -104,6 +106,7 @@ const enWithReleaseTranslations = mergeTranslationPatches(
   enEncryptedConversionTranslations,
   enTaskComposerTranslations,
   enFileExplorerTranslations,
+  enAssetOrganizationTranslations,
   enTaskRemovalTranslations,
 );
 

@@ -1,3 +1,4 @@
+import type { AssetFilters, AssetTag, AssetSmartFolder, AssetOrganization } from "@/types";
 import { getOfflineQueueStorageKey } from "./offlineScope";
 import { withConversionRequestLease } from "./encryptedNotes/conversionBarrier";
 import { ConversionCleanupError } from "./encryptedNotes/conversionCoordination";
@@ -3375,6 +3376,16 @@ export const api = {
   // note 兜底外键约束，用户看到的只是"未归档文件"。
   //
   files: {
+    organization: {
+      list: (params: { q?: string; tagPage?: number; smartPage?: number } = {}) => request<AssetOrganization>(fileOrganizationPath("", params)),
+      get: (id: string) => request<{ tags: AssetTag[]; duplicates: Array<{id: string; filename: string}>; canManage: boolean }>(fileOrganizationPath(`/assets/${encodeURIComponent(id)}`)),
+      createTag: (name: string, color?: string) => request<{tag: AssetTag}>(fileOrganizationPath("/tags"), {method: "POST", body: JSON.stringify({name, color})}),
+      renameTag: (id: string, name: string, color?: string) => request<{success: boolean}>(fileOrganizationPath(`/tags/${encodeURIComponent(id)}`), {method: "PATCH", body: JSON.stringify({name, color})}),
+      deleteTag: (id: string) => request<{success: boolean}>(fileOrganizationPath(`/tags/${encodeURIComponent(id)}`), {method: "DELETE"}),
+      tagFiles: (ids: string[], tagIds: string[], operation: "add" | "remove") => request<{success: boolean; updated: number}>(fileOrganizationPath("/tag-files"), {method: "POST", body: JSON.stringify({ids, tagIds, operation})}),
+      saveSmartFolder: (name: string, filters: AssetFilters, id?: string) => request<{smartFolder: AssetSmartFolder}>(fileOrganizationPath(`/smart-folders${id ? `/${encodeURIComponent(id)}` : ""}`), {method: id ? "PATCH" : "POST", body: JSON.stringify({name, filters})}),
+      deleteSmartFolder: (id: string) => request<{success: boolean}>(fileOrganizationPath(`/smart-folders/${encodeURIComponent(id)}`), {method: "DELETE"}),
+    },
     move: (ids: string[], folderId: string | null, expectedFolderIds?: Record<string, string | null>) =>
       request<{ success: boolean; moved: number; folderId: string | null; folderName: string | null }>(
         "/files/batch-move", { method: "POST", body: JSON.stringify({ ids, folderId, expectedFolderIds }) },
@@ -3403,6 +3414,8 @@ export const api = {
       category?: FileCategory;
       fileKind?: "document" | "video" | "audio" | "archive";
       createdAfter?: string;
+      createdBefore?: string; recentDays?: number; minSize?: number; maxSize?: number; tagIds?: string[];
+      referenceState?: AssetFilters["referenceState"]; duplicateOnly?: boolean;
       filter?: FileFilter;
       myUploadsRef?: FileMyUploadsRef;
       mime?: string;
@@ -3424,6 +3437,10 @@ export const api = {
       if (params.category) qs.set("category", params.category);
       if (params.fileKind) qs.set("fileKind", params.fileKind);
       if (params.createdAfter) qs.set("createdAfter", params.createdAfter);
+      for (const key of ["createdBefore", "recentDays", "minSize", "maxSize", "referenceState", "duplicateOnly"] as const) {
+        if (params[key] !== undefined && params[key] !== "") qs.set(key, String(params[key]));
+      }
+      if (params.tagIds?.length) qs.set("tagIds", params.tagIds.join(","));
       if (params.filter) qs.set("filter", params.filter);
       // myUploadsRef 仅在 filter=myUploads 时才有意义；后端会忽略其他场景，
       // 但为了让 URL 干净，前端只在 filter 匹配时传。
@@ -5350,4 +5367,12 @@ export async function fetchRegisterConfig(baseUrlOverride?: string): Promise<{ a
   if (res.status >= 500) throw new Error(`HTTP ${res.status}`);
   if (!res.ok) return { allowRegistration: true };
   return await res.json();
+}
+
+function fileOrganizationPath(path: string, params: Record<string, string | number | undefined> = {}): string {
+  const query = new URLSearchParams();
+  const workspace = getCurrentWorkspace();
+  if (workspace && workspace !== "personal") query.set("workspaceId", workspace);
+  for (const [key, value] of Object.entries(params)) if (value !== undefined) query.set(key, String(value));
+  return `/files/organization${path}${query.size ? `?${query}` : ""}`;
 }
