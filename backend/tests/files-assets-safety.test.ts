@@ -90,6 +90,20 @@ test("read-only workspace uploads are rejected before creating any holder or fil
   assert.deepEqual(db.prepare("SELECT COUNT(*) AS count FROM attachments").get(), filesBefore);
 });
 
+test("explorer filters are server parsed, paginated and scoped", async () => {
+  assert.equal((await req("/api/files?fileKind=unknown")).status, 400);
+  assert.equal((await req("/api/files?createdAfter=invalid")).status, 400);
+  const response = await req("/api/files?fileKind=document&page=1&pageSize=1&sort=name_asc");
+  const payload = await response.json() as any;
+  assert.equal(payload.items.length, 1);
+  assert.equal(payload.items[0].mimeType, "text/plain");
+  assert.ok(payload.total > 1);
+  const future = await (await req("/api/files?createdAfter=2099-01-01")).json() as any;
+  assert.equal(future.total, 0);
+  const foreign = await (await req("/api/files?fileKind=document", "GET", undefined, other)).json() as any;
+  assert.equal(foreign.total, 0);
+});
+
 test("three-level folders reject cycles, missing parents, foreign parents and nonempty deletion", async () => {
   const create = async (name: string, parentId?: string) => {
     const res = await req("/api/attachment-folders", "POST", { name, parentId });

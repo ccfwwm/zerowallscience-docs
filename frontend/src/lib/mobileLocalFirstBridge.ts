@@ -134,6 +134,7 @@ export function installMobileLocalFirstBridge(
     target.attachmentFolders.create = unsupportedAttachmentFolders;
     target.attachmentFolders.rename = unsupportedAttachmentFolders;
     target.attachmentFolders.remove = unsupportedAttachmentFolders;
+    target.attachmentFolders.move = unsupportedAttachmentFolders;
     target.files.move = unsupportedAttachmentFolders;
   }
 

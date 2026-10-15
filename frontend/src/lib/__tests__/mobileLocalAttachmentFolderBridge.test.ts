@@ -37,6 +37,11 @@ function createFakeDb() {
         return {changes:1};
       }
       if(normalized.startsWith("UPDATE mobile_local_attachment_folders SET parentId=NULL"))return {changes:0};
+      if(normalized.startsWith("UPDATE mobile_local_attachment_folders SET parentId=?")){
+        const folder=folders.find((item)=>item.id===values[2]);
+        if(folder)folder.parentId=values[0] as string|null;
+        return {changes:folder?1:0};
+      }
       if(normalized.startsWith("DELETE FROM mobile_local_attachment_folders")){
         const id=String(values[0]);const index=folders.findIndex((folder)=>folder.id===id);
         if(index>=0)folders.splice(index,1);return {changes:index>=0?1:0};
@@ -107,6 +112,15 @@ afterEach(()=>{
 
 describe("mobile local attachment folder bridge",()=>{
   it("moves and unarchives local files without remote requests and rejects a missing selection",async()=>{
+    const nested = createFakeDb();
+    restore=installMobileLocalAttachmentFolderBridge(nested.db,"android-local-user");
+    const parent=await api.attachmentFolders.create("parent");
+    const child=await api.attachmentFolders.create("child",parent.id);
+    await expect(api.attachmentFolders.move(parent.id,child.id)).rejects.toMatchObject({code:"FOLDER_CYCLE"});
+    await expect(api.attachmentFolders.remove(parent.id)).rejects.toMatchObject({code:"FOLDER_NOT_EMPTY"});
+    await api.attachmentFolders.move(child.id,null);
+    expect(nested.folders.find((folder)=>folder.id===child.id)?.parentId).toBeNull();
+    restore();
     const {db,assignments}=createFakeDb();
     const fetchSpy=vi.spyOn(globalThis,"fetch");
     restore=installMobileLocalAttachmentFolderBridge(db,"android-local-user");

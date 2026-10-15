@@ -877,7 +877,7 @@ function AppLayout() {
           v16 P3 后续：Rail 三档模式（icon=48px 纯图标 / label=64px 图标+文字 / hidden=完全隐藏）；
           hidden 模式下若主侧栏也折叠，强制保留 Rail（避免完全无侧栏入口）。 */}
       {showRail && <PhaseAPerfProfiler id="NavRail"><NavRail notificationCount={notificationCount} /></PhaseAPerfProfiler>}
-      {showSidebar && !mediumNoteWorkspace && (
+      {showSidebar && !mediumNoteWorkspace && !isFilesView && (
         <div
           className="hidden md:flex shrink-0"
           style={{ width: `${state.sidebarWidth}px` }}
@@ -885,7 +885,7 @@ function AppLayout() {
           <PhaseAPerfProfiler id="Sidebar"><Sidebar variant="desktop" /></PhaseAPerfProfiler>
         </div>
       )}
-      {showSidebar && !mediumNoteWorkspace && <SidebarResizeHandle />}
+      {showSidebar && !mediumNoteWorkspace && !isFilesView && <SidebarResizeHandle />}
 
       {/* ===== 主内容区 ===== */}
       {state.viewMode === "trash" ? (
@@ -947,7 +947,7 @@ function AppLayout() {
           <DiaryCenter />
         </div>
       ) : isFilesView ? (
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
           <MobileTopBar />
           <FileManager />
         </div>

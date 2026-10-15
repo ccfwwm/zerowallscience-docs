@@ -91,6 +91,7 @@ function formatLocalTime(s: string): string {
 }
 
 export interface AttachmentDetailDrawerProps {
+  embedded?: boolean;
   attachmentId: string | null;
   onClose: () => void;
   onJumpToNote?: (noteId: string) => void;
@@ -114,6 +115,7 @@ export default function AttachmentDetailDrawer({
   isImageHostMode = false,
   extraHeaderActions,
   renderPreview,
+  embedded = false,
 }: AttachmentDetailDrawerProps) {
   const { t } = useTranslation();
   const { siteConfig } = useSiteSettings();
@@ -389,6 +391,7 @@ export default function AttachmentDetailDrawer({
               <button
                 type="button"
                 className="shrink-0 text-[11px] text-accent-primary hover:underline"
+                disabled={detail?.canManage === false}
                 onClick={startRename}
               >
                 {t("attachmentDetail.rename")}
@@ -400,7 +403,7 @@ export default function AttachmentDetailDrawer({
       <MetaRow label={t("attachmentDetail.type")} value={<code className="text-[11px]">{detail?.mimeType || "-"}</code>} />
       <MetaRow label={t("attachmentDetail.size")} value={humanSize(detail?.size || 0)} />
       <MetaRow label={t("attachmentDetail.uploadedAt")} value={formatLocalTime(detail?.createdAt || "")} />
-      {detail?.hash && (
+      {!embedded && detail?.hash && (
         <MetaRow
           label={t("attachmentDetail.hash")}
           value={
@@ -417,7 +420,7 @@ export default function AttachmentDetailDrawer({
           }
         />
       )}
-      {detail && (
+      {!embedded && detail && (
         <MetaRow
           label={t("attachmentDetail.downloadLink")}
           value={
@@ -444,19 +447,20 @@ export default function AttachmentDetailDrawer({
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="fixed inset-0 z-40 bg-zinc-900/40 backdrop-blur-sm"
+        className={cn("fixed inset-0 z-40 bg-zinc-900/40 backdrop-blur-sm", embedded && !expanded && "xl:hidden")}
         onClick={onClose}
       />
       <motion.div
-        initial={{ x: "100%" }}
+        initial={embedded ? false : { x: "100%" }}
         animate={{ x: 0 }}
         exit={{ x: "100%" }}
-        transition={{ type: "spring", bounce: 0, duration: 0.3 }}
+        transition={embedded ? { duration: 0 } : { type: "spring", bounce: 0, duration: 0.3 }}
         className={cn(
           "fixed right-0 top-0 bottom-0 z-50 bg-app-surface border-l border-app-border shadow-2xl flex flex-col transition-[width] duration-200",
           expanded
             ? "w-full sm:w-[90vw] md:w-[90vw]"
             : "w-full sm:w-[480px] md:w-[520px]",
+          embedded && !expanded && "xl:relative xl:inset-auto xl:z-auto xl:w-[340px] xl:shrink-0 xl:shadow-none",
         )}
       >
         <div
@@ -529,7 +533,7 @@ export default function AttachmentDetailDrawer({
                     publicWebOrigin: siteConfig.publicWebOrigin,
                   },
                 );
-                if (isMobile) {
+                if (isMobile || embedded) {
                   return (
                     <div
                       className={cn(
@@ -558,7 +562,7 @@ export default function AttachmentDetailDrawer({
                             {t("attachmentDetail.shareLink")}
                           </div>
                           <div className="mt-0.5 text-[10px] text-tx-tertiary">
-                            {t(detail.externalAccessEnabled === false ? "fileManager.externalDisabled" : "attachmentDetail.publicAccess")}
+                            {t(embedded ? "fileExplorer.shareHint" : detail.externalAccessEnabled === false ? "fileManager.externalDisabled" : "attachmentDetail.publicAccess")}
                           </div>
                         </div>
                         <ChevronDown

@@ -19,6 +19,8 @@ import type {
   TaskStats,
 } from "@/types";
 import { api } from "./api";
+import { getCurrentWorkspace } from "./api.impl";
+import { assetFileKind } from "./fileExplorerModel";
 import { newLocalId } from "./localRepository";
 import { isMobileLocalMode } from "./mobileLocalMode";
 import { ensureMobileLocalMindMapTree } from "./mobileLocalMindMapTree";
@@ -376,10 +378,16 @@ export function installMobileLocalModuleBridge(
   target.deleteMindMapFolder = async (id:string)=>{await db.run("UPDATE mindmaps SET folderId=NULL WHERE folderId=?",[id]);await db.run("DELETE FROM mindmap_folders WHERE id=?",[id]);return {success:true};};
   target.moveMindMap = async (id:string,folderId:string|null)=>{await db.run("UPDATE mindmaps SET folderId=?,updatedAt=? WHERE id=?",[folderId,now(),id]);return readMindMap(id);};
 
-  const fileRows = async (): Promise<Array<Record<string, unknown>>> => db.query(`SELECT a.*,n.title AS noteTitle,n.notebookId,n.isTrashed,b.name AS notebookName,b.icon AS notebookIcon
+  const assertPersonalFileScope = () => {
+    if (getCurrentWorkspace() !== "personal") throw Object.assign(new Error("Native 文件中心暂不支持工作区文件，请切回个人空间或在网页端操作"), { code: "MOBILE_WORKSPACE_FILES_UNSUPPORTED" });
+  };
+  const fileRows = async (): Promise<Array<Record<string, unknown>>> => {
+    assertPersonalFileScope();
+    return db.query(`SELECT a.*,n.title AS noteTitle,n.notebookId,n.isTrashed,b.name AS notebookName,b.icon AS notebookIcon
     FROM attachments a LEFT JOIN notes n ON n.scopeKey=a.scopeKey AND n.id=a.noteId
     LEFT JOIN notebooks b ON b.scopeKey=n.scopeKey AND b.id=n.notebookId
     WHERE a.scopeKey='personal' AND a.available=1`);
+  };
   const toFileItem = async (row:Record<string,unknown>):Promise<FileItem> => ({
     id:String(row.id),filename:String(row.filename),mimeType:String(row.mimeType),size:Number(row.size)||0,createdAt:String(row.createdAt),
     category:String(row.mimeType).startsWith("image/")?"image":"file",url:await repository.attachments.resolveUrl(String(row.id)) || "about:blank",
@@ -387,17 +395,36 @@ export function installMobileLocalModuleBridge(
     primaryNote:row.noteId?{id:String(row.noteId),title:String(row.noteTitle||""),notebookId:row.notebookId?String(row.notebookId):null,notebookName:row.notebookName?String(row.notebookName):null,notebookIcon:row.notebookIcon?String(row.notebookIcon):null,isTrashed:Number(row.isTrashed)||0}:null,
   });
   target.files.stats = async ():Promise<FileStats>=>{const rows=await fileRows();const images=rows.filter((row)=>String(row.mimeType).startsWith("image/"));const files=rows.filter((row)=>!String(row.mimeType).startsWith("image/"));const sum=(items:Array<Record<string,unknown>>)=>items.reduce((total,row)=>total+(Number(row.size)||0),0);const byMime=[...new Set(rows.map((row)=>String(row.mimeType)))].map((mime)=>{const items=rows.filter((row)=>row.mimeType===mime);return {mime,count:items.length,bytes:sum(items)};});return {total:rows.length,totalBytes:sum(rows),images:{count:images.length,bytes:sum(images)},files:{count:files.length,bytes:sum(files)},unreferenced:{count:0,bytes:0},myUploads:{total:rows.length,referenced:rows.length,unreferenced:0},storage:{mode:"local",driver:"local",source:"default"},byMime};};
-  target.files.list = async (params:Record<string,unknown>={}):Promise<FileListResponse>=>{let rows=await fileRows();if(params.category)rows=rows.filter((row)=>(String(row.mimeType).startsWith("image/")?"image":"file")===params.category);if(params.q)rows=rows.filter((row)=>String(row.filename).toLowerCase().includes(String(params.q).toLowerCase()));const items=await Promise.all(rows.map(toFileItem));const page=Number(params.page)||1,pageSize=Number(params.pageSize)||50,start=(page-1)*pageSize;return {items:items.slice(start,start+pageSize),total:items.length,page,pageSize};};
+  target.files.list = async (params:Record<string,unknown>={}):Promise<FileListResponse>=>{
+    let rows=await fileRows();
+    if(params.category)rows=rows.filter((row)=>(String(row.mimeType).startsWith("image/")?"image":"file")===params.category);
+    if(params.fileKind)rows=rows.filter((row)=>assetFileKind(String(row.mimeType))===params.fileKind);
+    if(params.q)rows=rows.filter((row)=>String(row.filename).toLowerCase().includes(String(params.q).toLowerCase()));
+    if(params.folderId)rows=rows.filter((row)=>params.folderId==="__unarchived"?!row.folderId:row.folderId===params.folderId);
+    if(params.createdAfter)rows=rows.filter((row)=>Date.parse(String(row.createdAt))>=Date.parse(String(params.createdAfter)));
+    const sort=String(params.sort||"created_desc");
+    rows.sort((left,right)=>{
+      const compare=sort.startsWith("size")?Number(left.size)-Number(right.size)
+        :sort.startsWith("name")?String(left.filename).localeCompare(String(right.filename))
+        :String(left.createdAt).localeCompare(String(right.createdAt));
+      return sort.endsWith("_asc")?compare:-compare;
+    });
+    const page=Math.max(1,Number(params.page)||1),pageSize=Math.min(200,Math.max(1,Number(params.pageSize)||50)),start=(page-1)*pageSize;
+    // Resolve Native binary URLs only for this page, never for the complete library.
+    const items=await Promise.all(rows.slice(start,start+pageSize).map(toFileItem));
+    return {items,total:rows.length,page,pageSize};
+  };
   target.files.get = async (id:string):Promise<FileDetail>=>{const row=(await fileRows()).find((item)=>item.id===id);if(!row)throw new Error("文件不存在");const item=await toFileItem(row);return {...item,references:item.primaryNote?[{...item.primaryNote,updatedAt:String(row.updatedAt),isPrimary:true}]:[]};};
-  target.files.upload = async (file:File):Promise<FileItem>=>{const notebooks=await repository.notebooks.list();let notebook=notebooks[0];if(!notebook){const id=newLocalId();await repository.notebooks.create({id,name:"本地文件",icon:"📁"});notebook=(await repository.notebooks.get(id))!;}let holder=(await repository.notes.list({includeArchived:true,includeTrashed:true})).find((note)=>note.title==="本地文件");if(!holder){const id=newLocalId();await repository.notes.create({id,notebookId:notebook.id,title:"本地文件",isArchived:1});holder=(await repository.notes.get(id))!;}const id=newLocalId();await repository.attachments.save({id,noteId:holder.id,filename:file.name,mimeType:file.type||"application/octet-stream",blob:file});return target.files.get(id);};
+  target.files.upload = async (file:File):Promise<FileItem>=>{assertPersonalFileScope();const notebooks=await repository.notebooks.list();let notebook=notebooks[0];if(!notebook){const id=newLocalId();await repository.notebooks.create({id,name:"本地文件",icon:"📁"});notebook=(await repository.notebooks.get(id))!;}let holder=(await repository.notes.list({includeArchived:true,includeTrashed:true})).find((note)=>note.title==="本地文件");if(!holder){const id=newLocalId();await repository.notes.create({id,notebookId:notebook.id,title:"本地文件",isArchived:1});holder=(await repository.notes.get(id))!;}const id=newLocalId();await repository.attachments.save({id,noteId:holder.id,filename:file.name,mimeType:file.type||"application/octet-stream",blob:file});return target.files.get(id);};
   const assertSafeFileDeletion = async (id: string) => {
+    assertPersonalFileScope();
     if (!isMobileLocalMode()) throw Object.assign(new Error("同步模式暂不支持文件永久删除，请在服务端文件中心检查引用后操作"), { code: "MOBILE_SYNC_FILE_DELETE_UNSUPPORTED" });
     const references = await db.query("SELECT id FROM notes WHERE content LIKE ? LIMIT 1", [`%${id}%`]);
     if (references.length) throw Object.assign(new Error("文件仍被笔记使用，请先移除引用（包括回收站中的笔记）"), { code: "FILE_IN_USE" });
   };
   target.files.remove = async (id:string)=>{await assertSafeFileDeletion(id);await repository.attachments.remove(id);return {success:true};};
   target.files.batchRemove = async (ids:string[])=>{const failed:Array<{id:string;reason:string}>=[];let deleted=0;for(const id of ids){try{await target.files.remove(id);deleted+=1;}catch(error){failed.push({id,reason:error instanceof Error?error.message:"删除失败"});}}return {success:failed.length===0,deleted,failed};};
-  target.files.rename = async (id:string,filename:string)=>{await db.run("UPDATE attachments SET filename=?,updatedAt=? WHERE id=?",[filename,now(),id]);const row=(await db.query<Record<string,unknown>>("SELECT * FROM attachments WHERE id=?",[id]))[0];if(row)await enqueue("attachment",id,"upsert",row);return {success:true,filename};};
+  target.files.rename = async (id:string,filename:string)=>{assertPersonalFileScope();await db.run("UPDATE attachments SET filename=?,updatedAt=? WHERE id=?",[filename,now(),id]);const row=(await db.query<Record<string,unknown>>("SELECT * FROM attachments WHERE id=?",[id]))[0];if(row)await enqueue("attachment",id,"upsert",row);return {success:true,filename};};
   target.attachmentFolders.list = async()=>({folders:[]});
   target.dataFile.cleanupOrphans = async()=>({totalRemovedItems:0,totalFreedBytes:0,removed:{databaseRows:0,contentReferences:0,diskFiles:0}});
 

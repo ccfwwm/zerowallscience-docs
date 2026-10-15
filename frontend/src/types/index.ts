@@ -309,6 +309,7 @@ export type FileSortKey =
  *   holder note（isArchived=1 的"未归档文件"占位笔记）。
  */
 export interface FileItem {
+  deduplicated?: boolean;
   id: string;
   filename: string;
   mimeType: string;

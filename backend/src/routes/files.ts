@@ -42,6 +42,7 @@ import path from "path";
 import { getDb } from "../db/schema";
 import { attachmentQueryService } from "../queries";
 import { attachmentDeletionRisk } from "../services/attachment-deletion-safety";
+import { fileExplorerFilters } from "../services/file-explorer-filters";
 import {
   ensureAttachmentsDir,
   getAttachmentsDir,
@@ -458,6 +459,11 @@ app.get("/", requireWorkspaceFeature("files"), (c) => {
     whereParts.push("a.mimeType = ?");
     params.push(mime.toLowerCase());
   }
+
+  const explorer = fileExplorerFilters(c.req.query("fileKind"), c.req.query("createdAfter"));
+  if (explorer.error) return c.json({ error: explorer.error, code: explorer.code }, 400);
+  whereParts.push(...explorer.conditions);
+  params.push(...explorer.params);
 
   if (notebookId) {
     whereParts.push("n.notebookId = ?");
