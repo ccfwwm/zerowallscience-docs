@@ -1,3 +1,4 @@
+import { syncReferences } from "../lib/attachmentRefs";
 import { assertEncryptedBlockCollaborationAllowed } from "../lib/encryptedBlockWrites.js";
 /**
  * Phase 3: Y.js CRDT 服务端
@@ -262,6 +263,16 @@ function schedulePersistToNotesTable(room: RoomState) {
 }
 
 function persistToNotesTable(room: RoomState) {
+  const version = room.baseVersion, bumpedAt = room.lastVersionBumpAt;
+  try { getDb().transaction(() => persistNoteContent(room)).immediate(); }
+  catch (error) {
+    room.baseVersion = version;
+    room.lastVersionBumpAt = bumpedAt;
+    throw error;
+  }
+}
+
+function persistNoteContent(room: RoomState) {
   const db = getDb();
   assertEncryptedBlockCollaborationAllowed(db, room.noteId);
   const ytext = room.doc.getText("content");
@@ -377,6 +388,7 @@ function persistToNotesTable(room: RoomState) {
       outcome: "committed",
     });
   }
+  syncReferences(db, room.noteId, markdown);
 }
 
 // ---------------------------------------------------------------------------

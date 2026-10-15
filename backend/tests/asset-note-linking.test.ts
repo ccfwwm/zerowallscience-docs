@@ -79,3 +79,23 @@ test("normal note indexing yields authorized reverse references and removes the 
   db.transaction(() => { db.prepare("UPDATE notes SET content='' WHERE id='link-owner-note'").run(); syncReferences(db, "link-owner-note", ""); })();
   assert.equal((db.prepare("SELECT COUNT(*) n FROM attachment_references WHERE attachmentId=?").get(id) as any).n, 0);
 });
+
+test("Yjs saves and removes attachment reverse references with the persisted document", async () => {
+  const Y = await import("yjs");
+  const yjs = await import("../src/services/yjs");
+  const db = schema.getDb(), noteId = "link-owner-note";
+  const attachmentId = "d0000000-0000-4000-8000-000000000001";
+  const client = new Y.Doc();
+  try {
+    const joined = yjs.yJoin(noteId, "link-owner");
+    Y.applyUpdate(client, Buffer.from(joined.stateBase64, "base64"));
+    for (const content of [`![Reused](/api/attachments/${attachmentId})`, "Removed image"]) {
+      const vector = Y.encodeStateVector(client), text = client.getText("content");
+      client.transact(() => { text.delete(0, text.length); text.insert(0, content); });
+      assert.equal(yjs.yApplyUpdate(noteId, Buffer.from(Y.encodeStateAsUpdate(client, vector)).toString("base64"), "link-owner"), "ok");
+      yjs.yFlush(noteId);
+      assert.equal((db.prepare("SELECT content FROM notes WHERE id=?").get(noteId) as any).content, content);
+      assert.equal((db.prepare("SELECT COUNT(*) n FROM attachment_references WHERE attachmentId=? AND noteId=?").get(attachmentId, noteId) as any).n, content.startsWith("!") ? 1 : 0);
+    }
+  } finally { client.destroy(); yjs.yDestroyDoc(noteId); }
+});
