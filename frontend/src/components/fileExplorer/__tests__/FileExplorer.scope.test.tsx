@@ -4,15 +4,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import FileExplorer from "../FileExplorer";
 
 const state = vi.hoisted(() => ({
-  workspace: "personal", confirm: vi.fn(), removeFiles: vi.fn(), removeFolder: vi.fn(),
+  filesList: vi.fn(), foldersList: vi.fn(), workspace: "personal", confirm: vi.fn(), removeFiles: vi.fn(), removeFolder: vi.fn(),
 }));
 vi.mock("react-i18next", () => ({ initReactI18next: { type: "3rdParty", init() {} }, useTranslation: () => ({ t: (key: string) => key }) }));
 vi.mock("@/lib/api", () => ({
   getCurrentWorkspace: () => state.workspace, getServerUrl: () => "http://qa.local", getBaseUrl: () => "/api",
   resolveAttachmentUrl: (url: string) => url,
   api: {
-    files: { organization: { list: async () => ({supported:false,canManageTags:false,tags:[],smartFolders:[]}) }, list: async () => ({ items: [{ id: "file-a", filename: "file.txt", mimeType: "text/plain", size: 1, createdAt: "2026-10-15", folderId: null }], total: 1 }), batchRemove: state.removeFiles },
-    attachmentFolders: { list: async () => ({ folders: [{ id: "folder-a", name: "Folder A", parentId: null, fileCount: 0 }] }), remove: state.removeFolder },
+    files: { organization: { list: async () => ({supported:false,canManageTags:false,tags:[],smartFolders:[]}) }, list: state.filesList, batchRemove: state.removeFiles },
+    attachmentFolders: { list: state.foldersList, remove: state.removeFolder },
   },
 }));
 vi.mock("@/lib/offlineScope", () => ({ getOfflineQueueStorageKey: () => "qa-account" }));
@@ -30,6 +30,8 @@ let root: Root;
 let host: HTMLDivElement;
 beforeEach(() => {
   vi.clearAllMocks(); state.workspace = "personal";
+  state.filesList.mockResolvedValue({items:[{id:"file-a",filename:"file.txt",mimeType:"text/plain",size:1,createdAt:"2026-10-15",folderId:null}],total:1});
+  state.foldersList.mockResolvedValue({folders:[{id:"folder-a",name:"Folder A",parentId:null,fileCount:0}]});
   state.removeFiles.mockResolvedValue({ deleted: 1, failed: [] });
   state.removeFolder.mockResolvedValue({ success: true });
   host = document.createElement("div"); document.body.append(host); root = createRoot(host);
@@ -60,4 +62,14 @@ it.each([
   await act(async () => resolve(true));
   expect(state.removeFiles).toHaveBeenCalledTimes(!changeWorkspace && kind === "file" ? 1 : 0);
   expect(state.removeFolder).toHaveBeenCalledTimes(!changeWorkspace && kind === "folder" ? 1 : 0);
+});
+
+it("refreshes synchronized file locations and folders only while the original identity is active",async()=>{
+  await act(async()=>root.render(<FileExplorer/>));const calls=state.filesList.mock.calls.length;
+  state.foldersList.mockResolvedValue({folders:[{id:"folder-a",name:"Renamed on another device",parentId:null,fileCount:0}]});
+  await act(async()=>window.dispatchEvent(new CustomEvent("nowen:mobile-sync-applied")));
+  expect(state.filesList.mock.calls.length).toBeGreaterThan(calls);expect(host.textContent).toContain("Renamed on another device");
+  const latest=state.filesList.mock.calls.length;state.workspace="other-account-scope";
+  await act(async()=>window.dispatchEvent(new CustomEvent("nowen:mobile-sync-applied")));
+  expect(state.filesList).toHaveBeenCalledTimes(latest);
 });

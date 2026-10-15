@@ -1,3 +1,4 @@
+import { assertAssetMetadata, prepareAssetBaseline, receiveAssetMetadata } from "./assetOrganization";
 import type Database from "better-sqlite3";
 import {
   SYNC_PERSONAL_SCOPE_KEY,
@@ -44,6 +45,7 @@ import type {
 } from "./remote";
 import {
   SYNC_V2_NEGOTIATED_ENTITY_TYPES,
+  SYNC_V2_ASSET_ENTITY_TYPES,
   type SyncEnginePhase,
   type SyncEngineState,
   type SyncNegotiatedEntityType,
@@ -123,7 +125,8 @@ type TreeRemotePayload = {
   payload?: Record<string, unknown>;
 };
 
-type EngineRemotePayload = RemoteEntityPayload | TreeRemotePayload;
+type AssetRemotePayload = {entityType:"attachment_organization";entityId:string;operation:"upsert"|"delete";payload?:Record<string,unknown>};
+type EngineRemotePayload = AssetRemotePayload | RemoteEntityPayload | TreeRemotePayload;
 
 export class SyncEngine {
   private state: SyncEngineState = "idle";
@@ -297,6 +300,10 @@ export class SyncEngine {
         const local = states.find((item) => item.scopeKey === descriptor.scopeKey);
         if (!local || local.accessStatus === "access_revoked") continue;
         try {
+          if (!descriptor.workspaceId && descriptor.assetOrganization !== "personal-v1"
+            && this.db.prepare("SELECT 1 FROM asset_sync_bindings WHERE profileId=? AND userId=?").get(this.profileId,this.userId)) {
+            throw new SyncError("SERVER_ERROR","服务器不支持已绑定的附件目录同步，已保留本地数据与游标");
+          }
           if (local.accessStatus === "replan_required") {
             resetKnowledgeTreeSyncReadiness(this.db, this.profileId, descriptor.scopeKey);
             this.unsupportedTreeScopes.delete(descriptor.scopeKey);
@@ -309,6 +316,7 @@ export class SyncEngine {
             );
           }
           await this.ensureKnowledgeTreeBaseline(descriptor);
+          await this.ensureAssetSubscription(descriptor);
           await this.runPush(descriptor);
           await this.runPull(descriptor);
           // 附件二进制放在最后：它耗时最长且不影响正文一致性。
@@ -351,9 +359,31 @@ export class SyncEngine {
     if (this.intervalMs > 0) this.scheduleNext(this.intervalMs);
   }
 
+  private assetSubscribed = false;
+  private assetNegotiated = false;
+
+  private async ensureAssetSubscription(scope: SyncScopeDescriptor): Promise<void> {
+    if (scope.workspaceId || !isKnowledgeTreeSyncReady(this.db,this.profileId,scope.scopeKey) || this.assetNegotiated) return;
+    const binding = this.db.prepare("SELECT ready FROM asset_sync_bindings WHERE profileId=? AND userId=?").get(this.profileId,this.userId) as {ready:number}|undefined;
+    if (scope.assetOrganization !== "personal-v1") {
+      if (binding) throw new SyncError("SERVER_ERROR","服务器不支持已绑定的附件目录同步，已保留本地数据和队列");
+      this.assetNegotiated = true; return;
+    }
+    const subscription = {entityTypes:SYNC_V2_ASSET_ENTITY_TYPES,deviceId:this.deviceId};
+    try {
+      const plan = await this.client.plan(0,scope.scopeKey,subscription) as unknown as {assetOrganization?:string;entityTypes?:string[]};
+      this.assetSubscribed = plan.assetOrganization === "personal-v1" && Array.isArray(plan.entityTypes) && plan.entityTypes.length === 12 && SYNC_V2_ASSET_ENTITY_TYPES.every(type=>plan.entityTypes!.includes(type));
+    } catch (error) {
+      if ((error as {code?:string}).code !== "INVALID_PAYLOAD") throw error;
+    }
+    if (!this.assetSubscribed && binding) throw new SyncError("SERVER_ERROR","服务器不支持已绑定的附件目录同步，已保留本地数据和队列");
+    if (this.assetSubscribed) await this.runSnapshotRebuild(scope);
+    this.assetNegotiated = true;
+  }
+
   private treeSubscription(scopeKey: string): SyncProtocolSubscription | undefined {
     return isKnowledgeTreeSyncReady(this.db, this.profileId, scopeKey)
-      ? { entityTypes: SYNC_V2_NEGOTIATED_ENTITY_TYPES, deviceId: this.deviceId }
+      ? { entityTypes: scopeKey === "personal" && this.assetSubscribed ? SYNC_V2_ASSET_ENTITY_TYPES : SYNC_V2_NEGOTIATED_ENTITY_TYPES, deviceId: this.deviceId }
       : undefined;
   }
 
@@ -500,10 +530,12 @@ export class SyncEngine {
       this.profileId,
       scope.scopeKey,
       Boolean(subscription),
+      this.assetSubscribed && scope.workspaceId === null,
     );
     if (rows.length === 0) return;
 
     const batch = coalesceMutations(rows);
+    batch.sort((a,b)=>Number(a.entityType==="attachment_organization")-Number(b.entityType==="attachment_organization"));
     if (batch.some(item => item.entityType === "task" && ["stop","series"].includes(String(item.payload?.recurrenceAction))) && scope.taskRecurrenceLifecycle !== "v1") {
       throw new SyncError("SERVER_ERROR","请升级服务器以同步循环任务操作；本机修改已保留");
     }
@@ -539,11 +571,20 @@ export class SyncEngine {
       const superseded = bySupersede.get(result.mutationId) || [];
 
       if (result.status === "applied" || result.status === "duplicate") {
+        const source = byMutation.get(result.mutationId);
+        if (source?.entityType === "attachment_organization" && (!Number.isSafeInteger(result.version) || Number(result.version)<1)) {
+          recoverInflightMutations(this.db);
+          throw new SyncError("SERVER_ERROR","附件目录 ACK 缺少有效版本");
+        }
         // 出队：这是唯一允许删除 Outbox 条目的路径。
         this.db.transaction(() => {
           markLocalMutationApplied(this.db, result.mutationId, this.deviceId);
           markMutationSynced(this.db, result.mutationId);
           for (const id of superseded) markMutationSynced(this.db, id);
+          if (source?.entityType === "attachment_organization") {
+            const remaining = this.db.prepare(`UPDATE sync_outbox SET baseVersion=? WHERE profileId=? AND entityType='attachment_organization' AND entityId=?`).run(result.version,this.profileId,source.entityId);
+            if (!remaining.changes) runChangeFeedSuppressed(this.db,()=>this.db.prepare("UPDATE asset_sync_metadata SET version=? WHERE id=? AND userId=?").run(result.version,source.entityId,this.userId));
+          }
           const mutation = byMutation.get(result.mutationId);
           if (mutation) acknowledgeNotePush(
             this.db, mutation, result.version, this.profileId, scope.scopeKey,
@@ -668,7 +709,7 @@ export class SyncEngine {
     this.phase = "applying";
     const payloads = await this.fetchEntityPayloads(changes.items, scope, subscription);
     const businessPayloads = payloads.filter(
-      (item): item is RemoteEntityPayload => item.entityType !== "knowledge_tree_node",
+      (item): item is RemoteEntityPayload => item.entityType !== "knowledge_tree_node" && item.entityType !== "attachment_organization",
     );
     const treePayloads = payloads.filter(
       (item): item is TreeRemotePayload => item.entityType === "knowledge_tree_node",
@@ -678,6 +719,11 @@ export class SyncEngine {
     });
     this.restoreParentLinks(businessPayloads,scope);
     const treeResult = this.applyKnowledgeTreePayloads(treePayloads, scope);
+    receiveAssetMetadata(this.db,payloads.filter(item=>item.entityType==="attachment_organization").map(item=>{
+      if (item.operation !== "upsert" || !item.payload) throw new SyncError("SERVER_ERROR","附件目录缺少版本化快照");
+      assertAssetMetadata(item.entityId,item.payload,this.userId);
+      return item.payload;
+    }),this.profileId,this.userId);
 
     for (const conflict of result.pendingConflicts) {
       // 本地有未推送修改，远端也变了：登记冲突，两侧都保留。
@@ -718,6 +764,7 @@ export class SyncEngine {
     scope: SyncScopeDescriptor,
     subscription?: SyncProtocolSubscription,
   ): Promise<EngineRemotePayload[]> {
+    const includeFolders = items.some(item=>item.entityType==="attachment_organization");
     const deletions: EngineRemotePayload[] = [];
     const wanted = new Set<string>();
 
@@ -755,7 +802,7 @@ export class SyncEngine {
         : await this.client.snapshot(cursor, 0, undefined, scope.scopeKey);
       for (const entry of page.items) {
         const key = `${entry.entityType}\u0000${entry.entityId}`;
-        if (!wanted.has(key)) continue;
+        if (!wanted.has(key) && !(includeFolders && entry.entityType==="attachment_organization" && entry.payload.kind==="folder")) continue;
         upserts.push(entry.entityType === "knowledge_tree_node"
           ? {
               entityType: "knowledge_tree_node",
@@ -774,7 +821,7 @@ export class SyncEngine {
       cursor = page.nextCursor;
       guard += 1;
       // 需要的实体都拿到就提前结束，不必翻完整个知识库。
-      if (wanted.size === 0) break;
+      if (wanted.size === 0 && !includeFolders) break;
     } while (cursor && guard < 1000);
 
     if (wanted.size > 0) {
@@ -897,6 +944,7 @@ export class SyncEngine {
     let applied = 0;
     const seen = new Map<string,Set<string>>();
     const parentLinks:RemoteEntityPayload[] = [];
+    const assetEntries:Record<string,unknown>[] = [];
 
     do {
       const page: RemoteSnapshotPage<SyncNegotiatedEntityType> = subscription
@@ -924,7 +972,10 @@ export class SyncEngine {
       const businessEntries: RemoteEntityPayload[] = [];
       const treeEntries: TreeRemotePayload[] = [];
       for (const entry of page.items) {
-        if (entry.entityType === "knowledge_tree_node") {
+        if (entry.entityType === "attachment_organization") {
+          assertAssetMetadata(entry.entityId,entry.payload,this.userId);
+          assetEntries.push(entry.payload);
+        } else if (entry.entityType === "knowledge_tree_node") {
           treeEntries.push({
             entityType: "knowledge_tree_node",
             entityId: entry.entityId,
@@ -954,6 +1005,11 @@ export class SyncEngine {
 
     if (cursor) throw new SyncError("SERVER_ERROR","Snapshot 分页超过安全上限");
     this.restoreParentLinks(parentLinks,scope);
+    if (this.assetSubscribed && scope.workspaceId === null) this.db.transaction(()=> {
+      prepareAssetBaseline(this.db,assetEntries,this.profileId,this.deviceId,this.userId);
+      receiveAssetMetadata(this.db,assetEntries,this.profileId,this.userId);
+      this.db.prepare("INSERT INTO asset_sync_bindings(profileId,userId,ready) VALUES (?,?,0) ON CONFLICT(profileId) DO NOTHING").run(this.profileId,this.userId);
+    })();
     if (scope.workspaceId) this.pruneWorkspaceSnapshot(scope,seen);
 
     // 重建完成后游标落在 snapshot 时间点，之后继续增量。
@@ -961,6 +1017,9 @@ export class SyncEngine {
     await this.client.ack(
       this.deviceId, snapshotSequence, scope.scopeKey, subscription,
     );
+
+    if (this.assetSubscribed && scope.workspaceId === null) this.db.prepare(`INSERT INTO asset_sync_bindings(profileId,userId,ready) VALUES (?,?,1)
+      ON CONFLICT(profileId) DO UPDATE SET ready=1`).run(this.profileId,this.userId);
 
     logSyncInfo("engine.snapshot-rebuilt", {
       profileId: this.profileId,

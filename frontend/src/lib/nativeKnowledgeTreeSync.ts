@@ -23,6 +23,7 @@ const nodeTypes: Record<string, readonly string[]> = {
 };
 
 export function assertNativePersonalTreeEntry(entityId: string, p: Record<string,unknown>, userId: string): void {
+  // Root-document placement can allocate negative sort positions. Keep signed safe integers.
   const type = p.resourceType;
   if (p.__delete === true) return;
   if (typeof type !== "string" || !Object.hasOwn(nodeTypes,type)
@@ -33,7 +34,7 @@ export function assertNativePersonalTreeEntry(entityId: string, p: Record<string
     || typeof p.nodeType !== "string" || !nodeTypes[type].includes(p.nodeType)
     || (p.parentId !== null && (typeof p.parentId !== "string" || !p.parentId))
     || p.parentId === entityId
-    || !Number.isSafeInteger(p.sortOrder) || (p.sortOrder as number) < 0
+    || !Number.isSafeInteger(p.sortOrder)
     || (p.isDeleted !== 0 && p.isDeleted !== 1)
     || (p.deletedAt !== null && typeof p.deletedAt !== "string")
     || typeof p.createdAt !== "string" || !p.createdAt

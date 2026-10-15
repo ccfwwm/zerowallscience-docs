@@ -7,6 +7,7 @@
       "title": "已同步的声明必须有服务端版本确认",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset ACK without a version retains its original durable mutation for retry" },
         {
           "file": "frontend/src/lib/__tests__/noteSyncSafety.test.ts",
           "case": "requires server revision advancement before a versioned write is considered synced"
@@ -22,6 +23,7 @@
       "title": "本地业务写入与 Outbox 变更应在持久化后可恢复",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset folder enqueue failure rolls back the business row and retains existing mutations" },
         {
           "file": "backend/tests/task-composer.test.ts",
           "case": "invalid items, scope forgery, projects and database failures leave no partial writes"
@@ -81,6 +83,7 @@
       "title": "断网、服务端失败或停止调度不得静默丢弃待同步修改",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/asset-organization-sync.test.ts", "case": "desktop directory CRUD captures durable organization mutations and converges through real Sync V2 routes" },
         {
           "file": "frontend/src/lib/__tests__/taskOfflineApi.test.ts",
           "case": "keeps an offline task-tree archive across reinitialization and failed replay"
@@ -116,6 +119,7 @@
       "title": "冲突必须保留本机意图和服务端版本，不能静默覆盖",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent asset folder edits preserve both versions and explicit keep-local converges" },
         {
           "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
           "case": "remote document moves reject stale body metadata without losing the offline edit"
@@ -143,6 +147,9 @@
       "title": "同步游标与 ACK 必须晚于内容校验和本地应用",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset binding preserves server-generated negative root positions across native replicas" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset Pull loads final folder dependencies beyond its first change-feed page" },
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset folder Apply failure retains cursor and the complete previous local graph" },
         {
           "file": "backend/tests/sync-v2-engine.test.ts",
           "case": "Change Feed upsert 缺少 Snapshot payload 时不推进游标或 ACK"
@@ -162,6 +169,7 @@
       "title": "跨账号跨服务端 Outbox 不得串用",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset metadata is invisible to old clients and cannot cross accounts or workspace scopes" },
         {
           "file": "frontend/src/lib/__tests__/taskComposerApi.test.ts",
           "case": "rejects cross-account responses without caching them"
@@ -193,6 +201,7 @@
       "title": "删除必须以明确的删除操作或墓碑同步",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset tombstones reject stale offline resurrection without losing the offline name" },
         {
           "file": "frontend/src/lib/__tests__/nativeLocalNoteOrigin.test.ts",
           "case": "refuses permanent removal of an active or locked note without losing body, provenance or outbox"
@@ -252,6 +261,8 @@
       "title": "不完整备份不可直接覆盖线上数据，失败要回滚",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/asset-organization-sync.test.ts", "case": "incoming trash visibility cannot reopen a previously public link after restoration" },
+        { "file": "backend/tests/asset-organization-sync.test.ts", "case": "asset migration preserves queue order, failed retry state, conflict history and the feed high-water mark" },
         {
           "file": "backend/tests/backup-restore-integrity.test.ts",
           "case": "attachment audit rejects local DB paths missing from full ZIP"
@@ -279,6 +290,7 @@
       "title": "Android Native 关闭同步后重启仍保留未发出修改",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset folders survive offline restart and converge with nested ancestry on three devices" },
         {
           "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
           "case": "native task archive survives restart and converges with its details on a second device"
@@ -400,6 +412,7 @@
       "title": "Native independent SQLite clients preserve durable edits across sync failures",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent asset folder edits preserve both versions and explicit keep-local converges" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "three independent SQLite clients converge bidirectionally" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "remote document moves reject stale body metadata without losing the offline edit" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "remote permanent deletion preserves offline body" },

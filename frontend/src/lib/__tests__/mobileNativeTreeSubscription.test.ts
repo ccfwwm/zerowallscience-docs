@@ -72,3 +72,18 @@ describe("native personal tree subscription", () => {
     expect(engine.subscriptionParams(scope).get("entityTypes")).toBe(NATIVE_TREE_ENTITY_SET);
   });
 });
+
+it("negotiates the complete asset set only with explicit server capability confirmation",async()=>{
+  const {NATIVE_ASSET_ENTITY_SET}=await import('../nativeAssetOrganization');const {engine}=fixture();
+  const fetchMock=vi.fn().mockResolvedValue(response({entityTypes:NATIVE_ASSET_ENTITY_SET.split(','),assetOrganization:'personal-v1'}));vi.stubGlobal('fetch',fetchMock);
+  await engine.negotiateTree({...scope,assetOrganization:'personal-v1'} as never);
+  expect(engine.subscriptionParams(scope).get('entityTypes')).toBe(NATIVE_ASSET_ENTITY_SET);
+  expect(()=>assertMobileSyncItems([{entityType:'attachment_organization',entityId:'folder:f',operation:'upsert'}],'changes',true,true)).not.toThrow();
+  expect(()=>assertMobileSyncItems([{entityType:'attachment_organization',entityId:'folder:f',operation:'upsert'}],'changes',true,false)).toThrow();
+});
+it("retains a persisted asset subscription when a server no longer advertises that capability",async()=>{
+  const {NATIVE_ASSET_ENTITY_SET}=await import('../nativeAssetOrganization');const {db,engine}=fixture();db.query.mockResolvedValue([{value:'pending:'+NATIVE_ASSET_ENTITY_SET}]);
+  const fetchMock=vi.fn();vi.stubGlobal('fetch',fetchMock);
+  await expect(engine.negotiateTree(scope)).rejects.toMatchObject({code:'SERVER_ERROR'});
+  expect(db.run).not.toHaveBeenCalled();expect(fetchMock).not.toHaveBeenCalled();
+});

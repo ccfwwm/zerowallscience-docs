@@ -386,7 +386,7 @@ export function installMobileLocalModuleBridge(
     return db.query(`SELECT a.*,n.title AS noteTitle,n.notebookId,n.isTrashed,b.name AS notebookName,b.icon AS notebookIcon
     FROM attachments a LEFT JOIN notes n ON n.scopeKey=a.scopeKey AND n.id=a.noteId
     LEFT JOIN notebooks b ON b.scopeKey=n.scopeKey AND b.id=n.notebookId
-    WHERE a.scopeKey='personal' AND a.available=1`);
+    WHERE a.scopeKey='personal' AND a.available=1 AND a.assetTrashedAt IS NULL`);
   };
   const toFileItem = async (row:Record<string,unknown>):Promise<FileItem> => ({
     id:String(row.id),filename:String(row.filename),mimeType:String(row.mimeType),size:Number(row.size)||0,createdAt:String(row.createdAt),

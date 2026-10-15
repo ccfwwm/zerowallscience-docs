@@ -1,3 +1,5 @@
+import { getOfflineQueueStorageKey } from "@/lib/offlineScope";
+import { useTranslation } from "react-i18next";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -57,6 +59,7 @@ export function ConflictCenter({
   deviceId: string | null;
   onResolved?: () => void;
 }) {
+  const {t}=useTranslation();
   const [items, setItems] = useState<ConflictSummary[]>([]);
   const [historyItems, setHistoryItems] = useState<ResolvedConflictSummary[]>([]);
   const [historyTotal, setHistoryTotal] = useState(0);
@@ -208,7 +211,8 @@ export function ConflictCenter({
   const handleBulkResolve = async (resolution: "keep-local" | "keep-remote") => {
     const selectedTargets = items.filter((item) => selectedIds.has(item.id));
     const excludedTree = selectedTargets.filter((item) => isTreeConflict(item.entityType)).length;
-    const targets = selectedTargets.filter((item) => !isTreeConflict(item.entityType));
+    const targets = selectedTargets.filter((item) => !isTreeConflict(item.entityType) && item.entityType!=="attachment_organization");
+    if(selectedTargets.some(item=>item.entityType==="attachment_organization")) setWarning(t("assetOrganization.syncConflictBatchSkipped"));
     if (excludedTree) {
       setWarning("已跳过 " + excludedTree + " 条知识树结构冲突：须先核对节点及业务资源，不支持一键覆盖。");
     }
@@ -258,7 +262,8 @@ export function ConflictCenter({
   const handleAutomaticMerge = async () => {
     const selectedTargets = items.filter((item) => selectedIds.has(item.id));
     const excludedTree = selectedTargets.filter((item) => isTreeConflict(item.entityType)).length;
-    const targets = selectedTargets.filter((item) => !isTreeConflict(item.entityType));
+    const targets = selectedTargets.filter((item) => !isTreeConflict(item.entityType) && item.entityType!=="attachment_organization");
+    if(selectedTargets.some(item=>item.entityType==="attachment_organization")) setWarning(t("assetOrganization.syncConflictBatchSkipped"));
     if (excludedTree) {
       setWarning("已跳过 " + excludedTree + " 条知识树结构冲突：不能通过自动合并普通字段来重建目录结构。");
     }
@@ -462,7 +467,7 @@ export function ConflictCenter({
                   <p className="mt-0.5 text-muted-foreground">
                     {isTreeConflict(item.entityType)
                       ? "知识树结构差异 · 不代表正文冲突 · 点击查看本机/云端状态"
-                      : <>{ENTITY_TYPE_LABELS[item.entityType] || item.entityType} · 本机 v{item.localVersion ?? "?"} · 云端 v{item.remoteVersion ?? "?"}{item.diffFields.length > 0 ? ` · 差异：${item.diffFields.slice(0, 4).join("、")}` : ""}</>}
+                      : <>{item.entityType==="attachment_organization"?t("assetOrganization.syncConflictLabel"):ENTITY_TYPE_LABELS[item.entityType] || item.entityType} · 本机 v{item.localVersion ?? "?"} · 云端 v{item.remoteVersion ?? "?"}{item.diffFields.length > 0 ? ` · 差异：${item.diffFields.slice(0, 4).join("、")}` : ""}</>}
                   </p>
                 </div>
               </div>
@@ -496,7 +501,7 @@ export function ConflictCenter({
               >
                 保留云端版本
               </button>
-              {!isTreeConflict(item.entityType) ? (
+              {!isTreeConflict(item.entityType) && item.entityType!=="attachment_organization" ? (
                 <button type="button" disabled={busy}
                   onClick={() => { void openDetail(item.id); }}
                   className="inline-flex items-center gap-1 rounded border px-2 py-1 hover:bg-accent disabled:opacity-50">
@@ -603,6 +608,7 @@ function ResolvedConflictHistory({
   onView: (id: string) => void;
   onReopen: (item: ResolvedConflictSummary) => void;
 }) {
+  const {t}=useTranslation();
   const formatResolvedAt = (value: string) => {
     const parsed = new Date(value.includes("T") ? value : `${value.replace(" ", "T")}Z`);
     return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
@@ -635,7 +641,7 @@ function ResolvedConflictHistory({
             >
               <option value="">全部类型</option>
               {SYNC_CONFLICT_ENTITY_TYPES.map((value) => (
-                <option key={value} value={value}>{ENTITY_TYPE_LABELS[value] || value}</option>
+                <option key={value} value={value}>{value==="attachment_organization"?t("assetOrganization.syncConflictLabel"):ENTITY_TYPE_LABELS[value] || value}</option>
               ))}
             </select>
           </label>
@@ -701,6 +707,34 @@ function ResolvedConflictHistory({
  * 只对比字段级差异并展示两侧取值。正文这类大字段做截断预览——
  * 完整逐字符 diff 属于编辑器职责，在设置页里渲染大正文只会拖慢页面。
  */
+function AssetConflictFields({detail}:{detail:ConflictDetail}) {
+  const {t}=useTranslation();
+  const [names,setNames]=useState(new Map<string,string>());
+  useEffect(()=>{
+    let stale=false;
+    const scope=getOfflineQueueStorageKey();
+    void import("@/lib/api").then(async({api})=>{
+      if(stale || scope!==getOfflineQueueStorageKey()) return;
+      const {folders}=await api.attachmentFolders.list();
+      if(!stale && scope===getOfflineQueueStorageKey()) setNames(new Map(folders.map(folder=>[folder.id,folder.name])));
+    }).catch(()=>{ /* Unavailable folder names are shown explicitly. */ });
+    return ()=>{stale=true;};
+  },[detail.id]);
+  const fields=["name","parentId","folderId","deleted","trashedAt"].filter(field=>
+    detail.local && Object.hasOwn(detail.local,field) || detail.remote && Object.hasOwn(detail.remote,field));
+  const value=(payload:Record<string,unknown>|null,field:string)=>{
+    if(!payload || !Object.hasOwn(payload,field)) return "—";
+    const value=payload[field];
+    if(field==="parentId" || field==="folderId") return value ? names.get(String(value)) || t("assetOrganization.syncMissingFolder") : t(field==="parentId"?"assetOrganization.syncRoot":"fileExplorer.unarchived");
+    if(field==="deleted") return t(value?"assetOrganization.syncDeletedState":"assetOrganization.syncActiveState");
+    return value==null?"—":String(value);
+  };
+  return <table className="mt-2 w-full table-fixed border-collapse"><thead><tr className="text-left text-muted-foreground">
+    <th>{t("assetOrganization.syncField")}</th><th>{t("assetOrganization.syncLocal")}</th><th>{t("assetOrganization.syncRemote")}</th>
+  </tr></thead><tbody>{fields.map(field=><tr key={field} className="border-t align-top"><td className="py-1">{t(`assetOrganization.syncField_${field}`)}</td>
+    <td className="break-words py-1">{value(detail.local,field)}</td><td className="break-words py-1">{value(detail.remote,field)}</td></tr>)}</tbody></table>;
+}
+
 function ConflictDiff({
   detail,
   busy,
@@ -712,6 +746,7 @@ function ConflictDiff({
   onClose: () => void;
   onManual: (payload:Record<string,unknown>) => Promise<void>;
 }) {
+  const {t}=useTranslation();
   const [editing,setEditing] = useState(false);
   const [draft,setDraft] = useState("");
   const [draftError,setDraftError] = useState<string|null>(null);
@@ -777,6 +812,8 @@ function ConflictDiff({
             </tbody>
           </table>
         </div>
+      ) : detail.entityType==="attachment_organization" ? (
+        <AssetConflictFields key={detail.id} detail={detail}/>
       ) : encrypted ? (
         <div className="mt-2 grid grid-cols-2 gap-3">
           <div><p className="font-medium">本机版本</p><p className="mt-1">{String(detail.local?.title || "加密笔记")}</p><p className="text-muted-foreground">🔒 加密内容</p></div>
@@ -814,6 +851,8 @@ function ConflictDiff({
             ? "核对父目录、排序和删除状态后，可通过上方按钮选择保留版本。"
             : "请先检查同步状态，不要清空本机或云端数据。"}
         </p>
+      ) : detail.entityType==="attachment_organization" ? (
+        <p className="mt-3 border-t pt-3 text-muted-foreground">{t("assetOrganization.syncConflictHint")}</p>
       ) : encrypted ? (
         <p className="mt-3 border-t pt-3 text-muted-foreground">
           请选择保留本机版本或云端版本。另一个版本会保留在历史记录中。

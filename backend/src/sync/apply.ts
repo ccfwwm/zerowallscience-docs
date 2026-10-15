@@ -1,3 +1,4 @@
+import { applyAssetOrganization } from "./assetOrganization";
 import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
 import { invalidTaskDateField } from "../lib/taskDates.js";
 import { guardTaskRecurrenceWrite, removeTaskOccurrences, taskRemovalRows } from "../lib/taskRecurrenceDeletion.js";
@@ -33,7 +34,7 @@ export interface ApplyMutationInput {
   userId: string;
   deviceId: string;
   mutationId: string;
-  entityType: SyncEntityType | "knowledge_tree_node";
+  entityType: SyncEntityType | "knowledge_tree_node" | "attachment_organization";
   entityId: string;
   operation: SyncOperation;
   baseVersion?: number;
@@ -683,6 +684,7 @@ function applyMindmap(db: Database.Database, input: ApplyMutationInput): number 
 }
 
 const APPLIERS: Record<ApplyMutationInput["entityType"], (db: Database.Database, input: ApplyMutationInput) => number | null> = {
+  attachment_organization: applyAssetOrganization,
   notebook: applyNotebook,
   note: applyNote,
   tag: applyTag,

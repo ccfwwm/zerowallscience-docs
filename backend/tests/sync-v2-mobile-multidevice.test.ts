@@ -841,7 +841,7 @@ test("native structural Apply rejects foreign scopes, identities and missing dep
     parentId:null, nodeType:"folder", resourceType:"notebook", resourceId:id, sortOrder:0, isDeleted:0, deletedAt:null, createdAt:"now", updatedAt:"now" } };
   await c.db.transaction((tx) => applyNativePersonalTree(tx,[entry],USER,true));
   const queued = await pending(c);
-  for (const patch of [{userId:"other-user"}, {workspaceId:"foreign"}, {scopeKey:"workspace:foreign"}, {resourceId:"missing"}, {parentId:"notebook:missing"}, {sortOrder:-1}, {sortOrder:1.5}, {nodeType:"file"}, {parentId:entry.entityId}]) {
+  for (const patch of [{userId:"other-user"}, {workspaceId:"foreign"}, {scopeKey:"workspace:foreign"}, {resourceId:"missing"}, {parentId:"notebook:missing"}, {sortOrder:Number.MAX_SAFE_INTEGER+1}, {sortOrder:1.5}, {nodeType:"file"}, {parentId:entry.entityId}]) {
     await assert.rejects(c.db.transaction((tx) => applyNativePersonalTree(tx,[{...entry,payload:{...entry.payload,...patch}}],USER,true)), {code:"INVALID_TREE_STRUCTURE"});
     assert.deepEqual((await c.db.query("SELECT parentId,sortOrder FROM native_knowledge_tree_nodes WHERE id=?", [entry.entityId]))[0], {parentId:null,sortOrder:0});
     assert.deepEqual(await pending(c), queued);
@@ -1197,4 +1197,190 @@ test("native tree subscription completes multiple Snapshot pages before binding 
   serverDb.prepare("DELETE FROM notebooks WHERE id=?").run(ids[0]);
   await c.sync();
   assert.equal((await c.db.query("SELECT id FROM native_knowledge_tree_nodes WHERE id=?", [`notebook:${ids[0]}`])).length, 0);
+});
+
+async function createAssetFolder(c:Client,name:string,parentId:string|null=null):Promise<string>{
+  const {queueNativeAsset}=await import("../../frontend/src/lib/nativeAssetOrganization");
+  const id=randomUUID();
+  await c.db.transaction(async tx=>{
+    await tx.run("INSERT INTO mobile_local_attachment_folders(id,userId,name,parentId,createdAt,updatedAt) VALUES (?,?,?,?,'now','now')",[id,USER,name,parentId]);
+    await queueNativeAsset(tx,{id:`folder:${id}`,kind:"folder",resourceId:id,name,parentId,deleted:0,createdAt:"now",updatedAt:"now"},USER);
+  });return id;
+}
+async function changeAssetFolder(c:Client,id:string,patch:Record<string,unknown>):Promise<void>{
+  const {queueNativeAsset,readNativeAssetMetadata}=await import("../../frontend/src/lib/nativeAssetOrganization");
+  await c.db.transaction(async tx=>{
+    const current=await readNativeAssetMetadata(tx,`folder:${id}`,USER);assert.ok(current);
+    const next={...current,...patch};
+    if(next.deleted) await tx.run("DELETE FROM mobile_local_attachment_folders WHERE id=?",[id]);
+    else await tx.run("UPDATE mobile_local_attachment_folders SET name=?,parentId=? WHERE id=?",[next.name,next.parentId,id]);
+    await queueNativeAsset(tx,next,USER);
+  });
+}
+
+test("asset folders survive offline restart and converge with nested ancestry on three devices",async()=>{
+  const a=await client("asset-first");await a.sync();
+  const parent=await createAssetFolder(a,"Offline parent"),child=await createAssetFolder(a,"Offline child",parent);
+  await changeAssetFolder(a,child,{name:"Renamed offline"});
+  const mutations=await pending(a);assert.equal(mutations.length,3);
+  await a.db.close();const reopened=await client("asset-first");assert.deepEqual(await pending(reopened),mutations);
+  await reopened.sync();await reopened.sync();assert.equal((await pending(reopened)).length,0);
+  const b=await client("asset-second"),c=await client("asset-third");await b.sync();await c.sync();
+  for(const peer of [reopened,b,c]){
+    const folder=(await peer.db.query<{name:string;parentId:string}>("SELECT name,parentId FROM mobile_local_attachment_folders WHERE id=?",[child]))[0];
+    assert.equal(folder.name,"Renamed offline");assert.equal(folder.parentId,parent);
+  }
+  await changeAssetFolder(b,child,{parentId:null});await b.sync();await reopened.sync();
+  assert.equal((await reopened.db.query<{parentId:string|null}>("SELECT parentId FROM mobile_local_attachment_folders WHERE id=?",[child]))[0].parentId,null);
+  await changeAssetFolder(reopened,parent,{deleted:1});await reopened.sync();await c.sync();
+  assert.equal((await c.db.query("SELECT id FROM mobile_local_attachment_folders WHERE id=?",[parent])).length,0);
+  assert.equal((serverDb.prepare("SELECT json_extract(payload,'$.deleted') AS deleted FROM asset_sync_metadata WHERE id=?").get(`folder:${parent}`) as {deleted:number}).deleted,1);
+});
+
+test("asset folder enqueue failure rolls back the business row and retains existing mutations",async()=>{
+  const a=await client("asset-rollback");await a.sync();const id=await createAssetFolder(a,"Before failure"),before=await pending(a);
+  await a.db.run("CREATE TRIGGER asset_queue_failure BEFORE INSERT ON sync_outbox WHEN NEW.entityType='attachment_organization' BEGIN SELECT RAISE(ABORT,'asset queue failure'); END");
+  await assert.rejects(changeAssetFolder(a,id,{name:"Must roll back"}),/asset queue failure/);
+  assert.equal((await a.db.query<{name:string}>("SELECT name FROM mobile_local_attachment_folders WHERE id=?",[id]))[0].name,"Before failure");
+  assert.deepEqual(await pending(a),before);
+});
+
+test("lost asset creation ACK replays immutable IDs and does not duplicate folders or versions",async()=>{
+  const a=await client("asset-lost-ack");await a.sync();const id=await createAssetFolder(a,"Lost asset ACK"),before=await pending(a);
+  afterPush=async response=>{const payload=await response.json();afterPush=undefined;return Response.json({...payload,results:[]});};
+  await a.sync();assert.deepEqual(await pending(a),before);
+  const version=(serverDb.prepare("SELECT version FROM asset_sync_metadata WHERE id=?").get(`folder:${id}`) as {version:number}).version;
+  await a.db.close();const reopened=await client("asset-lost-ack");await reopened.sync();assert.equal((await pending(reopened)).length,0);
+  assert.equal((serverDb.prepare("SELECT version FROM asset_sync_metadata WHERE id=?").get(`folder:${id}`) as {version:number}).version,version);
+});
+
+test("asset edit committed during delayed ACK remains queued and rebases to the acknowledged version",async()=>{
+  const a=await client("asset-delayed");await a.sync();const id=await createAssetFolder(a,"Initial asset");await a.sync();
+  await changeAssetFolder(a,id,{name:"First queued"});
+  afterPush=async response=>{afterPush=undefined;await changeAssetFolder(a,id,{name:"During ACK"});return response;};
+  await a.sync();
+  assert.equal((await a.db.query<{name:string}>("SELECT name FROM mobile_local_attachment_folders WHERE id=?",[id]))[0].name,"During ACK");
+  await a.sync();assert.equal((await pending(a)).length,0);
+  assert.equal((serverDb.prepare("SELECT name FROM attachment_folders WHERE id=?").get(id) as {name:string}).name,"During ACK");
+  assert.equal((await conflicts(a)).length,0);
+});
+
+test("concurrent asset folder edits preserve both versions and explicit keep-local converges",async()=>{
+  const a=await client("asset-conflict-a");await a.sync();const id=await createAssetFolder(a,"Shared organization");await a.sync();
+  const b=await client("asset-conflict-b");await b.sync();
+  await changeAssetFolder(a,id,{name:"Device A"});await changeAssetFolder(b,id,{name:"Device B first"});await changeAssetFolder(b,id,{name:"Device B"});await a.sync();await b.sync();
+  assert.equal((serverDb.prepare("SELECT name FROM attachment_folders WHERE id=?").get(id) as {name:string}).name,"Device A");
+  const row=(await b.db.query<{id:string;localPayload:string;remotePayload:string}>("SELECT * FROM sync_conflicts WHERE profileId=? AND entityType='attachment_organization' AND entityId=? AND status='unresolved'",[b.profileId,`folder:${id}`]))[0];
+  assert.ok(row);assert.equal(JSON.parse(row.localPayload).name,"Device B");assert.equal(JSON.parse(row.remotePayload).name,"Device A");
+  await b.engine.resolveLocalConflict(row.id,"keep-local");await b.sync();await a.sync();
+  assert.equal((serverDb.prepare("SELECT name FROM attachment_folders WHERE id=?").get(id) as {name:string}).name,"Device B");
+  assert.equal((await a.db.query<{name:string}>("SELECT name FROM mobile_local_attachment_folders WHERE id=?",[id]))[0].name,"Device B");
+});
+
+test("asset tombstones reject stale offline resurrection without losing the offline name",async()=>{
+  const a=await client("asset-delete-a");await a.sync();const id=await createAssetFolder(a,"Before deletion");await a.sync();
+  const b=await client("asset-delete-b");await b.sync();await changeAssetFolder(b,id,{name:"Offline retained"});
+  await changeAssetFolder(a,id,{deleted:1});await a.sync();await b.sync();
+  assert.equal(serverDb.prepare("SELECT id FROM attachment_folders WHERE id=?").get(id),undefined);
+  const row=(await b.db.query<{id:string;localPayload:string;remotePayload:string}>("SELECT * FROM sync_conflicts WHERE profileId=? AND entityType='attachment_organization' AND entityId=? AND status='unresolved'",[b.profileId,`folder:${id}`]))[0];
+  assert.equal(JSON.parse(row.localPayload).name,"Offline retained");assert.equal(JSON.parse(row.remotePayload).deleted,1);
+  await assert.rejects(b.engine.resolveLocalConflict(row.id,"keep-local"),/已删除/);
+  await b.engine.resolveLocalConflict(row.id,"keep-remote");assert.equal((await b.db.query("SELECT id FROM mobile_local_attachment_folders WHERE id=?",[id])).length,0);
+});
+
+test("asset folder Apply failure retains cursor and the complete previous local graph",async()=>{
+  const a=await client("asset-apply-failure");await a.sync();
+  const cursor=(await a.db.query<{lastSequence:number}>("SELECT lastSequence FROM sync_state WHERE profileId=? AND scopeKey='personal'",[a.profileId]))[0].lastSequence;
+  const parent=randomUUID(),child=randomUUID();
+  serverDb.prepare("INSERT INTO attachment_folders(id,userId,name,parentId) VALUES (?,?,'Server parent',NULL)").run(parent,USER);
+  serverDb.prepare("INSERT INTO attachment_folders(id,userId,name,parentId) VALUES (?,?,'Server child',?)").run(child,USER,parent);
+  await a.db.run(`CREATE TRIGGER asset_apply_failure BEFORE INSERT ON mobile_local_attachment_folders WHEN NEW.id='${child}' BEGIN SELECT RAISE(ABORT,'asset apply failure'); END`);
+  await a.sync();
+  assert.equal((await a.db.query<{lastSequence:number}>("SELECT lastSequence FROM sync_state WHERE profileId=? AND scopeKey='personal'",[a.profileId]))[0].lastSequence,cursor);
+  assert.equal((await a.db.query("SELECT id FROM mobile_local_attachment_folders WHERE id IN (?,?)",[parent,child])).length,0);
+  await a.db.run("DROP TRIGGER asset_apply_failure");await a.sync();
+  assert.equal((await a.db.query("SELECT id FROM mobile_local_attachment_folders WHERE id IN (?,?)",[parent,child])).length,2);
+});
+
+test("file locations travel from server to native and back without changing attachment identity or bytes metadata",async()=>{
+  const {queueNativeAsset}=await import("../../frontend/src/lib/nativeAssetOrganization");
+  const folder=randomUUID(),note=randomUUID(),book=randomUUID(),file=randomUUID();
+  serverDb.prepare("INSERT INTO notebooks(id,userId,name) VALUES (?,?,'Asset host')").run(book,USER);
+  serverDb.prepare("INSERT INTO notes(id,userId,notebookId,title,content) VALUES (?,?,?,'Asset host','{}')").run(note,USER,book);
+  serverDb.prepare("INSERT INTO attachment_folders(id,userId,name) VALUES (?,?,'File destination')").run(folder,USER);
+  serverDb.prepare("INSERT INTO attachments(id,noteId,userId,filename,mimeType,size,path,hash,folderId) VALUES (?,?,?,'kept.txt','text/plain',5,'kept-path','kept-hash',?)").run(file,note,USER,folder);
+  const a=await client("asset-location-a"),b=await client("asset-location-b");await a.sync();await b.sync();
+  assert.equal((await a.db.query<{folderId:string}>("SELECT folderId FROM attachments WHERE id=?",[file]))[0].folderId,folder);
+  await a.db.transaction(async tx=>{
+    await tx.run("UPDATE attachments SET folderId=NULL WHERE id=?",[file]);
+    await queueNativeAsset(tx,{id:`file:${file}`,kind:"file",resourceId:file,folderId:null,trashedAt:null,deleted:0},USER);
+  });
+  await a.sync();
+  assert.deepEqual(await a.db.query("SELECT lastError,payload FROM sync_outbox WHERE profileId=?",[a.profileId]),[]);
+  await b.sync();
+  assert.equal((await b.db.query<{folderId:null}>("SELECT folderId FROM attachments WHERE id=?",[file]))[0].folderId,null);
+  const stored=serverDb.prepare("SELECT id,folderId,path,hash,size FROM attachments WHERE id=?").get(file);
+  assert.deepEqual(stored,{id:file,folderId:null,path:"kept-path",hash:"kept-hash",size:5});
+  serverDb.prepare("UPDATE attachments SET trashedAt='server-trash',folderId=NULL WHERE id=?").run(file);await b.sync();
+  assert.equal((await b.db.query<{assetTrashedAt:string}>("SELECT assetTrashedAt FROM attachments WHERE id=?",[file]))[0].assetTrashedAt,"server-trash");
+  serverDb.prepare("UPDATE attachments SET trashedAt=NULL,folderId=? WHERE id=?").run(folder,file);await b.sync();
+  assert.deepEqual((await b.db.query("SELECT folderId,assetTrashedAt FROM attachments WHERE id=?",[file]))[0],{folderId:folder,assetTrashedAt:null});
+});
+
+test("asset metadata is invisible to old clients and cannot cross accounts or workspace scopes",async()=>{
+  const {applyMutation}=await import("../src/sync/apply");
+  const {readAssetMetadata}=await import("../src/sync/assetOrganization");
+  const {SYNC_V2_ASSET_ENTITY_TYPES}=await import("../src/sync/types");
+  const a=await client("asset-acl");await a.sync();const id=await createAssetFolder(a,"Private asset folder");await a.sync();
+  const legacy=await (await fetch(`${serverUrl}/api/sync/v2/snapshot`,{headers:{Authorization:`Bearer ${USER}`}})).json() as {items:Array<{entityType:string}>};
+  assert.ok(legacy.items.every(item=>item.entityType!=="attachment_organization"));
+  const payload=readAssetMetadata(serverDb,`folder:${id}`,USER)!;
+  const mutation={deviceId:"other",mutationId:randomUUID(),entityType:"attachment_organization" as const,entityId:`folder:${id}`,operation:"upsert" as const,baseVersion:Number(payload.version),payload};
+  assert.throws(()=>serverDb.transaction(()=>applyMutation(serverDb,{...mutation,userId:"other-user",payload:{...payload,userId:"other-user"}}))(),/无权/);
+  assert.throws(()=>serverDb.transaction(()=>applyMutation(serverDb,{...mutation,userId:USER,workspaceId:"foreign"}))(),/仅支持个人/);
+  const bad=await fetch(`${serverUrl}/api/sync/v2/push?entityTypes=${SYNC_V2_ASSET_ENTITY_TYPES.join(',')}&deviceId=unbound`,{method:"POST",headers:{Authorization:`Bearer ${USER}`,"Content-Type":"application/json"},body:JSON.stringify({deviceId:"unbound",scopeKey:"personal",mutations:[mutation]})});
+  assert.equal(((await bad.json()) as {results:Array<{code:string}>}).results[0].code,"INVALID_PAYLOAD");
+});
+
+test("asset ACK without a version retains its original durable mutation for retry",async()=>{
+  const a=await client("asset-invalid-ack");await a.sync();await createAssetFolder(a,"Invalid version ACK");const before=await pending(a);
+  afterPush=async response=>{afterPush=undefined;const body=await response.json() as {results:Array<Record<string,unknown>>};return Response.json({...body,results:body.results.map(({version:_version,...result})=>result)});};
+  await a.sync();assert.deepEqual(await pending(a),before);
+  await a.sync();assert.equal((await pending(a)).length,0);
+});
+
+test("asset Pull loads final folder dependencies beyond its first change-feed page",async()=>{
+  const a=await client("asset-paged-dependencies");await a.sync();const child=randomUUID(),parent=randomUUID();
+  serverDb.prepare("INSERT INTO attachment_folders(id,userId,name) VALUES (?,?,'Early asset child')").run(child,USER);
+  const rename=serverDb.prepare("UPDATE attachment_folders SET name=? WHERE id=?");
+  serverDb.transaction(()=>{for(let i=0;i<505;i++)rename.run(`Page filler ${i}`,child);})();
+  serverDb.prepare("INSERT INTO attachment_folders(id,userId,name) VALUES (?,?,'Later asset parent')").run(parent,USER);
+  serverDb.prepare("UPDATE attachment_folders SET parentId=? WHERE id=?").run(parent,child);
+  await a.sync();
+  assert.equal((await a.db.query<{parentId:string}>("SELECT parentId FROM mobile_local_attachment_folders WHERE id=?",[child]))[0].parentId,parent);
+  await a.sync();assert.equal((await conflicts(a)).length,0);
+});
+
+test("first asset binding preserves and synchronizes pre-existing native folders",async()=>{
+  const a=await client("asset-old-folders"),parent=randomUUID(),child=randomUUID();
+  await a.db.run("INSERT INTO mobile_local_attachment_folders(id,userId,name,parentId,createdAt,updatedAt) VALUES (?,?,'Existing parent',NULL,'now','now')",[parent,USER]);
+  await a.db.run("INSERT INTO mobile_local_attachment_folders(id,userId,name,parentId,createdAt,updatedAt) VALUES (?,?,'Existing child',?,'now','now')",[child,USER,parent]);
+  await a.sync();await a.sync();
+  assert.equal((await pending(a)).length,0);
+  assert.deepEqual(serverDb.prepare("SELECT name,parentId FROM attachment_folders WHERE id=?").get(child),{name:"Existing child",parentId:parent});
+});
+
+test("asset binding preserves server-generated negative root positions across native replicas",async()=>{
+  const note=randomUUID(),book=randomUUID();
+  serverDb.prepare("INSERT INTO notebooks(id,userId,name) VALUES (?,?,'Root host')").run(book,USER);
+  serverDb.prepare("INSERT INTO notes(id,userId,notebookId,title,content,contentFormat) VALUES (?,?,?,'Root document','Public fixture','markdown')").run(note,USER,book);
+  serverDb.prepare("UPDATE knowledge_tree_nodes SET sortOrder=-2147483647 WHERE id=?").run(`note:${note}`);
+  const a=await client("asset-signed-root-a"),b=await client("asset-signed-root-b");
+  await a.sync();
+  const folder=await createAssetFolder(a,"Directory beside root document");await a.sync();await b.sync();
+  for(const c of [a,b]) {
+    assert.equal((await c.db.query<{sortOrder:number}>("SELECT sortOrder FROM native_knowledge_tree_nodes WHERE id=?",[`note:${note}`]))[0].sortOrder,-2147483647);
+    assert.equal((await c.db.query<{name:string}>("SELECT name FROM mobile_local_attachment_folders WHERE id=?",[folder]))[0].name,"Directory beside root document");
+    assert.equal((await pending(c)).length,0);
+  }
 });

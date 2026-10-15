@@ -1,5 +1,11 @@
 export const zhCNAssetOrganizationTranslations = {
   assetOrganization: {
+    syncField: "项目", syncLocal: "本机", syncRemote: "云端", syncRoot: "根目录", syncMissingFolder: "目录已删除或不可用",
+    syncField_name: "名称", syncField_parentId: "父目录", syncField_folderId: "目标目录", syncField_deleted: "状态", syncField_trashedAt: "移入回收站",
+    syncDeletedState: "已删除", syncActiveState: "保留",
+    syncConflictLabel: "附件整理",
+    syncConflictHint: "请核对名称、目标目录和删除状态，再选择保留本机或云端版本。已删除的目录不能直接复活；另一方版本会保留在冲突历史中。",
+    syncConflictBatchSkipped: "附件整理冲突需逐项核对，已跳过批量处理。",
     previousPage: "上一页",
     nextPage: "下一页",
     tags: "标签",
@@ -50,6 +56,12 @@ export const zhCNAssetOrganizationTranslations = {
 };
 export const enAssetOrganizationTranslations = {
   assetOrganization: {
+    syncField: "Field", syncLocal: "Local", syncRemote: "Server", syncRoot: "Root", syncMissingFolder: "Folder deleted or unavailable",
+    syncField_name: "Name", syncField_parentId: "Parent folder", syncField_folderId: "Destination", syncField_deleted: "State", syncField_trashedAt: "Moved to trash",
+    syncDeletedState: "Deleted", syncActiveState: "Retained",
+    syncConflictLabel: "File organization",
+    syncConflictHint: "Check the name, destination and deletion state, then choose the local or server version. Deleted folders cannot be revived directly; the other version remains in conflict history.",
+    syncConflictBatchSkipped: "File organization conflicts need individual review and were skipped in bulk processing.",
     previousPage: "Previous",
     nextPage: "Next",
     tags: "Tags",

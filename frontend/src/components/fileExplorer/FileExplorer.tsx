@@ -1,4 +1,5 @@
 import AssetTrash from "./AssetTrash";
+import { MOBILE_SYNC_APPLIED_EVENT } from "@/lib/mobileSyncStatus";
 import { explorerAssetFilters } from "@/lib/assetFilters";
 import AssetTagEditor from "./AssetTagEditor";
 import AssetFilterPanel from "./AssetFilterPanel";
@@ -88,6 +89,11 @@ function FileExplorerContent({ scope }: { scope: string }) {
   const root = useRef<HTMLDivElement>(null);
   const refreshTimer = useRef<ReturnType<typeof setTimeout>>();
   const refresh = useCallback(() => setRevision((previous) => previous + 1), []);
+  useEffect(() => {
+    const applied = () => { if (isCurrent()) refresh(); };
+    window.addEventListener(MOBILE_SYNC_APPLIED_EVENT, applied);
+    return () => window.removeEventListener(MOBILE_SYNC_APPLIED_EVENT, applied);
+  }, [isCurrent, refresh]);
   const uploaded = useCallback(() => {
     clearTimeout(refreshTimer.current);
     refreshTimer.current = setTimeout(refresh, 200);
@@ -143,11 +149,12 @@ function FileExplorerContent({ scope }: { scope: string }) {
     api.attachmentFolders.list().then((result) => {
       if (stale || identity() !== scope) return;
       setFolders(result.folders); setFolderSupport(result.supported !== false); setFolderError("");
+      if (folderId && !result.folders.some(folder => folder.id === folderId)) setFolderId(null);
     }).catch((failure: unknown) => {
       if (!stale && identity() === scope) { setFolders([]); setFolderSupport(false); setFolderError(failure instanceof Error ? failure.message : String(failure)); }
     });
     return () => { stale = true; };
-  }, [revision, scope]);
+  }, [revision, scope, folderId]);
 
   useEffect(() => {
     let stale = false;

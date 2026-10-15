@@ -22,6 +22,8 @@ const {
   resolveConflictMock: vi.fn(),
 }));
 
+vi.mock("@/lib/api",()=>({api:{attachmentFolders:{list:async()=>({folders:[]})}}}));
+
 vi.mock("@/lib/syncLocalApi", () => ({
   SYNC_CONFLICT_ENTITY_TYPES: [
     "notebook",
@@ -470,6 +472,24 @@ describe("冲突中心批量处理", () => {
     await waitFor(() => expect(card.textContent).toContain("folder-a"));
     expect(card.textContent).toContain("folder-b");
     expect([...card.querySelectorAll("button")].find((b) => b.textContent === "保留本机版本")?.disabled).toBe(false);
+  });
+
+  it("附件整理冲突逐项选择，隐藏 JSON 合并并跳过批量覆盖",async()=>{
+    await (await import("@/i18n")).default.changeLanguage("zh-CN");
+    const item={...conflicts[0],id:"asset-conflict",entityType:"attachment_organization",entityId:"folder:asset",diffFields:["name"]};
+    fetchConflictsMock.mockResolvedValue({total:1,items:[item]});
+    fetchConflictDetailMock.mockResolvedValue({...item,status:"unresolved",resolvedAt:null,base:null,
+      local:{name:"本机目录",parentId:null,deleted:0},remote:{name:"服务器目录",parentId:null,deleted:0}});
+    const host=document.createElement("div");document.body.appendChild(host);root=createRoot(host);
+    await act(async()=>root?.render(<ConflictCenter deviceId="asset-device"/>));
+    await waitFor(()=>expect(host.textContent).toContain("冲突（1）"));
+    const card=host.querySelector("li")!;
+    await act(async()=>[...card.querySelectorAll("button")].find(button=>button.textContent==="查看")?.click());
+    await waitFor(()=>expect(card.textContent).toContain("服务器目录"));
+    expect(card.textContent).toContain("本机目录");expect(card.textContent).not.toContain("手动合并");
+    await act(async()=>host.querySelector<HTMLInputElement>('[aria-label="全选冲突"]')?.click());
+    await act(async()=>[...host.querySelectorAll("button")].find(button=>button.textContent==="一键采用本机")?.click());
+    expect(resolveConflictMock).not.toHaveBeenCalled();expect(host.textContent).toContain("附件整理冲突需逐项核对");
   });
 
 });
