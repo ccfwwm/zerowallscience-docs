@@ -401,6 +401,7 @@ export function installMobileLocalModuleBridge(
   };
   target.files.tools = { similar: unsupportedVisualTools, batchRename: unsupportedVisualTools };
   target.files.organization = {
+    aiPreview: unsupportedOrganization, aiConfirm: unsupportedOrganization, aiSearch: unsupportedOrganization, description: unsupportedOrganization,
     list: async () => ({ supported: false, canManageTags: false, tags: [], smartFolders: [] }),
     get: unsupportedOrganization, createTag: unsupportedOrganization, renameTag: unsupportedOrganization,
     deleteTag: unsupportedOrganization, tagFiles: unsupportedOrganization, saveSmartFolder: unsupportedOrganization, deleteSmartFolder: unsupportedOrganization,

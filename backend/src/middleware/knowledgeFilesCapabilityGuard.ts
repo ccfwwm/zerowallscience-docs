@@ -341,8 +341,8 @@ function visibleFileList(c: Context, userId: string) {
     params.push(notebookId);
   }
   if (q) {
-    whereParts.push("a.filename LIKE ? COLLATE NOCASE");
-    params.push(`%${q}%`);
+    whereParts.push("(a.filename LIKE ? COLLATE NOCASE OR EXISTS (SELECT 1 FROM asset_descriptions ad WHERE ad.attachmentId=a.id AND ad.description LIKE ? COLLATE NOCASE) OR EXISTS (SELECT 1 FROM asset_tag_relations ar JOIN asset_tags at ON at.id=ar.tagId WHERE ar.attachmentId=a.id AND at.name LIKE ? COLLATE NOCASE))");
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
   if (noteId) {
     whereParts.push(

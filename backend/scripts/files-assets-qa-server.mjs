@@ -61,4 +61,8 @@ for (let index = 0; index < 96; index++) {
   insert.run(id, owner, `开发记录-${String(index + 1).padStart(3, "0")}.txt`, "text/plain", bytes.length, `${id}.txt`, crypto.createHash("sha256").update(bytes).digest("hex"), index < 6 ? "qa-documents" : null);
 }
 console.log(`[assets-qa] Isolated database: ${directory}; 103 actual attachments; port ${process.env.PORT}`);
+if (process.env.NOWEN_FILES_AI_QA === "1") {
+  const { installAssetAIQA } = await import("./files-assets-ai-provider.mjs");
+  await installAssetAIQA(owner);
+}
 await import("../src/index.hardened.ts");

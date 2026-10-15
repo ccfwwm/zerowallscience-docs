@@ -87,11 +87,13 @@ import attachmentTrash from "./attachment-trash";
 import { retainAttachmentInTrash } from "../services/attachment-trash";
 import assetOrganization from "./asset-organization.js";
 import assetVisualTools from "./asset-visual-tools";
+import assetAI from "./asset-ai";
 
 const app = new Hono();
 app.route("/organization", assetOrganization);
 app.route("/trash", attachmentTrash);
 app.route("/tools", assetVisualTools);
+app.route("/ai", assetAI);
 
 // ---------------------------------------------------------------------------
 // 共用工具
@@ -483,8 +485,8 @@ app.get("/", requireWorkspaceFeature("files"), (c) => {
   }
 
   if (q) {
-    whereParts.push("a.filename LIKE ? COLLATE NOCASE");
-    params.push(`%${q}%`);
+    whereParts.push("(a.filename LIKE ? COLLATE NOCASE OR EXISTS (SELECT 1 FROM asset_descriptions ad WHERE ad.attachmentId=a.id AND ad.description LIKE ? COLLATE NOCASE) OR EXISTS (SELECT 1 FROM asset_tag_relations ar JOIN asset_tags at ON at.id=ar.tagId WHERE ar.attachmentId=a.id AND at.name LIKE ? COLLATE NOCASE))");
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
 
   // noteId：本笔记引用过的附件（含自己上传 + 引用别处的）

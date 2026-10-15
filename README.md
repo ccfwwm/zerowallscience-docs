@@ -70,7 +70,7 @@
 | **任务与习惯** | 树形任务、列表、看板、日历、甘特图 / 时间轴、依赖关系、重复规则、提醒和模板；支持 My Day、标签、保存视图、预估时长、时间块、Inbox、快速捕获、离线任务 / 习惯，以及 Android 原生任务提醒调度，并补齐创建端时区、全天截止与服务端解析一致性；新增到期排序、任务到期提醒和早晚任务摘要 Webhook 推送。 |
 | **协作、权限与分享** | Yjs + WebSocket 实时协作、工作区角色、目录级 ACL、Restricted 受限模式、显式允许 / 拒绝规则、权限继承、所有权转移、分享密码与有效期、访客评论、公开知识空间，以及富文本 / Markdown 划词批注。 |
 | **导入、导出与迁移** | 支持 Markdown、Word / DOCX、网页 URL、微信公众号、SingleFile HTML、思源、Obsidian、小米笔记等；支持选择导入为 Markdown 或富文本，并提供后台任务、进度、重试、远程图片本地化和 Markdown 图片 / 脚注导出；团队空间单篇 ZIP 会按笔记真实工作区执行权限校验。 |
-| **附件与存储** | 本地附件按 `YYYY/MM` 归档；支持缩略图、引用检查、已有附件复用、手动上传文件保护，以及本地磁盘、S3、R2、MinIO。`1.5.2` 开发分支已集成文件中心导航、标签、智能文件夹、已有文件插入和文件回收站，尚未发布（[整理说明](./docs/user/file-asset-organization.md)、[回收站说明](./docs/user/file-recycle-bin.md)）。[个人附件目录多端同步](./docs/user/file-folder-sync.md) 正在独立分支验收。 |
+| **附件与存储** | 本地附件按 `YYYY/MM` 归档；支持缩略图、引用检查、已有附件复用、手动上传文件保护，以及本地磁盘、S3、R2、MinIO。`1.5.2` 开发分支已集成文件中心导航、标签、智能文件夹、已有文件插入和文件回收站，尚未发布（[整理说明](./docs/user/file-asset-organization.md)、[回收站说明](./docs/user/file-recycle-bin.md)）。[个人附件目录多端同步](./docs/user/file-folder-sync.md) 正在独立分支验收。 [AI 辅助整理与文本元数据语义检索](./docs/user/file-ai-organization.md) 正在独立分支验收；预览后确认执行，不发送文件内容，Native 和启用桌面同步的整理写入暂不支持。 |
 | **备份与恢复** | 本地自动备份、后台完整 ZIP 任务、流式归档与校验、浏览器原生下载、邮件备份、凭据加密的 WebDAV 远程备份、Docker 在线升级前备份与失败回滚检查。 |
 | **多端访问** | Web、Electron（Windows / macOS / Linux）、Android、iOS 工程、HarmonyOS 工程，以及 Docker / NAS 部署；支持绿联 UGOS、飞牛 fnOS，客户端可通过 IPv4、IPv6 或域名远程连接并登录 NAS 服务；Android 支持应用内图片手势预览。 |
 | **开放能力** | OpenAPI 3.0、TypeScript SDK、CLI、Webhook、插件系统、Personal API Token、MCP Server 和浏览器剪藏扩展。 |

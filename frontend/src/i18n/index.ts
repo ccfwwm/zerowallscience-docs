@@ -1,3 +1,4 @@
+import { enAssetAITranslations, zhCNAssetAITranslations } from "./assetAITranslations";
 import { enAssetReliabilityTranslations, zhCNAssetReliabilityTranslations } from "./assetReliabilityTranslations";
 import { enAssetToolsTranslations, zhCNAssetToolsTranslations } from "./assetToolsTranslations";
 import { enAssetOrganizationTranslations, zhCNAssetOrganizationTranslations } from "./assetOrganizationTranslations";
@@ -90,6 +91,7 @@ const zhCNWithReleaseTranslations = mergeTranslationPatches(
   zhCNAssetOrganizationTranslations,
   zhCNAssetReliabilityTranslations,
   zhCNAssetToolsTranslations,
+  zhCNAssetAITranslations,
   zhCNTaskRemovalTranslations,
 );
 
@@ -113,6 +115,7 @@ const enWithReleaseTranslations = mergeTranslationPatches(
   enAssetOrganizationTranslations,
   enAssetReliabilityTranslations,
   enAssetToolsTranslations,
+  enAssetAITranslations,
   enTaskRemovalTranslations,
 );
 

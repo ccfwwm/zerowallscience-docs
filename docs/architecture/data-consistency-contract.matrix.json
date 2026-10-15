@@ -23,6 +23,8 @@
       "title": "本地业务写入与 Outbox 变更应在持久化后可恢复",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/asset-ai.test.ts", "case": "a database failure rolls back metadata, folders, tags, result records and existing Outbox" },
+        { "file": "backend/tests/asset-ai.test.ts", "case": "desktop sync refuses unsynced AI metadata writes rather than claiming success" },
         { "file": "backend/tests/asset-visual-tools.test.ts", "case": "batch rename captures existing attachment mutations atomically and rolls back names and Outbox on failure" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset folder enqueue failure rolls back the business row and retains existing mutations" },
         {
@@ -170,6 +172,9 @@
       "title": "跨账号跨服务端 Outbox 不得串用",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/asset-ai.test.ts", "case": "consent, authentication, restricted tokens, scope and protected files fail before the model is called" },
+        { "file": "backend/tests/asset-ai.test.ts", "case": "confirmation retries are persistent and payload conflicts or revoked access cannot replay results" },
+        { "file": "backend/tests/asset-ai.test.ts", "case": "file scope transfers cannot expose a description from its previous owner or workspace" },
         { "file": "backend/tests/asset-visual-tools.test.ts", "case": "visual search rejects foreign anchors, scope forgery, nonmembers and unreadable files" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset metadata is invisible to old clients and cannot cross accounts or workspace scopes" },
         {
@@ -414,6 +419,7 @@
       "title": "Native independent SQLite clients preserve durable edits across sync failures",
       "status": "covered",
       "checks": [
+        { "file": "frontend/src/lib/__tests__/assetAITransport.test.ts", "case": "Native local mode refuses every new AI transport before making a network request" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent asset folder edits preserve both versions and explicit keep-local converges" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "three independent SQLite clients converge bidirectionally" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "remote document moves reject stale body metadata without losing the offline edit" },

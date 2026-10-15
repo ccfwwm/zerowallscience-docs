@@ -1,4 +1,4 @@
-import { aiOutboundFetch } from "./ai-outbound-fetch.js";
+import { callEmbeddings } from "./embedding-client.js";
 /**
  * Embedding Worker — RAG Phase 1
  *
@@ -46,7 +46,6 @@ const BATCH_SIZE = 5;                    // 单轮处理多少条
 const MIN_CONTENT_LENGTH = 10;           // 文本短于此长度直接 skip
 const CHUNK_SIZE = 1500;                 // 单 chunk 字符数（粗略，按字符切）
 const MAX_CHUNKS_PER_NOTE = 8;           // 防止超长笔记把队列卡死
-const HTTP_TIMEOUT_MS = 30_000;          // 单次 embedding 请求超时
 const DEFAULT_DIM = 1536;                // 仅作元数据，实际维度由 provider 返回为准
 
 // ====== 内部状态 ======
@@ -104,48 +103,7 @@ function chunkText(title: string, body: string): { idx: number; text: string }[]
   return chunks;
 }
 
-// ============================================================
-// HTTP 调用：兼容 OpenAI /embeddings 协议
-// ============================================================
-//
-// 请求体：{ model, input: string | string[] }
-// 响应体：{ data: [{ embedding: number[], index }], model, usage }
-// 通义/智谱/DeepSeek/Ollama(/v1) 都遵循这个协议；少数 provider 需要单独适配再说。
-async function callEmbeddings(
-  cfg: EmbeddingConfig,
-  inputs: string[],
-): Promise<number[][]> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (cfg.apiKey) headers["Authorization"] = `Bearer ${cfg.apiKey}`;
-
-  const res = await aiOutboundFetch(`${cfg.url}/embeddings`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ model: cfg.model, input: inputs }),
-    signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
-  });
-
-  if (!res.ok) {
-    const errText = await res.text().catch(() => "");
-    throw new Error(`HTTP ${res.status}: ${errText.slice(0, 300)}`);
-  }
-  const data = (await res.json()) as {
-    data?: { embedding: number[]; index?: number }[];
-  };
-  if (!data.data || !Array.isArray(data.data)) {
-    throw new Error("响应缺少 data 数组");
-  }
-  // 按 index 排序；很多 provider 已经按顺序返回，这里防御一下
-  const sorted = [...data.data].sort(
-    (a, b) => (a.index ?? 0) - (b.index ?? 0),
-  );
-  const vectors = sorted.map((d) => d.embedding);
-  if (vectors.length !== inputs.length) {
-    throw new Error(`返回向量数量 ${vectors.length} 与请求数 ${inputs.length} 不匹配`);
-  }
-  return vectors;
-}
-
+// Embedding HTTP transport is shared with explicit metadata search.
 // ============================================================
 // 单条任务处理
 // ============================================================

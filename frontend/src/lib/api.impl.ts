@@ -826,7 +826,10 @@ async function requestInternal<T>(url: string, options?: RequestOptions): Promis
   }
   // Android 原生壳里错误地址/弱网下 GET 体感很像"永远加载"；Web 端保持较长读超时。
   const TIMEOUT_MS =
-    method === "GET" || method === "HEAD"
+    // Read-only model calls need time to finish their bounded upstream request.
+    /^\/files\/ai\/(?:preview|search)(?:\?|$)/.test(url)
+      ? 60000
+      : method === "GET" || method === "HEAD"
       ? isNativeCapacitor()
         ? 20000
         : 60000
@@ -3392,6 +3395,10 @@ export const api = {
       },
     },
     organization: {
+      aiPreview: (ids: string[], lang: "zh-CN" | "en", signal?: AbortSignal) => request<import("./assetAI").AssetAIPreview>(fileAIPath("/preview"), {method:"POST",body:JSON.stringify({ids,lang,consent:true}),signal}),
+      aiConfirm: (requestId: string, items: import("./assetAI").AssetAISuggestion[]) => request<{updated:number;ids:string[];replayed:boolean}>(fileAIPath("/confirm"), {method:"POST",body:JSON.stringify({confirmed:true,requestId,items:items.map(item => ({...item,filename:undefined}))})}),
+      aiSearch: (query: string, after?: string, signal?: AbortSignal) => request<import("./assetAI").AssetAISearch>(fileAIPath("/search"), {method:"POST",body:JSON.stringify({query,after,consent:true}),signal}),
+      description: (id: string) => request<{description:string}>(fileAIPath(`/metadata/${encodeURIComponent(id)}`)),
       list: (params: { q?: string; tagPage?: number; smartPage?: number } = {}) => request<AssetOrganization>(fileOrganizationPath("", params)),
       get: (id: string) => request<{ tags: AssetTag[]; duplicates: Array<{id: string; filename: string}>; canManage: boolean }>(fileOrganizationPath(`/assets/${encodeURIComponent(id)}`)),
       createTag: (name: string, color?: string) => request<{tag: AssetTag}>(fileOrganizationPath("/tags"), {method: "POST", body: JSON.stringify({name, color})}),
@@ -5406,4 +5413,9 @@ function fileOrganizationPath(path: string, params: Record<string, string | numb
   if (workspace && workspace !== "personal") query.set("workspaceId", workspace);
   for (const [key, value] of Object.entries(params)) if (value !== undefined) query.set(key, String(value));
   return `/files/organization${path}${query.size ? `?${query}` : ""}`;
+}
+
+function fileAIPath(path: string): string {
+  if (isNativeCapacitor()) throw Object.assign(new Error("File AI is unavailable in Native local mode"), {code:"ASSET_AI_NATIVE_UNSUPPORTED"});
+  return fileOrganizationPath("").replace("/organization", `/ai${path}`);
 }

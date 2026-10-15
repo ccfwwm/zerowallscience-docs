@@ -1,4 +1,5 @@
 import AssetTrash from "./AssetTrash";
+import { Capacitor } from "@capacitor/core";
 import SimilarImages from "./SimilarImages";
 import BatchRenameDialog from "./BatchRenameDialog";
 import { MOBILE_SYNC_APPLIED_EVENT } from "@/lib/mobileSyncStatus";
@@ -28,6 +29,7 @@ import FileCard from "./FileCard";
 import FileUploadQueue from "./FileUploadQueue";
 
 const Advanced = lazy(() => import("../FileManager").then((module) => ({ default: module.FileManagerAdvanced })));
+const AssetAIDialog = lazy(() => import("./AssetAIDialog"));
 const identity = () => `${getOfflineQueueStorageKey()}:${getServerUrl()}:${getCurrentWorkspace()}`;
 const sortKeys: FileSortKey[] = ["created_desc", "created_asc", "name_asc", "name_desc", "size_asc", "size_desc"];
 
@@ -59,6 +61,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
   const [smartFolder, setSmartFolder] = useState<AssetSmartFolder | null>(null);
   const [batchTags, setBatchTags] = useState(false);
   const [batchRename, setBatchRename] = useState(false);
+  const [aiMode, setAIMode] = useState<"organize" | "search" | null>(null);
   const [similar, setSimilar] = useState<{ id: string; filename: string } | null>(null);
   const [category, setCategory] = useState<AssetCategory>("all");
   const [folderId, setFolderId] = useState<string | null>(null);
@@ -112,7 +115,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
   const clearSelection = () => { setSelected(new Set()); anchor.current = null; setSelectionMode(false); setBatchTags(false); };
 
   useEffect(() => registerMobileBackHandler("sheet", () => {
-    if (similar || batchRename) return false;
+    if (similar || batchRename || aiMode) return false;
     if (nameDialog) { if (!saving) setNameDialog(null); return true; }
     if (moveIds || moveFolder) return false; // The move modal owns its pending operation.
     if (menu) { setMenu(null); return true; }
@@ -123,7 +126,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
       setFolderId(parent); setPage(1); setSelected(new Set()); return true;
     }
     return false;
-  }), [detail, folderId, folders, menu, moveFolder, moveIds, nameDialog, saving, sidebar, similar, batchRename]);
+  }), [detail, folderId, folders, menu, moveFolder, moveIds, nameDialog, saving, sidebar, similar, batchRename, aiMode]);
 
   useEffect(() => {
     const timer = setTimeout(() => { setQuery(input.trim()); setPage(1); setSelected(new Set()); }, 250);
@@ -287,8 +290,10 @@ function FileExplorerContent({ scope }: { scope: string }) {
           <div className="flex rounded-lg border border-app-border p-0.5">{(["grid", "list", ...(category === "image" ? ["masonry"] : [])] as AssetView[]).map((value) => { const Icon = value === "grid" ? LayoutGrid : value === "list" ? List : Columns3; return <button key={value} aria-label={t(`fileExplorer.views.${value}`)} aria-pressed={view === value} onClick={() => chooseView(value)} className={cn("rounded-md p-1.5", view === value && "bg-accent-primary/10 text-accent-primary")}><Icon size={17} /></button>; })}</div>
           <button className="text-xs text-tx-secondary" onClick={() => { setSelectionMode((previous) => !previous); setDetail(null); setSelected(new Set()); }}>{t("fileExplorer.select")}</button>
           {organization?.supported && <button aria-expanded={showFilters} className="text-xs text-accent-primary" onClick={() => setShowFilters((value) => !value)}>{t("assetOrganization.filters")}</button>}
+          {!Capacitor.isNativePlatform() && <><button disabled={loading || !(selection.length ? selection : items).some(file => file.canManage !== false)} onClick={() => setAIMode("organize")} className="text-xs text-accent-primary disabled:opacity-30">{t("assetAI.organize")}</button><button onClick={() => setAIMode("search")} className="text-xs text-accent-primary">{t("assetAI.search")}</button></>}
           {view === "masonry" && <input aria-label={t("fileExplorer.density")} type="range" min={130} max={260} step={10} value={density} onChange={(event) => setDensity(Number(event.target.value))} className="w-24" />}
         </div>
+        {Capacitor.isNativePlatform() && <p className="text-xs text-tx-secondary">{t("assetAI.nativeUnavailable")}</p>}
         {showFilters && organization?.supported && <AssetFilterPanel filters={assetFilters} tags={organization.tags} onChange={changeFilters} onSave={() => void saveSmartFolder()} onUpdate={smartFolder ? () => void saveSmartFolder(true) : undefined} onClear={() => navigate("all")} />}
       </header>
       <input ref={picker} type="file" multiple className="hidden" onChange={(event) => { queue.enqueue(Array.from(event.target.files || []), folderId); event.target.value = ""; }} />
@@ -311,6 +316,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
     </main>
     {detail && <AttachmentDetailDrawer embedded attachmentId={detail} onClose={closeDetail} onJumpToNote={jumpToNote} showDelete onAfterDelete={refresh} onAfterRename={refresh} onAfterMove={refresh} onAfterOrganize={refresh} onOpenAttachment={setDetail} onFindSimilar={setSimilar} />}
     {similar && <SimilarImages key={similar.id} source={similar} isCurrent={isCurrent} onClose={() => setSimilar(null)} onOpen={setDetail} />}
+    {aiMode && <Suspense fallback={null}><AssetAIDialog mode={aiMode} files={(selection.length ? selection : items).filter(file => file.canManage !== false).slice(0,50)} isCurrent={isCurrent} onClose={() => setAIMode(null)} onApplied={() => { clearSelection(); refresh(); }} onOpen={setDetail} /></Suspense>}
     {batchRename && <BatchRenameDialog files={selection} isCurrent={isCurrent} onClose={() => setBatchRename(false)} onRenamed={() => { clearSelection(); refresh(); }} />}
     {(moveIds || moveFolder) && <FileMoveDialog ids={moveIds || []} folderToMove={moveFolder || undefined} expectedFolderIds={moveIds ? Object.fromEntries(items.filter((item) => moveIds.includes(item.id)).map((item) => [item.id, item.folderId])) : undefined} onClose={() => { setMoveIds(null); setMoveFolder(null); }} onMoved={() => { clearSelection(); refresh(); }} />}
     {nameDialog && <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 p-4"><form role="dialog" aria-modal="true" aria-label={t(nameDialog.id || nameDialog.file ? "attachmentDetail.rename" : "fileManager.newFolder")} onSubmit={(event) => { event.preventDefault(); void saveName(); }} onKeyDown={(event) => { if (event.key === "Escape" && !saving) setNameDialog(null); }} className="w-full max-w-sm rounded-xl border border-app-border bg-app-elevated p-4 shadow-xl"><h2 className="text-sm font-semibold">{t(nameDialog.id || nameDialog.file ? "attachmentDetail.rename" : "fileManager.newFolder")}</h2><input autoFocus aria-label={t("fileManager.folderName")} value={nameDialog.name} maxLength={nameDialog.file ? 255 : 100} onChange={(event) => setNameDialog({ ...nameDialog, name: event.target.value })} className="mt-4 w-full rounded-lg border border-app-border bg-app-surface p-2 text-sm" /><div className="mt-4 flex justify-end gap-3 text-sm"><button type="button" disabled={saving} onClick={() => setNameDialog(null)}>{t("common.cancel")}</button><button type="submit" disabled={saving || !nameDialog.name.trim()} className="text-accent-primary disabled:opacity-30">{t("attachmentDetail.save")}</button></div></form></div>}

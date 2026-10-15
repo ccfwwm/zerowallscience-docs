@@ -17,7 +17,7 @@ export function useFileToolDialog(onClose: () => void, busy = false) {
       } else if (event.key === "Tab" && element) {
         const choices = [
           ...element.querySelectorAll<HTMLElement>(
-            "button:not(:disabled), input:not(:disabled), [tabindex='0']",
+            "button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex='0']",
           ),
         ];
         const target = event.shiftKey ? choices.at(-1) : choices[0];
