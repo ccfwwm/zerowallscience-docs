@@ -358,7 +358,9 @@ nowen-note/
 
 ## 文档导航
 
-- [Nowen 官方帮助中心](https://nowen.cn/#/note)
+- [Nowen 官方网站](https://nowen.cn/)
+- [Nowen Note 多平台下载中心](https://nowen.cn/#/note/download)
+- [Nowen 官方帮助中心](https://nowen.cn/#/note/tutorials)
 - [仓库内教程索引](./docs/tutorials/README.md)
 - [MCP Server 安装与使用](./docs/tutorials/mcp.md)
 - [完整部署指南](./docs/deployment.md)
