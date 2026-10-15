@@ -61,6 +61,7 @@ Final local results (2026-10-15):
 | DCC mapping | 12 invariants, 150 references |
 | Backend DCC matrix, isolated serial runner | 17 suites, 246 passed, 0 failed |
 | Frontend DCC | 25 suites, 228 passed, 0 failed |
+| Additional protocol, bootstrap, readiness, old-subscription and folder repository suites | 8 suites, 98 passed |
 | Targeted explorer/conflict/subscription/folder/i18n suites | 5 suites, 54 passed |
 | Backend TypeScript; frontend TypeScript and production bundles | Passed |
 | Changed feature-source ESLint and diff whitespace check | Passed |
