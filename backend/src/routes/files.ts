@@ -1,3 +1,4 @@
+import { assetOrganizationWriteAvailable } from "../sync/assetOrganization";
 /**
  * 文件管理路由（/api/files）
  * ---------------------------------------------------------------------------
@@ -873,6 +874,7 @@ app.post("/batch-move", async (c) => {
   }
   const ids = [...new Set<string>(body.ids)];
   const db = getDb();
+  if(!assetOrganizationWriteAvailable(db,userId)) return c.json({error:"请先完成附件目录同步后再移动文件",code:"ATTACHMENT_FOLDER_SYNC_NOT_READY"},409);
   const outcome = db.transaction(() => {
     const folder = body.folderId === null ? null : db.prepare(
       "SELECT id, name FROM attachment_folders WHERE id = ? AND userId = ?",
@@ -1300,6 +1302,7 @@ app.post("/upload", requireWorkspaceFeature("files"), async (c) => {
   const db = getDb();
   // 校验 folderId（如果提供）
   if (folderId) {
+    if(!assetOrganizationWriteAvailable(db,userId)) return c.json({error:"请先完成附件目录同步后再指定上传目录",code:"ATTACHMENT_FOLDER_SYNC_NOT_READY"},409);
     if (scope.workspaceId) return c.json({ error: "工作区文件不能上传到个人文件夹", code: "FILE_SCOPE_MISMATCH" }, 409);
     const folder = db
       .prepare("SELECT id FROM attachment_folders WHERE id = ? AND userId = ?")

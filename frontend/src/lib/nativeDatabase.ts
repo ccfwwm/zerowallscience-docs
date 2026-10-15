@@ -35,12 +35,12 @@ type NativeDatabaseGlobal = typeof globalThis & {
   __nowenNoteNativeDatabaseState?: NativeDatabaseGlobalState;
 };
 
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 const DATABASE_PREFIX = "nowen_local_";
 
 const ENTITY_TYPE_CHECK = `
   'notebook', 'note', 'tag', 'note_tag', 'favorite', 'attachment',
-  'task', 'task_reminder', 'diary', 'mindmap', 'knowledge_tree_node'
+  'task', 'task_reminder', 'diary', 'mindmap', 'knowledge_tree_node', 'attachment_organization'
 `;
 
 const SCOPE_CHECK = `
@@ -135,6 +135,15 @@ const MOBILE_MODULE_SCHEMA_STATEMENTS = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_native_mindmap_folders_scope_parent
     ON mindmap_folders(scopeKey, parentId, sortOrder)`,
+] as const;
+
+const ASSET_SYNC_SCHEMA_STATEMENTS = [
+  `CREATE TABLE IF NOT EXISTS native_asset_metadata (
+    id TEXT PRIMARY KEY,userId TEXT NOT NULL,version INTEGER NOT NULL,payload TEXT NOT NULL
+  )`,
+  `CREATE TABLE IF NOT EXISTS mobile_local_attachment_folders (
+    id TEXT PRIMARY KEY,userId TEXT NOT NULL,name TEXT NOT NULL,parentId TEXT,createdAt TEXT NOT NULL,updatedAt TEXT NOT NULL
+  )`,
 ] as const;
 
 // Structural metadata only. This table is never evidence of ACL/password access
@@ -279,6 +288,8 @@ const SCHEMA_V1_STATEMENTS = [
     mimeType TEXT NOT NULL,
     size INTEGER NOT NULL CHECK (size >= 0),
     localPath TEXT,
+    folderId TEXT,
+    assetTrashedAt TEXT,
     hash TEXT,
     available INTEGER NOT NULL DEFAULT 0 CHECK (available IN (0, 1)),
     transferStatus TEXT NOT NULL DEFAULT 'remote' CHECK (
@@ -567,7 +578,7 @@ const SYNC_OUTBOX_V2_STATEMENTS = [
   ) SELECT
     id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,
     baseVersion,payload,status,retryCount,lastAttemptAt,lastError,createdAt
-  FROM sync_outbox`,
+  FROM sync_outbox ORDER BY rowid`,
   "DROP TABLE sync_outbox",
   "ALTER TABLE sync_outbox_v2 RENAME TO sync_outbox",
   `CREATE INDEX idx_native_sync_outbox_pending
@@ -605,7 +616,7 @@ const SYNC_CONFLICTS_V2_STATEMENTS = [
   ) SELECT
     id,profileId,scopeKey,entityType,entityId,localVersion,remoteVersion,
     basePayload,localPayload,remotePayload,status,createdAt,resolvedAt
-  FROM sync_conflicts`,
+  FROM sync_conflicts ORDER BY rowid`,
   "DROP TABLE sync_conflicts",
   "ALTER TABLE sync_conflicts_v2 RENAME TO sync_conflicts",
   `CREATE INDEX idx_native_sync_conflicts_unresolved
@@ -735,6 +746,7 @@ class NativeDatabaseImpl implements NativeDatabase {
             await this.raw.execute(statement, false);
           }
           await executeSchemaStatements(this.raw, KNOWLEDGE_TREE_SCHEMA_STATEMENTS);
+          await executeSchemaStatements(this.raw, ASSET_SYNC_SCHEMA_STATEMENTS);
           await upgradeTaskRecurrence(this.raw);
           await executeSchemaStatements(this.raw, NATIVE_TASK_DELETION_STATEMENTS);
           for (const statement of NATIVE_ENCRYPTED_NOTE_GUARDS) await this.raw.execute(statement, false);
@@ -783,7 +795,7 @@ class NativeDatabaseImpl implements NativeDatabase {
             await this.raw.execute("ALTER TABLE tasks ADD COLUMN archivedAt TEXT", false);
           }
         }
-        if (version < 7) {
+        if (version < 11) {
           // Preserve mutation IDs, payloads, retries and conflict history while
           // widening the entity CHECK. Both rebuilds share the migration TX.
           await executeSchemaStatements(this.raw, SYNC_OUTBOX_V2_STATEMENTS);
@@ -793,6 +805,13 @@ class NativeDatabaseImpl implements NativeDatabase {
           await upgradeTaskRecurrence(this.raw);
         }
         if (version < 10) await executeSchemaStatements(this.raw, NATIVE_TASK_DELETION_STATEMENTS);
+        if (version < 11) {
+          await executeSchemaStatements(this.raw, ASSET_SYNC_SCHEMA_STATEMENTS);
+          const columns = await this.raw.query("PRAGMA table_info(attachments)");
+          for (const column of ["folderId", "assetTrashedAt"]) if (!columns.values?.some((row: {name:string})=>row.name===column)) {
+            await this.raw.execute(`ALTER TABLE attachments ADD COLUMN ${column} TEXT`,false);
+          }
+        }
         await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
       });
     });

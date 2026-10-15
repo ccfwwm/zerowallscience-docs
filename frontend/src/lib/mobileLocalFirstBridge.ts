@@ -1,3 +1,4 @@
+import { getCurrentWorkspace } from "./api.impl";
 import { api, getBaseUrl } from "./api";
 import { newLocalId } from "./localRepository";
 import type { NativeLocalRepository } from "./nativeLocalRepository";
@@ -94,11 +95,12 @@ export function installMobileLocalFirstBridge(
   const restoreAdvancedTaskBridge = deviceOnlyMode
     ? installMobileLocalAdvancedTaskBridge(db, userId)
     : () => undefined;
-  // 附件文件夹目前不是 Sync V2 实体；只在纯设备模式使用本地增量 schema，
-  // 避免登录态产生“本地 folderId 成功、远端没有对应文件夹”的数据分叉。
-  const restoreAttachmentFolderBridge = deviceOnlyMode
-    ? installMobileLocalAttachmentFolderBridge(db, userId)
-    : () => undefined;
+  const restoreAttachmentFolderBridge = installMobileLocalAttachmentFolderBridge(db,userId,deviceOnlyMode?undefined:{
+    onCommitted: () => { void repository.sync.requestSync(); }, assertActive: () => {
+      assertActive();
+      if(getCurrentWorkspace()!=="personal") throw Object.assign(new Error("工作区暂不支持附件目录整理"),{code:"WORKSPACE_ATTACHMENT_FOLDER_UNSUPPORTED"});
+    },
+  });
   // 块索引 / 反链 / 关系图都是 notes.content 的派生数据。纯设备模式直接从本地权威
   // 内容计算，彻底阻断编辑器侧栏对 /blocks、/backlinks、Yjs release-room 的请求。
   const restoreNoteRelationsBridge = deviceOnlyMode
@@ -118,24 +120,6 @@ export function installMobileLocalFirstBridge(
     // SiteSettingsProvider 会把自定义字体 id 自动降级为默认字体。
     target.getFonts = async () => [];
     target.getFontsPublic = async () => [];
-  } else {
-    // 登录后的 Android 仍以 Native Repository 作为附件数据源，但 attachment_folder
-    // 尚未进入 Sync V2 实体注册表。如果这里继续保留服务端 create/rename/remove，
-    // 就会出现“远端创建了 folderId，本地附件却引用另一份库”的静默数据分叉。
-    // 因此在同步能力补齐前必须 fail-closed，而不是让 UI 看似成功。
-    const unsupportedAttachmentFolders = async () => {
-      const error = Object.assign(
-        new Error("Android 登录同步模式暂不支持附件文件夹；请切换到‘仅此设备’后使用该功能"),
-        { code: "MOBILE_SYNC_ATTACHMENT_FOLDER_UNSUPPORTED" },
-      );
-      throw error;
-    };
-    target.attachmentFolders.list = async () => ({ folders: [], supported: false, code: "MOBILE_SYNC_ATTACHMENT_FOLDER_UNSUPPORTED" });
-    target.attachmentFolders.create = unsupportedAttachmentFolders;
-    target.attachmentFolders.rename = unsupportedAttachmentFolders;
-    target.attachmentFolders.remove = unsupportedAttachmentFolders;
-    target.attachmentFolders.move = unsupportedAttachmentFolders;
-    target.files.move = unsupportedAttachmentFolders;
   }
 
   target.getWorkspaces = async (): Promise<Workspace[]> => repository.listWorkspaces();

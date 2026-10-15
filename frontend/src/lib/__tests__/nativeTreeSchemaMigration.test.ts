@@ -42,7 +42,7 @@ beforeEach(() => {
   fixture.raw.exec("PRAGMA foreign_keys=ON");
   const source = readFileSync(new NodeURL("../nativeDatabase.ts",import.meta.url),"utf8");
   const scope = source.match(/const SCOPE_CHECK = `([\s\S]*?)`;/)![1];
-  const types = source.match(/const ENTITY_TYPE_CHECK = `([\s\S]*?)`;/)![1].replace(", 'knowledge_tree_node'","");
+  const types = source.match(/const ENTITY_TYPE_CHECK = `([\s\S]*?)`;/)![1].replace(", 'knowledge_tree_node'","").replace(", 'attachment_organization'","");
   for (const [,sql] of source.matchAll(/`(CREATE TABLE IF NOT EXISTS [\s\S]*?)`/g)) {
     fixture.raw.exec(sql.replaceAll("${SCOPE_CHECK}",scope).replaceAll("${ENTITY_TYPE_CHECK}",types));
   }
@@ -61,7 +61,7 @@ it("migrates schema 6 queues without losing mutation identity, retries, versions
   const db = await openNativeDatabase("tree-migration-fixture");
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
   expect(fixture.raw.prepare("SELECT * FROM sync_conflicts").all()).toEqual(history);
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 10});
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 11});
   await db.run(`INSERT INTO sync_outbox(id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,createdAt)
     VALUES ('tree','tree-mutation','p','d','personal','knowledge_tree_node','note:n','upsert','now')`);
   expect(fixture.raw.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -82,7 +82,7 @@ it("upgrades schema 7 task recurrence and caches confirmed batches without overw
   fixture.raw.exec("PRAGMA user_version=7; INSERT INTO tasks(id,userId,title,createdAt,updatedAt) VALUES ('old','local','Preserved','now','now')");
   const before = fixture.raw.prepare("SELECT * FROM sync_outbox").all();
   const db = await openNativeDatabase("task-composer-fixture");
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 10 });
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 11 });
   expect(fixture.raw.prepare("SELECT title,repeatRule FROM tasks WHERE id='old'").get()).toEqual({ title: "Preserved", repeatRule: "none" });
   const task = { id: "confirmed", workspaceId: null, userId: "remote", title: "Daily study", description: "Practice", priority: 2, isCompleted: 0, dueDate: "2026-12-31", dueAt: "2026-12-31T09:00", repeatRule: "daily", repeatInterval: 1, repeatEndCount: 7, createdAt: "now", updatedAt: "now" } as Task;
   await cacheConfirmedNativeTasks(db, "local", [task], [{ id: "remote-project", userId: "remote", workspaceId: null, name: "Server project", icon: "", color: "#123456", sortOrder: 0, createdAt: "now", updatedAt: "now" }]);
@@ -136,7 +136,7 @@ it("upgrades schema 7 task rows without inventing archives or losing pending mut
   const db=await openNativeDatabase("task-migration-fixture");
   expect(fixture.raw.prepare("SELECT * FROM tasks").get()).toEqual({...task,archivedAt:null,...Object.fromEntries(NATIVE_TASK_REPEAT_FIELDS.map((field,index) => [field,nativeTaskRepeatValues({})[index]]))});
   expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(outbox);
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 10});
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version: 11});
   await db.close();
 });
 
@@ -147,7 +147,7 @@ it("upgrades lifecycle schema 8 with recurrence while preserving archives and pe
     VALUES ('archived','local','Preserved archive',1,'done','archive-time','created','updated')`);
   const before = fixture.raw.prepare("SELECT * FROM sync_outbox").all();
   const db = await openNativeDatabase("lifecycle-v8-fixture");
-  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 10 });
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({ user_version: 11 });
   expect(fixture.raw.prepare("SELECT title,archivedAt,repeatRule,repeatInterval FROM tasks WHERE id='archived'").get()).toEqual({
     title: "Preserved archive", archivedAt: "archive-time", repeatRule: "none", repeatInterval: 1,
   });
@@ -214,4 +214,31 @@ it("a late confirmed recurrence response cannot recreate a locally deleted serie
   await cacheConfirmedNativeTasks(db,"u",[stale,{...stale,id:"late",repeatGroupId:"root"}]);
   expect(await db.query("SELECT id FROM tasks WHERE repeatGroupId='root'")).toEqual([]);
   await db.close();
+});
+
+it("upgrades schema 10 asset queues and preserves existing local folders before binding sync",async()=>{
+  const {installMobileLocalAttachmentFolderBridge}=await import("../mobileLocalAttachmentFolderBridge");
+  const {NATIVE_ASSET_ENTITY_SET,nativeAssetBindingKey}=await import("../nativeAssetOrganization");
+  fixture.raw.exec(`PRAGMA user_version=10;
+    INSERT INTO mobile_local_attachment_folders(id,userId,name,parentId,createdAt,updatedAt) VALUES ('preserved','u','Preserved folder',NULL,'now','now');`);
+  const before=fixture.raw.prepare("SELECT * FROM sync_outbox").all();
+  const db=await openNativeDatabase("asset-upgrade-account");
+  expect(fixture.raw.prepare("PRAGMA user_version").get()).toEqual({user_version:11});
+  expect(fixture.raw.prepare("SELECT * FROM sync_outbox").all()).toEqual(before);
+  let active=true;const onCommitted=vi.fn();
+  const restore=installMobileLocalAttachmentFolderBridge(db,"u",{onCommitted,assertActive:()=>{if(!active) throw new Error("Session changed");}});
+  try{
+    await expect(api.attachmentFolders.create("Unbound")).rejects.toMatchObject({code:"MOBILE_SYNC_ATTACHMENT_FOLDER_UNSUPPORTED"});
+    expect(fixture.raw.prepare("SELECT COUNT(*) AS count FROM mobile_local_attachment_folders").get()?.count).toBe(1);
+    await db.run("INSERT INTO native_runtime_meta(key,value,updatedAt) VALUES (?,?,'now')",[nativeAssetBindingKey("p"),NATIVE_ASSET_ENTITY_SET]);
+    const folder=await api.attachmentFolders.create("Synced child","preserved");
+    const queued=await db.query<{payload:string}>("SELECT payload FROM sync_outbox WHERE entityType='attachment_organization'");
+    expect(queued).toHaveLength(1);expect(JSON.parse(queued[0].payload)).toMatchObject({id:`folder:${folder.id}`,parentId:"preserved",userId:"u",name:"Synced child"});
+    await db.run("CREATE TRIGGER asset_enqueue_failure BEFORE INSERT ON sync_outbox WHEN NEW.entityType='attachment_organization' BEGIN SELECT RAISE(ABORT,'asset enqueue failure'); END");
+    await expect(api.attachmentFolders.rename(folder.id,"Must roll back")).rejects.toThrow("asset enqueue failure");
+    expect(await db.query("SELECT name FROM mobile_local_attachment_folders WHERE id=?",[folder.id])).toEqual([{name:"Synced child"}]);
+    expect(onCommitted).toHaveBeenCalledTimes(1);
+    active=false;await expect(api.attachmentFolders.remove(folder.id)).rejects.toThrow("Session changed");
+    expect(await db.query("SELECT name FROM mobile_local_attachment_folders WHERE id='preserved'")).toEqual([{name:"Preserved folder"}]);
+  }finally{restore();await db.close();}
 });

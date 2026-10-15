@@ -1,3 +1,4 @@
+import { assetOrganizationWriteAvailable } from "../sync/assetOrganization";
 import { Hono } from "hono";
 import { getDb } from "../db/schema";
 import { v4 as uuid } from "uuid";
@@ -14,6 +15,9 @@ app.use("*", async (c, next) => {
     if (c.req.method === "GET") return c.json({ folders: [], supported: false, code: "WORKSPACE_ATTACHMENT_FOLDER_UNSUPPORTED" });
     return c.json({ error: "工作区暂不支持文件夹整理", code: "WORKSPACE_ATTACHMENT_FOLDER_UNSUPPORTED" }, 409);
   }
+  if(c.req.method!=="GET" && !assetOrganizationWriteAvailable(getDb(),c.req.header("X-User-Id")!)) {
+    return c.json({error:"请先连接支持附件目录同步的服务器并完成首次同步",code:"ATTACHMENT_FOLDER_SYNC_NOT_READY"},409);
+  }
   await next();
 });
 
@@ -24,7 +28,7 @@ app.get("/", (c) => {
     WHERE trashedAt IS NULL AND userId = ? AND workspaceId IS NULL AND folderId IS NOT NULL GROUP BY folderId`)
     .all(userId) as Array<{ folderId: string; count: number }>;
   const countMap = new Map(counts.map((r) => [r.folderId, r.count]));
-  return c.json({ supported: true, folders: attachmentFoldersRepository.listByUser(userId)
+  return c.json({ supported: assetOrganizationWriteAvailable(db,userId), folders: attachmentFoldersRepository.listByUser(userId)
     .map((f) => ({ ...f, fileCount: countMap.get(f.id) || 0 })) });
 });
 

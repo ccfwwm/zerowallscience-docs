@@ -1,11 +1,11 @@
+import type Database from "better-sqlite3";
 import { getDb } from "../db/schema";
 
 let schemaReadyFor: ReturnType<typeof getDb> | null = null;
 
 // Like file_shares, this is a policy on the serving instance, not note content.
 // An absent row preserves existing files' sharing behavior.
-export function ensureAttachmentLinkPolicyTable(): void {
-  const db = getDb();
+export function ensureAttachmentLinkPolicyTable(db: Database.Database = getDb()): void {
   if (schemaReadyFor === db) return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS attachment_link_policies (
@@ -25,9 +25,9 @@ export function isAttachmentExternalAccessEnabled(attachmentId: string): boolean
   return row?.externalAccessEnabled !== 0;
 }
 
-export function setAttachmentExternalAccessEnabled(attachmentId: string, enabled: boolean): void {
-  ensureAttachmentLinkPolicyTable();
-  getDb().prepare(`
+export function setAttachmentExternalAccessEnabled(attachmentId: string, enabled: boolean, db: Database.Database = getDb()): void {
+  ensureAttachmentLinkPolicyTable(db);
+  db.prepare(`
     INSERT INTO attachment_link_policies (attachmentId, externalAccessEnabled) VALUES (?, ?)
     ON CONFLICT(attachmentId) DO UPDATE SET externalAccessEnabled = excluded.externalAccessEnabled
   `).run(attachmentId, enabled ? 1 : 0);
