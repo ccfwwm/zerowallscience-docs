@@ -28,7 +28,14 @@ beforeEach(()=>{
   state.aiPreview.mockResolvedValue(plan());state.aiConfirm.mockResolvedValue({updated:1});state.aiSearch.mockResolvedValue({matches:[],examined:100,nextAfter:"after-100",metadataOnly:true});
   host=document.createElement("div");document.body.append(host);root=createRoot(host);
 });
-afterEach(async()=>{await act(async()=>root.unmount());host.remove();});
+afterEach(async()=>{await act(async()=>root.unmount());host.remove();vi.unstubAllGlobals();});
+
+it("generates and confirms on HTTP origins without crypto.randomUUID",async()=>{
+  vi.stubGlobal("crypto",{getRandomValues:globalThis.crypto.getRandomValues.bind(globalThis.crypto)});
+  await render();await consent();await click("assetAI.generate");await click("assetAI.confirm");
+  expect(state.aiConfirm).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/),expect.any(Array));
+  expect(applied).toHaveBeenCalledOnce();
+});
 
 it("requires metadata consent and keeps generation separate from confirmed writes",async()=>{
   await render();expect(button("assetAI.generate").disabled).toBe(true);expect(state.aiPreview).not.toHaveBeenCalled();

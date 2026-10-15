@@ -2,7 +2,7 @@
 
 Date: 2026-10-15. Branch: `codex/files-assets-phase-e`.
 Base: `6ba628f3`, the current release branch after the user merged CI repair PR #855.
-Target: `release/v1.5.2`. Neither this record nor local verification means merged or released.
+Target: `release/v1.5.2`. PR [#856](https://github.com/cropflre/nowen-note/pull/856) was subsequently merged as `36da7ddf`; no release is implied.
 
 ## Delivered scope
 
@@ -57,3 +57,14 @@ frontend: NOWEN_FILES_AI_QA=1 npx playwright test --config playwright.files-asse
 CI is authoritative for its exact head; final results and links are recorded in the PR. No real paid provider, model quality benchmark, installed Electron package, physical device, production object storage, physical disconnect or production PostgreSQL acceptance was performed.
 
 Additional baseline probe: the legacy FileOrganization.test.tsx has 5 failing assertions and missing getServerUrl mock errors both on the unchanged pre-E CI branch and on this branch. Its flat move-selector expectations and incomplete old API mocks predate E. The other three probed suites passed (11 tests total across this probe). This is not counted as a passing full frontend suite or repaired by this feature.
+
+## Follow-up, 2026-10-16
+
+Branch: `codex/files-assets-phase-e-followup`, based on merged `36da7ddf`.
+
+- The application already installs a `randomUUID` fallback in `androidCompat.ts`; the direct dialog call alone does not prove an HTTP LAN outage. The dialog now uses the existing `newLocalId` helper. A unit regression and the production-app browser flow remove `randomUUID` independently of the startup polyfill and verify preview, confirmation and semantic search.
+- The original encrypted CI failed once and passed on one rerun. Investigation used a deterministic held REST response rather than weakening assertions. The browser fixture lacked production `EditorPane` ACK handling. After aligning that handling, the held response still reproduced lost input in the actual rich-text editor: deferred initialization left the synchronized note ID unset, so the first ACK was treated as a note switch. The sync effect now also runs when the editor instance becomes ready.
+- The strengthened browser regression edits an encrypted region while an earlier successful response is held, releases that response, checks exact server ciphertext, reloads the note and decrypts the latest body. Existing plaintext-leak scans remain in place. The Markdown/rich-text conversion cases passed three repetitions (6 tests).
+- Local validation: 51 file AI/UI/transport/i18n tests; 100 editor/save/conflict tests; all 41 encrypted browser tests; production-app AI browser flow with the ID fallback; frontend DCC 233; application and benchmark/browser TypeScript; production build, bundle budget and lint baseline (1444 historical / zero new diagnostics). Backend source, migrations and synchronization protocols are unchanged by this follow-up.
+- Phase E CI on `36da7ddf` included actual PostgreSQL 16 storage migration (1 passed, zero skipped), backend AI and production-app browser jobs. The follow-up PR records its own exact-head CI separately. Installed applications, physical devices, paid model quality and production storage remain unverified.
+- Follow-up CI initially reached the file navigation before the initial editor was ready and timed out waiting for selection controls. The AI browser flow now uses the same initial-editor readiness assertion as the other file-center flows; all three local repetitions passed. No sleep, retry loop or relaxed business assertion was added.
