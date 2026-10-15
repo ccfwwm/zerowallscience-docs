@@ -15,6 +15,8 @@ test("Phase E real app: consent, editable dry run, subset confirmation and metad
   const chosen=before.items.slice(0,2) as Array<{id:string;filename:string;folderId:string|null}>;
   const errors:string[]=[];page.on("pageerror",error=>errors.push(error.message));
   await page.goto("/");
+  // Like the other file-center flows, wait for initial note/workspace restoration.
+  await expect(page.getByRole("button",{name:"插入加密内容",exact:true})).toBeVisible();
   await page.getByRole("button",{name:"文件管理",exact:true}).click();
   await page.getByRole("button",{name:"选择文件",exact:true}).click();
   for(const file of chosen) await page.getByRole("button",{name:file.filename,exact:true}).click();
