@@ -3,6 +3,7 @@ import { useTranslation } from "react-i18next";
 import { api, getCurrentWorkspace } from "@/lib/api";
 import { useFileToolDialog } from "@/hooks/useFileToolDialog";
 import { folderPath } from "@/lib/fileExplorerModel";
+import { newLocalId } from "@/lib/localRepository";
 import type { AssetAIPreview, AssetAISearch, AssetAISuggestion } from "@/lib/assetAI";
 
 export default function AssetAIDialog({ mode, files, isCurrent, onClose, onApplied, onOpen }: {
@@ -21,7 +22,7 @@ export default function AssetAIDialog({ mode, files, isCurrent, onClose, onAppli
   const [search,setSearch] = useState<AssetAISearch | null>(null);
   const [searchedQuery,setSearchedQuery] = useState("");
   const controller = useRef<AbortController>();
-  const requestId = useRef(crypto.randomUUID());
+  const requestId = useRef(newLocalId());
   const attempt = useRef<{requestId:string;items:AssetAISuggestion[]} | null>(null);
   const dialog = useFileToolDialog(onClose,busy);
   const canMove = !getCurrentWorkspace() || getCurrentWorkspace() === "personal";
@@ -45,7 +46,7 @@ export default function AssetAIDialog({ mode, files, isCurrent, onClose, onAppli
         setPreview(null); attempt.current = null;
         const result = await api.files.organization.aiPreview(source.map(file => file.id),i18n.language.startsWith("zh") ? "zh-CN" : "en",controller.current.signal);
         if (!isCurrent()) return;
-        setPreview(result); setIncluded(new Set(result.items.map(item => item.id))); setTagDrafts(Object.fromEntries(result.items.map(item => [item.id,item.tags.join(", ")]))); requestId.current = crypto.randomUUID();
+        setPreview(result); setIncluded(new Set(result.items.map(item => item.id))); setTagDrafts(Object.fromEntries(result.items.map(item => [item.id,item.tags.join(", ")]))); requestId.current = newLocalId();
       }
     } catch (failure) { if (isCurrent() && !controller.current?.signal.aborted) report(failure); }
     finally { if (isCurrent()) setBusy(false); }

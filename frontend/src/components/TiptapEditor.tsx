@@ -3422,7 +3422,8 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
     if (titleRef.current && !isTitleComposingRef.current) {
       titleRef.current.value = note.title;
     }
-  }, [note.id, note.content]);
+  }, [editor, note.id, note.content]);
+  // editor 首次就绪时也要登记笔记身份，避免首个本地 ACK 被误判为切换笔记。
   //   ^^^^^^^^^^^^^^^^^^^^^^
   //   依赖含 content 的完整语义（更新版）：
   //
