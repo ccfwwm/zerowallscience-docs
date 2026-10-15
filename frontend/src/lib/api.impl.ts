@@ -1,4 +1,4 @@
-import type { AssetFilters, AssetTag, AssetSmartFolder, AssetOrganization } from "@/types";
+import type { AssetFilters, AssetTag, AssetSmartFolder, AssetOrganization, SimilarImageResult, FileRenameItem } from "@/types";
 import { getOfflineQueueStorageKey } from "./offlineScope";
 import { withConversionRequestLease } from "./encryptedNotes/conversionBarrier";
 import { ConversionCleanupError } from "./encryptedNotes/conversionCoordination";
@@ -3376,6 +3376,21 @@ export const api = {
   // note 兜底外键约束，用户看到的只是"未归档文件"。
   //
   files: {
+    tools: {
+      similar: (id: string, after?: string, signal?: AbortSignal) => {
+        const qs = new URLSearchParams();
+        const workspace = getCurrentWorkspace();
+        if (workspace && workspace !== "personal") qs.set("workspaceId", workspace);
+        if (after) qs.set("after", after);
+        return request<SimilarImageResult>(`/files/tools/similar/${encodeURIComponent(id)}?${qs}`, { signal }).then((payload) => {
+          registerAttachmentAccessResponse(payload); return payload;
+        });
+      },
+      batchRename: (items: FileRenameItem[]) => {
+        const workspace = getCurrentWorkspace();
+        return request<{ success: boolean; renamed: number }>(`/files/tools/batch-rename${workspace && workspace !== "personal" ? `?workspaceId=${encodeURIComponent(workspace)}` : ""}`, { method: "POST", body: JSON.stringify({ items }) });
+      },
+    },
     organization: {
       list: (params: { q?: string; tagPage?: number; smartPage?: number } = {}) => request<AssetOrganization>(fileOrganizationPath("", params)),
       get: (id: string) => request<{ tags: AssetTag[]; duplicates: Array<{id: string; filename: string}>; canManage: boolean }>(fileOrganizationPath(`/assets/${encodeURIComponent(id)}`)),

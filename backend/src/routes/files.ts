@@ -86,10 +86,12 @@ import { hasKnowledgeCapability, resolveResourceKnowledgeAccess } from "../servi
 import attachmentTrash from "./attachment-trash";
 import { retainAttachmentInTrash } from "../services/attachment-trash";
 import assetOrganization from "./asset-organization.js";
+import assetVisualTools from "./asset-visual-tools";
 
 const app = new Hono();
 app.route("/organization", assetOrganization);
 app.route("/trash", attachmentTrash);
+app.route("/tools", assetVisualTools);
 
 // ---------------------------------------------------------------------------
 // 共用工具

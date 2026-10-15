@@ -376,6 +376,15 @@ export interface FileListResponse {
   pageSize: number;
 }
 
+export interface SimilarImageResult {
+  matches: Array<{ id: string; filename: string; size: number; distance: number }>;
+  examined: number;
+  skipped: number;
+  nextAfter: string | null;
+  accessUrls: Record<string, string>;
+}
+export interface FileRenameItem { id: string; filename: string; expectedFilename: string }
+
 export interface FileStats {
   total: number;
   totalBytes: number;

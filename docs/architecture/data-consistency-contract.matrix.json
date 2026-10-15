@@ -23,6 +23,7 @@
       "title": "本地业务写入与 Outbox 变更应在持久化后可恢复",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/asset-visual-tools.test.ts", "case": "batch rename captures existing attachment mutations atomically and rolls back names and Outbox on failure" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset folder enqueue failure rolls back the business row and retains existing mutations" },
         {
           "file": "backend/tests/task-composer.test.ts",
@@ -169,6 +170,7 @@
       "title": "跨账号跨服务端 Outbox 不得串用",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/asset-visual-tools.test.ts", "case": "visual search rejects foreign anchors, scope forgery, nonmembers and unreadable files" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset metadata is invisible to old clients and cannot cross accounts or workspace scopes" },
         {
           "file": "frontend/src/lib/__tests__/taskComposerApi.test.ts",

@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **files / Phase D4**：新增当前权限范围内的分批相似图片搜索，以及预览确认、原名称冲突校验和整批事务回滚的编号重命名；保留附件身份、下载地址、字节和引用。Add local visual comparison and transactional numbered batch rename with explicit scan coverage and stale-name protection. Native 两项操作暂不支持；无迁移或 Sync V2 协议变化，独立分支待验收，尚未合并或发布，见 [使用说明](./docs/user/file-visual-organization.md) 和 [实际验收](./docs/qa/files-assets-center-v2/phase-d-visual-tools.md)。
+
 - **calendar / mobile**：修复移动端选择日记日期后内容横向偏移；区分按修改日期筛选的笔记日历与按发布时间浏览的瞬间日历，统一本地日期、月份边界和瞬间时间显示，避免凌晨记录的徽章与筛选结果不一致。Fix touch date-picker layout shifts, distinguish note modified dates from moment published dates, and align local-day filtering, month bounds and displayed times. 不重写导入历史时间；手机重复登录的现场原因仍待核查，见 [验证记录](./docs/qa/v1.5.2/calendar-mobile-recovery.md)。Imported timestamps are preserved; repeated sign-in in the reported phone environment remains unconfirmed.
 
 - **files / Phase D3**：新增个人附件目录和文件位置的协商同步；离线操作原子入队、独立版本冲突、ACK 重试与删除墓碑保护。Add negotiated personal folder/location sync across desktop SQLite, Native SQLite and the server, preserving attachment identities and conflict history. SQLite v129 / Native schema v12；独立分支待验收，尚未合并或发布，见 [说明](./docs/user/file-folder-sync.md) 与 [验收](./docs/qa/files-assets-center-v2/phase-d-folder-sync.md)。

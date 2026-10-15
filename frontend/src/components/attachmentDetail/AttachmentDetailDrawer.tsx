@@ -95,6 +95,7 @@ export interface AttachmentDetailDrawerProps {
   embedded?: boolean;
   onAfterOrganize?: () => void;
   onOpenAttachment?: (id: string) => void;
+  onFindSimilar?: (file: FileDetail) => void;
   attachmentId: string | null;
   onClose: () => void;
   onJumpToNote?: (noteId: string) => void;
@@ -116,6 +117,7 @@ export default function AttachmentDetailDrawer({
   onAfterMove,
   onAfterOrganize,
   onOpenAttachment,
+  onFindSimilar,
   showDelete = false,
   isImageHostMode = false,
   extraHeaderActions,
@@ -511,6 +513,7 @@ export default function AttachmentDetailDrawer({
               </div>
 
               <AssetTagEditor key={detail.id} ids={[detail.id]} onChanged={onAfterOrganize} onOpen={onOpenAttachment} />
+              {detail.category === "image" && onFindSimilar && <button className="rounded border border-app-border px-3 py-2 text-sm text-accent-primary hover:bg-app-hover" onClick={() => onFindSimilar(detail)}>{t("assetTools.similar")}</button>}
 
               {isAutoCleanupProtected && (
                 <div className="flex items-start gap-2.5 rounded-lg border border-emerald-500/25 bg-emerald-500/5 px-3 py-2.5">

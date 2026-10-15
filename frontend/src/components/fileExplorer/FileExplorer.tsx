@@ -1,4 +1,6 @@
 import AssetTrash from "./AssetTrash";
+import SimilarImages from "./SimilarImages";
+import BatchRenameDialog from "./BatchRenameDialog";
 import { MOBILE_SYNC_APPLIED_EVENT } from "@/lib/mobileSyncStatus";
 import { explorerAssetFilters } from "@/lib/assetFilters";
 import AssetTagEditor from "./AssetTagEditor";
@@ -56,6 +58,8 @@ function FileExplorerContent({ scope }: { scope: string }) {
   const [showFilters, setShowFilters] = useState(false);
   const [smartFolder, setSmartFolder] = useState<AssetSmartFolder | null>(null);
   const [batchTags, setBatchTags] = useState(false);
+  const [batchRename, setBatchRename] = useState(false);
+  const [similar, setSimilar] = useState<{ id: string; filename: string } | null>(null);
   const [category, setCategory] = useState<AssetCategory>("all");
   const [folderId, setFolderId] = useState<string | null>(null);
   const [folders, setFolders] = useState<AssetFolder[]>([]);
@@ -108,6 +112,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
   const clearSelection = () => { setSelected(new Set()); anchor.current = null; setSelectionMode(false); setBatchTags(false); };
 
   useEffect(() => registerMobileBackHandler("sheet", () => {
+    if (similar || batchRename) return false;
     if (nameDialog) { if (!saving) setNameDialog(null); return true; }
     if (moveIds || moveFolder) return false; // The move modal owns its pending operation.
     if (menu) { setMenu(null); return true; }
@@ -118,7 +123,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
       setFolderId(parent); setPage(1); setSelected(new Set()); return true;
     }
     return false;
-  }), [detail, folderId, folders, menu, moveFolder, moveIds, nameDialog, saving, sidebar]);
+  }), [detail, folderId, folders, menu, moveFolder, moveIds, nameDialog, saving, sidebar, similar, batchRename]);
 
   useEffect(() => {
     const timer = setTimeout(() => { setQuery(input.trim()); setPage(1); setSelected(new Set()); }, 250);
@@ -250,7 +255,7 @@ function FileExplorerContent({ scope }: { scope: string }) {
 
   return <div ref={root} tabIndex={-1} className="relative flex h-full min-h-0 min-w-0 flex-1 bg-app-bg text-tx-primary" onKeyDown={(event) => {
     if (event.key !== "Escape") return;
-    if (nameDialog || moveIds || moveFolder) return;
+    if (nameDialog || moveIds || moveFolder || similar || batchRename) return;
     if (menu) { setMenu(null); return; }
     if (detail) { setDetail(null); return; }
     clearSelection(); if (window.innerWidth < 768) setSidebar(false);
@@ -299,17 +304,20 @@ function FileExplorerContent({ scope }: { scope: string }) {
           </div>
         </>}
       </div>
-      {selected.size > 0 && <div className="flex flex-wrap items-center gap-3 border-t border-app-border bg-app-elevated p-3 text-xs"><span>{t("fileExplorer.selected", { count: selected.size })}</span><button disabled={!folderSupport || !canManageSelection || saving} className="text-accent-primary disabled:opacity-30" onClick={() => setMoveIds([...selected])}>{t("fileManager.moveFiles")}</button><button onClick={async () => { try { for (const file of selection) await downloadAttachment(resolveAttachmentUrl(file.url), file.filename); } catch (failure: unknown) { toast.error(failure instanceof Error ? failure.message : String(failure)); } }}>{t("attachmentDetail.downloadFile")}</button><button className="text-red-500 disabled:opacity-30" disabled={!canManageSelection || saving} onClick={() => void deleteFiles([...selected])}>{t("assetTrash.move")}</button><button disabled={!organization?.supported || !canManageSelection || saving} className="text-accent-primary disabled:opacity-30" onClick={() => setBatchTags((value) => !value)}>{t("assetOrganization.batchTags")}</button><button onClick={clearSelection}>{t("common.cancel")}</button></div>}
+      {selected.size > 0 && <div className="flex flex-wrap items-center gap-3 border-t border-app-border bg-app-elevated p-3 text-xs"><span>{t("fileExplorer.selected", { count: selected.size })}</span><button disabled={!folderSupport || !canManageSelection || saving} className="text-accent-primary disabled:opacity-30" onClick={() => setMoveIds([...selected])}>{t("fileManager.moveFiles")}</button><button onClick={async () => { try { for (const file of selection) await downloadAttachment(resolveAttachmentUrl(file.url), file.filename); } catch (failure: unknown) { toast.error(failure instanceof Error ? failure.message : String(failure)); } }}>{t("attachmentDetail.downloadFile")}</button><button className="text-red-500 disabled:opacity-30" disabled={!canManageSelection || saving} onClick={() => void deleteFiles([...selected])}>{t("assetTrash.move")}</button><button disabled={!organization?.supported || !canManageSelection || saving} className="text-accent-primary disabled:opacity-30" onClick={() => setBatchTags((value) => !value)}>{t("assetOrganization.batchTags")}</button><button disabled={!canManageSelection || saving} className="text-accent-primary disabled:opacity-30" onClick={() => setBatchRename(true)}>{t("assetTools.rename")}</button><button onClick={clearSelection}>{t("common.cancel")}</button></div>}
       {batchTags && selected.size > 0 && <div className="max-h-64 overflow-auto border-t border-app-border p-3"><AssetTagEditor ids={[...selected]} onChanged={refresh} /></div>}
       <footer className="flex shrink-0 items-center justify-between border-t border-app-border px-4 py-2 text-xs text-tx-secondary"><span>{t("fileExplorer.fileCount", { count: total })} · {t("fileExplorer.page", { page, total: Math.max(1, Math.ceil(total / pageSize)) })}</span><div className="flex gap-3"><button disabled={page === 1 || loading} className="disabled:opacity-30" onClick={() => { setPage((previous) => previous - 1); clearSelection(); }}>{t("fileExplorer.previous")}</button><button disabled={page * pageSize >= total || loading} className="disabled:opacity-30" onClick={() => { setPage((previous) => previous + 1); clearSelection(); }}>{t("fileExplorer.next")}</button></div></footer>
       <FileUploadQueue queue={queue} onView={setDetail} onMove={(id) => setMoveIds([id])} />
     </main>
-    {detail && <AttachmentDetailDrawer embedded attachmentId={detail} onClose={closeDetail} onJumpToNote={jumpToNote} showDelete onAfterDelete={refresh} onAfterRename={refresh} onAfterMove={refresh} onAfterOrganize={refresh} onOpenAttachment={setDetail} />}
+    {detail && <AttachmentDetailDrawer embedded attachmentId={detail} onClose={closeDetail} onJumpToNote={jumpToNote} showDelete onAfterDelete={refresh} onAfterRename={refresh} onAfterMove={refresh} onAfterOrganize={refresh} onOpenAttachment={setDetail} onFindSimilar={setSimilar} />}
+    {similar && <SimilarImages key={similar.id} source={similar} isCurrent={isCurrent} onClose={() => setSimilar(null)} onOpen={setDetail} />}
+    {batchRename && <BatchRenameDialog files={selection} isCurrent={isCurrent} onClose={() => setBatchRename(false)} onRenamed={() => { clearSelection(); refresh(); }} />}
     {(moveIds || moveFolder) && <FileMoveDialog ids={moveIds || []} folderToMove={moveFolder || undefined} expectedFolderIds={moveIds ? Object.fromEntries(items.filter((item) => moveIds.includes(item.id)).map((item) => [item.id, item.folderId])) : undefined} onClose={() => { setMoveIds(null); setMoveFolder(null); }} onMoved={() => { clearSelection(); refresh(); }} />}
     {nameDialog && <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 p-4"><form role="dialog" aria-modal="true" aria-label={t(nameDialog.id || nameDialog.file ? "attachmentDetail.rename" : "fileManager.newFolder")} onSubmit={(event) => { event.preventDefault(); void saveName(); }} onKeyDown={(event) => { if (event.key === "Escape" && !saving) setNameDialog(null); }} className="w-full max-w-sm rounded-xl border border-app-border bg-app-elevated p-4 shadow-xl"><h2 className="text-sm font-semibold">{t(nameDialog.id || nameDialog.file ? "attachmentDetail.rename" : "fileManager.newFolder")}</h2><input autoFocus aria-label={t("fileManager.folderName")} value={nameDialog.name} maxLength={nameDialog.file ? 255 : 100} onChange={(event) => setNameDialog({ ...nameDialog, name: event.target.value })} className="mt-4 w-full rounded-lg border border-app-border bg-app-surface p-2 text-sm" /><div className="mt-4 flex justify-end gap-3 text-sm"><button type="button" disabled={saving} onClick={() => setNameDialog(null)}>{t("common.cancel")}</button><button type="submit" disabled={saving || !nameDialog.name.trim()} className="text-accent-primary disabled:opacity-30">{t("attachmentDetail.save")}</button></div></form></div>}
     {menu && <><button className="fixed inset-0 z-[110] cursor-default" aria-label={t("common.close")} onClick={() => setMenu(null)} /><div role="menu" className="fixed z-[111] w-52 rounded-lg border border-app-border bg-app-elevated p-1 text-sm shadow-xl" style={{ left: Math.max(4, menu.x), top: Math.max(4, menu.y) }}>
       {menu.file ? <>
         <MenuAction onClick={() => setDetail(menu.file!.id)} close={() => setMenu(null)}>{t("fileExplorer.preview")}</MenuAction>
+        {menu.file.category === "image" && <MenuAction onClick={() => setSimilar(menu.file!)} close={() => setMenu(null)}>{t("assetTools.similar")}</MenuAction>}
         <MenuAction onClick={() => { void downloadAttachment(resolveAttachmentUrl(menu.file!.url), menu.file!.filename).catch((failure: unknown) => toast.error(failure instanceof Error ? failure.message : String(failure))); }} close={() => setMenu(null)}>{t("attachmentDetail.downloadFile")}</MenuAction>
         {menu.file.canManage !== false && <><MenuAction onClick={() => setNameDialog({ file: menu.file, name: menu.file!.filename })} close={() => setMenu(null)}>{t("attachmentDetail.rename")}</MenuAction><MenuAction disabled={!folderSupport} onClick={() => setMoveIds([menu.file!.id])} close={() => setMenu(null)}>{t("fileManager.moveFiles")}</MenuAction></>}
         <MenuAction onClick={async () => { const link = new URL(`${getBaseUrl().replace(/\/+$/, "")}/attachments/${encodeURIComponent(menu.file!.id)}`, window.location.href).href; if (await copyText(link)) toast.success(t("fileExplorer.privateLinkCopied")); }} close={() => setMenu(null)}>{t("fileExplorer.copyPrivateLink")}</MenuAction>

@@ -1,4 +1,5 @@
 import { enAssetReliabilityTranslations, zhCNAssetReliabilityTranslations } from "./assetReliabilityTranslations";
+import { enAssetToolsTranslations, zhCNAssetToolsTranslations } from "./assetToolsTranslations";
 import { enAssetOrganizationTranslations, zhCNAssetOrganizationTranslations } from "./assetOrganizationTranslations";
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
@@ -88,6 +89,7 @@ const zhCNWithReleaseTranslations = mergeTranslationPatches(
   zhCNFileExplorerTranslations,
   zhCNAssetOrganizationTranslations,
   zhCNAssetReliabilityTranslations,
+  zhCNAssetToolsTranslations,
   zhCNTaskRemovalTranslations,
 );
 
@@ -110,6 +112,7 @@ const enWithReleaseTranslations = mergeTranslationPatches(
   enFileExplorerTranslations,
   enAssetOrganizationTranslations,
   enAssetReliabilityTranslations,
+  enAssetToolsTranslations,
   enTaskRemovalTranslations,
 );
 

@@ -12,11 +12,24 @@ it("rejects Native workspace file operations before using personal rows or write
   try {
     localStorage.setItem("nowen-current-workspace", "workspace-a");
     for (const operation of [() => api.files.list(), () => api.files.stats(), () => api.files.get("file-a"),
-      () => api.files.upload(new File(["test"], "workspace.txt")), () => api.files.rename("file-a", "new-name"), () => api.files.remove("file-a")]) {
+      () => api.files.upload(new File(["test"], "workspace.txt")), () => api.files.rename("file-a", "new-name"), () => api.files.remove("file-a"),
+      () => api.files.tools.similar("file-a"), () => api.files.tools.batchRename([{id:"file-a",filename:"new.png",expectedFilename:"old.png"}])]) {
       await expect(operation()).rejects.toMatchObject({ code: "MOBILE_WORKSPACE_FILES_UNSUPPORTED" });
     }
     expect(query).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled(); expect(notebooks).not.toHaveBeenCalled();
   } finally { restore(); }
+});
+
+it("rejects Native visual tools before local SQL or server fallback and restores the original facade",async()=>{
+  const query=vi.fn(),run=vi.fn();
+  const original=api.files.tools;
+  const restore=installMobileLocalModuleBridge({} as NativeLocalRepository,{query,run} as unknown as NativeDatabase,"owner");
+  try {
+    await expect(api.files.tools.similar("file-a")).rejects.toMatchObject({code:"MOBILE_ASSET_TOOLS_UNSUPPORTED"});
+    await expect(api.files.tools.batchRename([{id:"file-a",filename:"new.png",expectedFilename:"old.png"}])).rejects.toMatchObject({code:"MOBILE_ASSET_TOOLS_UNSUPPORTED"});
+    expect(query).not.toHaveBeenCalled();expect(run).not.toHaveBeenCalled();
+  } finally {restore();}
+  expect(api.files.tools).toBe(original);
 });
 
 it("rejects Native organization and metadata filters before personal SQL or server calls", async () => {

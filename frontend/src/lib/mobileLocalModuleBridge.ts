@@ -395,6 +395,11 @@ export function installMobileLocalModuleBridge(
     primaryNote:row.noteId?{id:String(row.noteId),title:String(row.noteTitle||""),notebookId:row.notebookId?String(row.notebookId):null,notebookName:row.notebookName?String(row.notebookName):null,notebookIcon:row.notebookIcon?String(row.notebookIcon):null,isTrashed:Number(row.isTrashed)||0}:null,
   });
   const unsupportedOrganization = async () => { throw Object.assign(new Error("File tags and smart folders are not available in Native mode yet."), { code: "MOBILE_ASSET_ORGANIZATION_UNSUPPORTED" }); };
+  const unsupportedVisualTools = async () => {
+    assertPersonalFileScope();
+    throw Object.assign(new Error("Similar-image search and batch rename are unavailable in Native mode. Use the web or desktop file center."), { code: "MOBILE_ASSET_TOOLS_UNSUPPORTED" });
+  };
+  target.files.tools = { similar: unsupportedVisualTools, batchRename: unsupportedVisualTools };
   target.files.organization = {
     list: async () => ({ supported: false, canManageTags: false, tags: [], smartFolders: [] }),
     get: unsupportedOrganization, createTag: unsupportedOrganization, renameTag: unsupportedOrganization,
