@@ -99,3 +99,24 @@ test("Yjs saves and removes attachment reverse references with the persisted doc
     }
   } finally { client.destroy(); yjs.yDestroyDoc(noteId); }
 });
+
+test("a failed collaborative reference write rolls back the note projection and remains retryable", async () => {
+  const Y = await import("yjs"), yjs = await import("../src/services/yjs");
+  const db = schema.getDb(), noteId = "link-owner-note", client = new Y.Doc();
+  const before = db.prepare("SELECT content,version FROM notes WHERE id=?").get(noteId);
+  try {
+    const joined = yjs.yJoin(noteId, "link-owner"); Y.applyUpdate(client, Buffer.from(joined.stateBase64, "base64"));
+    db.exec("CREATE TRIGGER fail_link_index BEFORE INSERT ON attachment_references BEGIN SELECT RAISE(ABORT,'index failure'); END");
+    const text = client.getText("content"), vector = Y.encodeStateVector(client);
+    text.insert(0, "![Retained](/api/attachments/d0000000-0000-4000-8000-000000000001)\n");
+    assert.equal(yjs.yApplyUpdate(noteId, Buffer.from(Y.encodeStateAsUpdate(client, vector)).toString("base64"), "link-owner"), "ok");
+    yjs.yFlush(noteId);
+    assert.deepEqual(db.prepare("SELECT content,version FROM notes WHERE id=?").get(noteId), before);
+    db.exec("DROP TRIGGER fail_link_index");
+    const next = Y.encodeStateVector(client); text.insert(text.length, " retry");
+    assert.equal(yjs.yApplyUpdate(noteId, Buffer.from(Y.encodeStateAsUpdate(client, next)).toString("base64"), "link-owner"), "ok");
+    yjs.yFlush(noteId);
+    assert.equal((db.prepare("SELECT content FROM notes WHERE id=?").get(noteId) as any).content, text.toString());
+    assert.equal((db.prepare("SELECT COUNT(*) n FROM attachment_references WHERE noteId=?").get(noteId) as any).n, 1);
+  } finally { db.exec("DROP TRIGGER IF EXISTS fail_link_index"); client.destroy(); yjs.yDestroyDoc(noteId); }
+});
