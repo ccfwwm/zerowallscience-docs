@@ -19,7 +19,7 @@ permissions:
 jobs:
   contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -33,6 +33,12 @@ jobs:
           node --check electron/preload.js
       - name: Store/NSIS packaging isolation and runtime tests
         run: npm run test:microsoft-store
+      - name: Install frontend dependencies for Store UI type-check
+        working-directory: frontend
+        run: npm ci
+      - name: Type-check Store-aware desktop settings
+        working-directory: frontend
+        run: npx tsc -b --pretty false
 
   store-package:
     if: github.event_name == 'workflow_dispatch'
@@ -97,7 +103,7 @@ jobs:
             if (-not $manifest.Package.Applications.Application) { throw 'No packaged desktop application' }
             Write-Host "Verified Store package: $($files[0].Name), version=$($identity.Version), identity=$($identity.Name)"
           } finally { $package.Dispose() }
-      - name: Upload private-to-run Store submission candidate
+      - name: Upload Store submission candidate (workflow artifact only)
         uses: actions/upload-artifact@v4
         with:
           name: nowen-note-store-appx
