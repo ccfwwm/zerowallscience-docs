@@ -2,6 +2,8 @@
 
 Base: `release/v1.5.2` at `2f0f950c`. D1 (#847) and D2 (#849) are merged; this module is independently reviewed and is not completion or release of all Phase D.
 
+Integration follow-up: target commit `2de512b6` (calendar/mobile repair) was merged into this feature branch. The CHANGELOG conflict retains both the calendar entry and the current D1–D3 status; calendar source changes are preserved.
+
 ## Contract and implementation
 
 - Personal attachment folders (create, rename, reparent, empty-folder deletion) and file locations use the negotiated `attachment_organization` entity. `folder:<id>` / `file:<id>` identities retain the original folder and attachment IDs. Bytes, SHA-256, storage paths and note ownership keep their existing channel.
