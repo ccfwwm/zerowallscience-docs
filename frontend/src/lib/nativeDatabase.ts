@@ -35,7 +35,7 @@ type NativeDatabaseGlobal = typeof globalThis & {
   __nowenNoteNativeDatabaseState?: NativeDatabaseGlobalState;
 };
 
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 12;
 const DATABASE_PREFIX = "nowen_local_";
 
 const ENTITY_TYPE_CHECK = `
@@ -158,7 +158,7 @@ const KNOWLEDGE_TREE_SCHEMA_STATEMENTS = [
     nodeType TEXT NOT NULL,
     resourceType TEXT NOT NULL CHECK (resourceType IN ('notebook','note','mindmap','file')),
     resourceId TEXT NOT NULL,
-    sortOrder INTEGER NOT NULL CHECK (sortOrder >= 0),
+    sortOrder INTEGER NOT NULL,
     isDeleted INTEGER NOT NULL CHECK (isDeleted IN (0,1)),
     deletedAt TEXT,
     createdAt TEXT NOT NULL,
@@ -632,6 +632,18 @@ async function executeSchemaStatements(
   for (const statement of statements) await raw.execute(statement, false);
 }
 
+async function upgradeSignedTreeOrdering(raw: SQLiteDBConnection): Promise<void> {
+  const rows = await raw.query("SELECT sql FROM sqlite_master WHERE type='table' AND name='native_knowledge_tree_nodes'");
+  if (!String(rows.values?.[0]?.sql || "").includes("CHECK (sortOrder >= 0)")) return;
+  await raw.execute(KNOWLEDGE_TREE_SCHEMA_STATEMENTS[0].replace(
+    "IF NOT EXISTS native_knowledge_tree_nodes", "native_knowledge_tree_nodes_v12",
+  ), false);
+  await raw.execute("INSERT INTO native_knowledge_tree_nodes_v12 SELECT * FROM native_knowledge_tree_nodes", false);
+  await raw.execute("DROP TABLE native_knowledge_tree_nodes", false);
+  await raw.execute("ALTER TABLE native_knowledge_tree_nodes_v12 RENAME TO native_knowledge_tree_nodes", false);
+  await raw.execute(KNOWLEDGE_TREE_SCHEMA_STATEMENTS[1], false);
+}
+
 async function upgradeSchemaV1ToV2(raw: SQLiteDBConnection): Promise<void> {
   await executeSchemaStatements(raw, MOBILE_MODULE_SCHEMA_STATEMENTS);
 
@@ -812,6 +824,7 @@ class NativeDatabaseImpl implements NativeDatabase {
             await this.raw.execute(`ALTER TABLE attachments ADD COLUMN ${column} TEXT`,false);
           }
         }
+        if (version < 12) await upgradeSignedTreeOrdering(this.raw);
         await this.raw.execute(`PRAGMA user_version = ${SCHEMA_VERSION}`, false);
       });
     });

@@ -841,7 +841,7 @@ test("native structural Apply rejects foreign scopes, identities and missing dep
     parentId:null, nodeType:"folder", resourceType:"notebook", resourceId:id, sortOrder:0, isDeleted:0, deletedAt:null, createdAt:"now", updatedAt:"now" } };
   await c.db.transaction((tx) => applyNativePersonalTree(tx,[entry],USER,true));
   const queued = await pending(c);
-  for (const patch of [{userId:"other-user"}, {workspaceId:"foreign"}, {scopeKey:"workspace:foreign"}, {resourceId:"missing"}, {parentId:"notebook:missing"}, {sortOrder:-1}, {sortOrder:1.5}, {nodeType:"file"}, {parentId:entry.entityId}]) {
+  for (const patch of [{userId:"other-user"}, {workspaceId:"foreign"}, {scopeKey:"workspace:foreign"}, {resourceId:"missing"}, {parentId:"notebook:missing"}, {sortOrder:Number.MAX_SAFE_INTEGER+1}, {sortOrder:1.5}, {nodeType:"file"}, {parentId:entry.entityId}]) {
     await assert.rejects(c.db.transaction((tx) => applyNativePersonalTree(tx,[{...entry,payload:{...entry.payload,...patch}}],USER,true)), {code:"INVALID_TREE_STRUCTURE"});
     assert.deepEqual((await c.db.query("SELECT parentId,sortOrder FROM native_knowledge_tree_nodes WHERE id=?", [entry.entityId]))[0], {parentId:null,sortOrder:0});
     assert.deepEqual(await pending(c), queued);
@@ -1368,4 +1368,19 @@ test("first asset binding preserves and synchronizes pre-existing native folders
   await a.sync();await a.sync();
   assert.equal((await pending(a)).length,0);
   assert.deepEqual(serverDb.prepare("SELECT name,parentId FROM attachment_folders WHERE id=?").get(child),{name:"Existing child",parentId:parent});
+});
+
+test("asset binding preserves server-generated negative root positions across native replicas",async()=>{
+  const note=randomUUID(),book=randomUUID();
+  serverDb.prepare("INSERT INTO notebooks(id,userId,name) VALUES (?,?,'Root host')").run(book,USER);
+  serverDb.prepare("INSERT INTO notes(id,userId,notebookId,title,content,contentFormat) VALUES (?,?,?,'Root document','Public fixture','markdown')").run(note,USER,book);
+  serverDb.prepare("UPDATE knowledge_tree_nodes SET sortOrder=-2147483647 WHERE id=?").run(`note:${note}`);
+  const a=await client("asset-signed-root-a"),b=await client("asset-signed-root-b");
+  await a.sync();
+  const folder=await createAssetFolder(a,"Directory beside root document");await a.sync();await b.sync();
+  for(const c of [a,b]) {
+    assert.equal((await c.db.query<{sortOrder:number}>("SELECT sortOrder FROM native_knowledge_tree_nodes WHERE id=?",[`note:${note}`]))[0].sortOrder,-2147483647);
+    assert.equal((await c.db.query<{name:string}>("SELECT name FROM mobile_local_attachment_folders WHERE id=?",[folder]))[0].name,"Directory beside root document");
+    assert.equal((await pending(c)).length,0);
+  }
 });

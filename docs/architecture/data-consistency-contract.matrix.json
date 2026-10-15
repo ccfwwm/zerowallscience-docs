@@ -147,6 +147,7 @@
       "title": "同步游标与 ACK 必须晚于内容校验和本地应用",
       "status": "covered",
       "checks": [
+        { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset binding preserves server-generated negative root positions across native replicas" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset Pull loads final folder dependencies beyond its first change-feed page" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset folder Apply failure retains cursor and the complete previous local graph" },
         {

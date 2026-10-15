@@ -55,10 +55,11 @@ function parseStructure(payload: Record<string, unknown>, prefix: "" | "base"): 
     return null; // Initial projection; the business entity creates the same node first.
   }
   const parentId = payload[parentKey];
+  // Root-document placement can allocate negative sort positions. Keep signed safe integers.
   const sortOrder = payload[sortKey];
   const isDeleted = payload[deletedKey];
   if ((parentId !== null && (typeof parentId !== "string" || !parentId))
-    || !Number.isSafeInteger(sortOrder) || (sortOrder as number) < 0
+    || !Number.isSafeInteger(sortOrder)
     || (isDeleted !== 0 && isDeleted !== 1)) {
     throw new SyncError("INVALID_PAYLOAD", "知识树结构字段无效");
   }

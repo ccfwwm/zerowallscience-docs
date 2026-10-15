@@ -8,7 +8,7 @@ Integration follow-up: target commit `2de512b6` (calendar/mobile repair) was mer
 
 - Personal attachment folders (create, rename, reparent, empty-folder deletion) and file locations use the negotiated `attachment_organization` entity. `folder:<id>` / `file:<id>` identities retain the original folder and attachment IDs. Bytes, SHA-256, storage paths and note ownership keep their existing channel.
 - The ten-entity legacy subscription and eleven-entity tree subscription remain unchanged. The new twelve-entity subscription requires an advertised capability, complete Snapshot and subscription ACK. Previously bound clients refuse silent downgrade. Signed-in folder writes are unavailable until the current profile has completed binding; device-only Native organization remains local.
-- SQLite v129 preserves historical queues, mutation IDs, retry state, resolved conflicts, indexes, triggers and the monotonically increasing Feed high-water mark. It adds a versioned metadata/tombstone ledger and profile readiness. Native schema v11 widens existing queues transactionally and retains device folders and assignments. Backup snapshots include these tables; restore invalidates desktop readiness before another reconciliation.
+- SQLite v129 preserves historical queues, mutation IDs, retry state, resolved conflicts, indexes, triggers and the monotonically increasing Feed high-water mark. It adds a versioned metadata/tombstone ledger and profile readiness. Native schema v12 widens existing queues transactionally and retains device folders and assignments. Backup snapshots include these tables; restore invalidates desktop readiness before another reconciliation.
 - Desktop SQL triggers capture metadata and its Outbox mutation in the business transaction. Native directory operations validate ownership and commit business rows, metadata and Outbox together. Failures roll back the operation. Existing local folders enter the first baseline without duplicating their IDs; differing existing organization is retained in the conflict ledger.
 - Push checks the independent metadata base version, scoped ownership, folder ancestry, same-level names and empty-folder deletion. Missing deleted destinations conflict instead of being retried as new parents. Server writes select canonical business fields rather than trusting client ownership, lifecycle, timestamps or arbitrary metadata.
 - Repeated requests use the original mutation ID. Native sends one immutable mutation per organization identity per round, so a later edit cannot bypass an earlier conflict in the same request. ACKs require a positive version; subsequent edits rebase after that exact ACK. Missing/invalid ACKs preserve the queue.
@@ -53,22 +53,32 @@ Behavioral coverage:
 - Three independent on-disk Native SQLite clients and the real HTTP Sync V2 server: offline nested directory creation, rename/move/delete, restart, file placement in both directions, retained attachment ID/path/hash, initial legacy folders, dropped creation ACK, edits during delayed ACK, invalid ACK, concurrency, explicit resolution, tombstones, enqueue failure, Apply failure and Feed pagination dependencies.
 - An independent desktop SQLite replica against the real Hono protocol routes: capability binding, SQL-trigger capture, offline queue retention, coalesced creation/rename, Web-to-desktop movement and deletion.
 - An actual old-CHECK SQLite migration fixture: queue order, retry count/error, resolved history, trigger/index reinstallation, idempotence, foreign keys and Feed high-water retention.
-- Real SQLite Native schema upgrade and directory facade: retained local folder, denied unbound writes, atomic enqueue failure, expired session and migration failure rollback. Stale schema-9 expectations in the initialization tests now assert schema 11, restoring their guard-order assertions.
+- Real SQLite Native schema upgrade and directory facade: retained local folder, denied unbound writes, atomic enqueue failure, expired session and migration failure rollback. Stale schema-9 expectations in the initialization tests now assert schema 12, restoring their guard-order assertions.
 - React file-explorer refresh and identity isolation; existing conflict-center regressions; changed-file lint and bilingual translation coverage.
 
 Final local results (2026-10-15):
 
 | Check | Result |
 | --- | --- |
-| DCC mapping | 12 invariants, 150 references |
-| Backend DCC matrix, isolated serial runner | 17 suites, 246 passed, 0 failed |
-| Frontend DCC | 25 suites, 228 passed, 0 failed |
+| DCC mapping | 12 invariants, 151 references |
+| Backend DCC matrix, isolated serial runner | 17 suites, 247 passed, 0 failed |
+| Frontend DCC | 25 suites, 230 passed, 0 failed |
 | Additional protocol, bootstrap, readiness, old-subscription and folder repository suites | 8 suites, 98 passed |
 | Targeted explorer/conflict/subscription/folder/i18n suites | 5 suites, 54 passed |
 | Backend TypeScript; frontend TypeScript and production bundles | Passed |
 | Changed feature-source ESLint and diff whitespace check | Passed |
 
 Source/build/SQLite evidence is separate from installed-device acceptance. No external CI success is implied. Large-bundle warnings remain.
+
+## Merge acceptance follow-up
+
+PR #850's encrypted-note CI exposed a compatibility failure during the new attachment baseline: replaying the full snapshot rejected negative root positions generated beside the hidden root-document container (`-2147483647`). Desktop snapshot/structure validation and Native validation now accept signed safe integers; fractions, non-finite values and unsafe integers are still rejected. Native schema v12 removes only the nonnegative tree-order CHECK in one transaction, retaining all existing tree rows and queues, with rollback coverage for an interrupted rebuild.
+
+- The failing encrypted-note CI command was reproduced locally: 3 failures before the fix, all 160 tests pass after it.
+- Desktop tree snapshot/incremental/structural regressions and encrypted-note scenarios: 8 passed.
+- Real HTTP Native multi-device, desktop asset binding and tree engine/baseline regressions: 78 passed, including signed root positions and subsequent directory convergence on independent Native databases.
+- Native migration, encrypted guard initialization, negotiation and signed numeric validation: 40 passed, including schema-11 row/queue preservation and failed-migration rollback.
+- Existing Issue 612 frontend source-string assertion and lint failures are unrelated to the modified paths; their files are unchanged by this PR.
 
 ## Compatibility and acceptance limits
 
