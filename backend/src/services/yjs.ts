@@ -345,6 +345,7 @@ function persistNoteContent(room: RoomState) {
       });
       return;
     }
+    syncReferences(db, room.noteId, markdown);
     room.baseVersion = oldVersion + 1;
     room.lastVersionBumpAt = now;
     logNoteWrite({
@@ -379,6 +380,7 @@ function persistNoteContent(room: RoomState) {
       });
       return;
     }
+    syncReferences(db, room.noteId, markdown);
     logNoteWrite({
       noteId: room.noteId,
       source: "live-autosave",
@@ -388,7 +390,6 @@ function persistNoteContent(room: RoomState) {
       outcome: "committed",
     });
   }
-  syncReferences(db, room.noteId, markdown);
 }
 
 // ---------------------------------------------------------------------------
