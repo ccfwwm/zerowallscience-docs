@@ -181,6 +181,10 @@
         {
           "file": "frontend/src/lib/__tests__/mobileFileScope.test.ts",
           "case": "rejects Native organization and metadata filters before personal SQL or server calls"
+        },
+        {
+          "file": "backend/tests/asset-note-linking.test.ts",
+          "case": "insertion rejects foreign files, cross-space reuse, read-only and trashed targets without writes"
         }
       ]
     },

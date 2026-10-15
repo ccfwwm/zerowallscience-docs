@@ -4579,7 +4579,10 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
     });
   }, [editor, isGuest, captureEditorInsertAnchor, restoreEditorInsertAnchor, releaseEditorInsertAnchor]);
 
+  useEffect(() => { closeAttachmentLibrary(); }, [note.id, closeAttachmentLibrary]);
+
   const insertExistingAttachment = useCallback((item: FileItem) => {
+    if (!editor?.isEditable || noteRef.current.isTrashed) return;
     const anchor = attachmentLibraryAnchorRef.current;
     if (!editor || !restoreEditorInsertAnchor(anchor)) {
       closeAttachmentLibrary();
@@ -6721,6 +6724,9 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
       />
 
       <AttachmentLibraryPicker
+        key={note.id}
+        noteId={note.id}
+        workspaceId={note.workspaceId}
         open={attachmentLibraryOpen}
         onClose={closeAttachmentLibrary}
         onSelect={insertExistingAttachment}

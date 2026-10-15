@@ -3411,6 +3411,7 @@ export const api = {
      *    可叠加 myUploadsRef=referenced/unreferenced 进一步拆分"已被笔记引用 / 还没引用"。
      */
     list: (params: {
+      workspaceId?: string | null;
       category?: FileCategory;
       fileKind?: "document" | "video" | "audio" | "archive";
       createdAfter?: string;
@@ -3457,7 +3458,7 @@ export const api = {
       if (typeof params.page === "number") qs.set("page", String(params.page));
       if (typeof params.pageSize === "number") qs.set("pageSize", String(params.pageSize));
       // Y4: workspace scope
-      const ws = getCurrentWorkspace();
+      const ws = params.workspaceId === undefined ? getCurrentWorkspace() : params.workspaceId;
       if (ws && ws !== "personal") qs.set("workspaceId", ws);
       const s = qs.toString();
       return request<FileListResponse>(`/files${s ? `?${s}` : ""}`).then((payload) => {
@@ -3471,6 +3472,10 @@ export const api = {
       registerAttachmentAccessResponse(payload);
       return payload;
     }),
+
+    prepareInsert: (id: string, noteId: string) => request<FileItem>(`/files/${id}/prepare-insert`, {
+      method: "POST", body: JSON.stringify({ noteId }),
+    }).then((payload) => { registerAttachmentAccessResponse(payload); return payload; }),
 
     /** 删除单个附件（含磁盘文件）。会做 ACL 校验，被别的笔记引用也一并断链。 */
     remove: (id: string) =>
