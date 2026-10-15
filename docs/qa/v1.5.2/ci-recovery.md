@@ -18,6 +18,7 @@ Data Consistency Contract and Encrypted Notes CI on that original commit ultimat
 | I18n Release | [Job](https://github.com/cropflre/nowen-note/actions/runs/38739914921/job/116438594935): the test duplicated runtime dictionary merging and omitted D4 `assetTools` | Check the actual runtime resource bundles; retain complete parity, interpolation and literal-key assertions |
 | Issue 355 Content Format | [Frontend job](https://github.com/cropflre/nowen-note/actions/runs/38739914876/job/116438595959): a whole-module `react-i18next` mock omitted `initReactI18next` | Preserve actual module exports while stubbing only `useTranslation` |
 | Issue 612 Data Protection | [Backend](https://github.com/cropflre/nowen-note/actions/runs/38739914458/job/116438594507) has an unisolated repository import; [frontend](https://github.com/cropflre/nowen-note/actions/runs/38739914458/job/116438594661) expects old HTML-preview source strings and reports two lint deltas | Use the preloader; execute actual preview-gate expressions and cover plaintext exclusion; type the boot diagnostic and the recurrence mock |
+| Frontend Loading Performance | [Follow-up job](https://github.com/cropflre/nowen-note/actions/runs/38741906637/job/116445479242) reaches the existing bundle budget and finds the entry at 2.39 MiB raw / 686.5 KiB gzip; the full Tiptap emoji catalog is bundled into it | Give the existing emoji dependency its own vendor chunk; retain all budget thresholds and application loading behavior |
 
 The database guard is deliberately retained. Before-case commands for all four import-time failures
 exit with the isolation refusal, before opening the repository DB. All subsequent backend verification
@@ -27,6 +28,12 @@ The preview test extracts the actual initializer/switch/render expressions with 
 it runs them with the real content-format detector. It verifies initial HTML, switching to HTML, an already
 initialized note, and plaintext containing HTML even while the previous preview state remains true.
 It no longer requires an exact historical expression string. Product editor source is unchanged.
+
+The follow-up bundle failure was reproduced locally after the original six workflows passed on `6ee1a42e`.
+With the emoji vendor chunk, the entry measures 1,964,789 raw / 623,319 gzip bytes, below the unchanged
+2,000,000 / 650,000-byte individual limits. The initial dependency graph has six requests and totals
+3,570,264 raw / 1,025,985 gzip bytes, within the unchanged total limits. This is a chunk-size repair;
+it does not claim to defer emoji loading or materially reduce the first-screen download total.
 
 ## Local verification
 
@@ -39,6 +46,9 @@ It no longer requires an exact historical expression string. Product editor sour
 | Lint baseline gate unit tests | 4 passed |
 | Frontend lint baseline | 1444 recorded historical errors / **0 new errors**; baseline file unchanged |
 | Frontend TypeScript and production build | Passed; pre-existing Vite chunk-size warnings remain |
+| Production web build and unchanged bundle budgets after emoji chunk split | Passed; gzip/Brotli assets generated |
+| Startup, WebKit compatibility, auth, paste and rich-text safety suites after chunk split | 8 files / 58 passed |
+| FN Connect slow/failed module startup against the production preview | 2 passed in local Edge Chromium; WebKit runs in Linux CI |
 | Backend `build:tsc` | Passed |
 | DCC mapping | 12 invariants / 153 references verified |
 | `git diff --check` | Passed |
@@ -52,6 +62,8 @@ frontend: npx vitest run src/i18n/__tests__/releaseI18nCoverage.test.ts src/comp
 frontend: npx vitest run src/lib/__tests__/taskOfflineApi.test.ts
 frontend: npm run lint:baseline
 frontend: npm run build
+frontend: npm run build:web
+frontend: npm run verify:bundle
 backend: npm run build:tsc -- --pretty false
 root: node --test scripts/tests/frontend-lint-baseline.test.cjs
 root: node scripts/data-consistency-contract.mjs --verify
