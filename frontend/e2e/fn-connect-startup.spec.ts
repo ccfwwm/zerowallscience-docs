@@ -26,7 +26,7 @@ test("slow gateway modules keep loading and automatically reveal login", async (
     release();
     await expect(page.locator("#root form").first()).toBeVisible({ timeout: 20_000 });
     await expect(page.locator("#app-boot-splash")).toHaveCount(0);
-    expect(await page.evaluate(() => (window as any).__NOWEN_BOOT_DIAGNOSTICS__.stage)).toBe("ready");
+    expect(await page.evaluate(() => (window as Window & { __NOWEN_BOOT_DIAGNOSTICS__: { stage: string } }).__NOWEN_BOOT_DIAGNOSTICS__.stage)).toBe("ready");
   } finally {
     release();
   }

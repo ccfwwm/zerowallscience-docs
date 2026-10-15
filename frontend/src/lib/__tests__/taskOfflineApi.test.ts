@@ -92,7 +92,7 @@ function createApi() {
       generatedTask: null,
     })),
     deleteTask: vi.fn(async (_id: string) => ({ success: true })),
-    stopTaskRecurrence: vi.fn(async (_id: string) => ({ success: true, affected: 2 })),
+    stopTaskRecurrence: vi.fn<[id: string], Promise<{ success: boolean; affected: number }>>().mockResolvedValue({ success: true, affected: 2 }),
     getHabits: vi.fn(async (_includeArchived?: boolean, _checkinDate?: string) => [habit()]),
     getHabitStats: vi.fn(async (_includeArchived?: boolean, _checkinDate?: string) => habitStats),
     getHabitCheckinLog: vi.fn(async (_params?: { from?: string; to?: string; includeArchived?: boolean }) => []),
