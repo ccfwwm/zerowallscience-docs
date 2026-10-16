@@ -291,6 +291,13 @@ export class NowenApiClient {
     return this.request(`/api/notes/${id}/permanent`, { method: "DELETE" });
   }
 
+  /** 从知识树服务读取统一目录；所有目录权限交由服务端与 scoped MCP 再校验。 */
+  async getKnowledgeTree(workspaceId?: string): Promise<any> {
+    return this.request("/api/knowledge-tree/", {
+      query: { workspaceId: workspaceId || "personal" },
+    });
+  }
+
   // ==================== 通用块 / 双链 ====================
 
   async listNoteBlocks(noteId: string, limit = 500): Promise<any[]> {
