@@ -51,12 +51,12 @@ test("P1 personal file and task tools enforce preview, token and optimistic posi
       moved++;
       file.folderId = body.folderId;
       done(200, { success: true, moved: 1, folderId: file.folderId });
-    } else if (pathname === "/api/attachment-trash" && req.method === "GET") {
+    } else if (pathname === "/api/files/trash" && req.method === "GET") {
       done(200, {
         entries: [{ id: "trashed-a", filename: "trash.png", trashedAt: "2026-10-16T00:00:00Z" }],
         page: 1, pageSize: 100, total: 1,
       });
-    } else if (pathname === "/api/attachment-trash/restore" && req.method === "POST") {
+    } else if (pathname === "/api/files/trash/restore" && req.method === "POST") {
       if (body.expectedTrashedAt?.["trashed-a"] !== "2026-10-16T00:00:00Z") {
         done(409, { code: "FILE_TRASH_VERSION_CONFLICT" }); return;
       }
