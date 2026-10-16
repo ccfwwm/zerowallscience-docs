@@ -35,3 +35,22 @@ jobs:
         run: npm ci --prefix packages/nowen-mcp
       - name: Build and test MCP
         run: npm test --prefix packages/nowen-mcp
+
+  api-token-scope-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        run: npm ci --prefix backend
+      - name: Test PAT resource and task boundaries
+        run: node --import tsx --test tests/api-token-resource-scope.test.ts
+        working-directory: backend
+        env:
+          NODE_ENV: test
