@@ -386,7 +386,7 @@ export class NowenApiClient {
     return this.request(`/api/tasks/${encodeURIComponent(taskId)}`);
   }
 
-  async createTask(params: { title: string; priority?: number; dueDate?: string; dueAt?: string; description?: string }): Promise<any> {
+  async createTask(params: { title: string; priority?: number; dueDate?: string; dueAt?: string; description?: string; parentId?: string; projectId?: string }): Promise<any> {
     return this.request("/api/tasks", { method: "POST", query: { workspaceId: "personal" }, body: params });
   }
 
