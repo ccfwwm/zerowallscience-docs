@@ -1005,7 +1005,7 @@ app.patch("/:id", async (c) => {
   const id = c.req.param("id");
   const db = getDb();
 
-  let body: { filename?: unknown };
+  let body: { filename?: unknown; expectedFilename?: unknown };
   try {
     body = await c.req.json();
   } catch {
