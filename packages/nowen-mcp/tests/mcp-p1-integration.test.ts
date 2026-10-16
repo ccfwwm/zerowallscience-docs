@@ -20,6 +20,7 @@ test("P1 personal file and task tools enforce preview, token and optimistic posi
   let snapshots = 0;
   let trashRestores = 0;
   let loginCalls = 0;
+  let taskReorders = 0;
   const backend = createServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
     const pathname = url.pathname.replace(/\/$/, "");
@@ -65,8 +66,13 @@ test("P1 personal file and task tools enforce preview, token and optimistic posi
     } else if (pathname === "/api/tasks/task-1" && req.method === "GET") {
       done(200, {
         id: "task-1", title: "Build release", description: "Detailed work",
-        workspaceId: null, updatedAt: "2026-10-16T09:00:00Z",
+        workspaceId: null, updatedAt: "2026-10-16T09:00:00Z", sortOrder: 3,
       });
+    } else if (pathname === "/api/tasks/task-1" && req.method === "PUT") {
+      assert.equal(body.expectedUpdatedAt, "2026-10-16T09:00:00Z");
+      assert.equal(body.expectedSortOrder, 3);
+      taskReorders++;
+      done(200, { id: "task-1", sortOrder: body.sortOrder });
     } else if (pathname === "/api/tasks/task-1/note" && req.method === "POST") {
       assert.equal(body.description, "Detailed work");
       assert.equal(body.expectedTaskUpdatedAt, "2026-10-16T09:00:00Z");
@@ -181,6 +187,20 @@ test("P1 personal file and task tools enforce preview, token and optimistic posi
     });
     assert.ok(!saved.isError, asText(saved));
     assert.equal(JSON.parse(asText(saved)).originalTaskRetained, true);
+    const taskOrderPreview = JSON.parse(asText(await client.callTool({
+      name: "nowen_reorder_task", arguments: { taskId: "task-1", sortOrder: 10 },
+    })));
+    assert.equal(taskOrderPreview.currentSortOrder, 3);
+    const ordered = await client.callTool({
+      name: "nowen_reorder_task", arguments: {
+        taskId: "task-1", sortOrder: 10, dryRun: false,
+        expectedUpdatedAt: taskOrderPreview.updatedAt,
+        expectedSortOrder: taskOrderPreview.currentSortOrder,
+        confirmation: "REORDER_TASK",
+      },
+    });
+    assert.ok(!ordered.isError, asText(ordered));
+    assert.equal(taskReorders, 1);
     assert.equal(snapshots, 1);
     assert.equal(loginCalls, 0, "PAT must never fall back to username/password");
     assert.equal(trashRestores, 1);
