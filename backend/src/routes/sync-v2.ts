@@ -1,3 +1,4 @@
+import { finishSyncNoteDeletions } from "../sync/noteDeletion";
 import { EncryptedNotePayloadError, withEncryptedBlocksSupport } from "../lib/encryptedNotes.js";
 import type Database from "better-sqlite3";
 import { Hono } from "hono";
@@ -254,7 +255,7 @@ app.get("/scopes", (c) => {
   if (denied) return denied;
   const db = getDb();
   const userId = c.req.header("X-User-Id") as string;
-  return c.json({ items: listAuthorizedScopes(db, userId).map(scope => ({...scope,taskRecurrenceLifecycle:"v1",assetOrganization:scope.workspaceId===null?"personal-v1":null})) });
+  return c.json({ items: listAuthorizedScopes(db, userId).map(scope => ({...scope,noteDeletionLifecycle:"trash-before-delete-v1",taskRecurrenceLifecycle:"v1",assetOrganization:scope.workspaceId===null?"personal-v1":null})) });
 });
 
 // ---------------------------------------------------------------------------
@@ -861,6 +862,7 @@ app.post("/push", async (c) => {
   // Phase 6：通知同一用户的其他设备来拉。
   // 只在真的落库了变更时通知，避免空 push 造成无意义唤醒。
   // 通知内容只有 sequence，数据仍以 Change Feed 为唯一来源。
+  await finishSyncNoteDeletions(db);
   if (applied > 0) notifySyncChanged(db, userId, scope.scopeKey);
 
   return c.json({

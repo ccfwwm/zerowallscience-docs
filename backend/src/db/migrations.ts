@@ -1,3 +1,4 @@
+import { noteDeletionLifecycleMigration } from "./noteDeletionLifecycleMigration.js";
 import { assetAIMigration } from "./assetAIMigration.js";
 import { assetSyncMigration } from "./assetSyncMigration.js";
 import { attachmentTrashMigration } from "./attachmentTrashMigration.js";
@@ -431,6 +432,7 @@ export const MIGRATIONS: Migration[] = [
   attachmentTrashMigration,
   assetSyncMigration,
   assetAIMigration,
+  noteDeletionLifecycleMigration,
 ].sort((a, b) => a.version - b.version);
 
 export const CURRENT_SCHEMA_VERSION: number = MIGRATIONS.reduce(

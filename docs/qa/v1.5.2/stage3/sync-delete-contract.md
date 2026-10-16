@@ -1,6 +1,6 @@
 # Sync V2 永久删除契约：下一项 P1 修复设计
 
-状态：**已动态复现，设计待实现；正式 NO-GO**。本文件不宣称同步协议已修复。
+状态：**已实现源码修复与本地回归；部署和实机签核仍待完成，正式 NO-GO**。2026-10-16 后续实现见 [A01 修复与验证](../blocker-a01-sync-note-deletion.md)。以下保留原始复现与设计依据。
 
 `evidence/sync-delete-audit-with-restore.json` 来自最终 `98d1ddf5` Docker 镜像的生产 API。活动笔记的 owner JWT 发出匹配 baseVersion 的 note/delete，返回 applied，随后 GET 404。HTTP 与 Native 防护均不能覆盖直接 Push 协议。
 

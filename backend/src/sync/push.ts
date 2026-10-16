@@ -65,6 +65,9 @@ export function coalesceMutations(rows: SyncOutboxRow[]): CoalescedMutation[] {
       continue;
     }
 
+    // A terminal note deletion must not erase the explicitly queued trash stage.
+    if (row.entityType === "note" && (row.operation === "delete" || existing.operation === "delete")) continue;
+
     // 被合并的一方要记账：推送成功后这些条目也必须出队，
     // 否则它们会永远留在 Outbox 里反复重试。
     existing.supersededIds.push(existing.mutationId);

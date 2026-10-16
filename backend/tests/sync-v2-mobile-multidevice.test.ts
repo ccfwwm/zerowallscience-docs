@@ -33,6 +33,7 @@ let afterPush: ((response: Response) => Promise<Response>) | undefined;
 let afterSnapshot: ((response: Response) => Promise<Response>) | undefined;
 let afterAck: ((response: Response) => Promise<Response>) | undefined;
 let legacyTaskCapabilities = false;
+let legacyNoteDeletionCapabilities = false;
 
 // The real native schema, with independent on-disk SQLite databases. The adapter
 // serializes transactions just like NativeDatabaseImpl; no shared client state.
@@ -673,6 +674,10 @@ test.before(async () => {
     if (c.req.path.endsWith("/push") && afterPush) c.res = await afterPush(c.res);
     if (c.req.path.endsWith("/snapshot") && afterSnapshot) c.res = await afterSnapshot(c.res);
     if (c.req.path.endsWith("/ack") && afterAck) c.res = await afterAck(c.res);
+    if(c.req.path.endsWith("/scopes") && legacyNoteDeletionCapabilities) {
+      const payload=await c.res.json() as {items:Array<Record<string,unknown>>};
+      c.res=Response.json({items:payload.items.map(({noteDeletionLifecycle:_capability,...scope})=>scope)});
+    }
     if (c.req.path.endsWith("/scopes") && legacyTaskCapabilities) {
       const payload=await c.res.json() as {items:Array<Record<string,unknown>>};
       c.res=Response.json({items:payload.items.map(({taskRecurrenceLifecycle: _capability,...scope})=>scope)});
@@ -1383,4 +1388,83 @@ test("asset binding preserves server-generated negative root positions across na
     assert.equal((await c.db.query<{name:string}>("SELECT name FROM mobile_local_attachment_folders WHERE id=?",[folder]))[0].name,"Directory beside root document");
     assert.equal((await pending(c)).length,0);
   }
+});
+
+test("native permanent deletion retains its recoverable body and attachment metadata in the durable Outbox", async () => {
+  const c=await client("delete-recovery"),book=randomUUID(),id=randomUUID(),attachment=randomUUID();
+  await c.repository.notebooks.create({id:book,name:"Recovery"});
+  await c.repository.notes.create({id,notebookId:book,content:"offline recovery",isTrashed:1});
+  await c.db.run(`INSERT INTO attachments(id,scopeKey,userId,noteId,filename,mimeType,size,localPath,available,transferStatus,createdAt,updatedAt)
+    VALUES(?,'personal',?,?,'recover.png','image/png',4,'local-fixture',1,'pending_upload','now','now')`,[attachment,USER,id]);
+  await c.repository.notes.remove(id);
+  const row=(await c.db.query<{payload:string}>("SELECT payload FROM sync_outbox WHERE entityId=? AND entityType='note' AND operation='delete'",[id]))[0];
+  assert.equal(JSON.parse(row.payload)._deletionRecovery.note.content,"offline recovery");
+  assert.equal(JSON.parse(row.payload)._deletionRecovery.attachments[0].id,attachment);
+  assert.deepEqual(c.removedFiles,[]);
+  await c.db.close(); const reopened=await client("delete-recovery");
+  assert.equal(JSON.parse((await reopened.db.query<{payload:string}>("SELECT payload FROM sync_outbox WHERE entityId=? AND operation='delete'",[id]))[0].payload)._deletionRecovery.note.content,"offline recovery");
+});
+
+test("native offline trash then permanent delete acknowledges trash before deletion and replays a lost ACK", async () => {
+  // This scenario performs real HTTP requests; supply the browser URL used by authenticated fetch.
+  Object.assign(window,{location:new URL("http://localhost")});
+  const c=await client("delete-two-phase"),book=randomUUID(),id=randomUUID();
+  await c.repository.notebooks.create({id:book,name:"Two phase"});
+  await c.repository.notes.create({id,notebookId:book,content:"recovery after lost ACK"});
+  await c.sync();
+  await c.repository.notes.update(id,{isTrashed:1,trashedAt:new Date().toISOString()});
+  await c.repository.notes.remove(id);
+  await c.sync(); // Only the explicit trash stage can be acknowledged in this request.
+  assert.equal(serverDb.prepare("SELECT isTrashed FROM notes WHERE id=?").get(id).isTrashed,1);
+  const queued=await c.db.query<{mutationId:string;payload:string}>("SELECT mutationId,payload FROM sync_outbox WHERE entityId=? AND operation='delete'",[id]);
+  assert.equal(queued.length,1);assert.equal(JSON.parse(queued[0].payload)._deletionRecovery.note.content,"recovery after lost ACK");
+  afterPush=async()=>{afterPush=undefined;throw new Error("lost deletion ACK");};
+  await c.sync();
+  assert.equal(serverDb.prepare("SELECT id FROM notes WHERE id=?").get(id),undefined);
+  assert.equal((await c.db.query<{mutationId:string}>("SELECT mutationId FROM sync_outbox WHERE entityId=? AND operation='delete'",[id]))[0].mutationId,queued[0].mutationId);
+  await c.db.close();const reopened=await client("delete-two-phase");await reopened.sync();
+  assert.equal((await reopened.db.query("SELECT id FROM sync_outbox WHERE entityId=? AND operation='delete'",[id])).length,0);
+});
+
+test("native deletion conflicts preserve both bodies and honor explicit keep-local and keep-remote choices",async()=>{
+  Object.assign(window,{location:new URL("http://localhost")});
+  for(const resolution of ["keep-local","keep-remote"] as const){
+    const c=await client(`delete-choice-${resolution}`),book=randomUUID(),id=randomUUID();
+    await c.repository.notebooks.create({id:book,name:"Deletion conflict"});
+    await c.repository.notes.create({id,notebookId:book,content:"local retained body"});await c.sync();
+    await c.repository.notes.update(id,{isTrashed:1});await c.repository.notes.remove(id);
+    serverDb.prepare("UPDATE notes SET content='remote newer body',version=version+1 WHERE id=?").run(id);
+    await c.sync();
+    const conflict=(await c.db.query<{id:string;localPayload:string;remotePayload:string}>("SELECT id,localPayload,remotePayload FROM sync_conflicts WHERE entityId=? AND status='unresolved'",[id]))[0];
+    assert.equal(JSON.parse(conflict.localPayload)._deletionRecovery.note.content,"local retained body");
+    assert.equal(JSON.parse(conflict.remotePayload).content,"remote newer body");
+    await c.engine.resolveLocalConflict(conflict.id,resolution);
+    if(resolution === "keep-remote") assert.equal((await c.db.query<{lastSequence:number}>("SELECT lastSequence FROM sync_state WHERE profileId=? AND scopeKey='personal'",[c.profileId]))[0].lastSequence,0,"restore must refresh authorized attachment metadata");
+    await c.sync();await c.sync();
+    if(resolution==="keep-local") assert.equal(serverDb.prepare("SELECT id FROM notes WHERE id=?").get(id),undefined);
+    else {
+      assert.equal((await c.repository.notes.get(id))?.content,"remote newer body");
+      assert.equal(serverDb.prepare("SELECT content FROM notes WHERE id=?").get(id).content,"remote newer body");
+    }
+    assert.equal((await c.db.query("SELECT id FROM sync_outbox WHERE entityId=? AND operation='delete'",[id])).length,0);
+    assert.equal(JSON.parse((await c.db.query<{localPayload:string}>("SELECT localPayload FROM sync_conflicts WHERE id=?",[conflict.id]))[0].localPayload)._deletionRecovery.note.content,"local retained body");
+  }
+});
+
+
+test("native holds a terminal delete against an older server and resumes without changing its identity",async()=>{
+  Object.assign(window,{location:new URL("http://localhost")});
+  const c=await client("delete-old-server"),book=randomUUID(),id=randomUUID();
+  await c.repository.notebooks.create({id:book,name:"Old server"});await c.repository.notes.create({id,notebookId:book,content:"retain on upgrade"});await c.sync();
+  await c.repository.notes.update(id,{isTrashed:1});await c.repository.notes.remove(id);
+  const row=(await c.db.query<{mutationId:string;payload:string}>("SELECT mutationId,payload FROM sync_outbox WHERE entityId=? AND operation='delete'",[id]))[0];
+  legacyNoteDeletionCapabilities=true;
+  try {
+    await c.sync();await c.sync();
+    assert.equal(serverDb.prepare("SELECT isTrashed FROM notes WHERE id=?").get(id).isTrashed,1);
+    const pending=(await c.db.query<{mutationId:string;payload:string}>("SELECT mutationId,payload FROM sync_outbox WHERE entityId=? AND operation='delete'",[id]))[0];
+    assert.equal(pending.mutationId,row.mutationId);assert.equal(pending.payload,row.payload);
+    assert.equal((await c.db.query<{lastError:string}>("SELECT lastError FROM sync_state WHERE profileId=? AND scopeKey='personal'",[c.profileId]))[0].lastError,"NOTE_DELETION_UPGRADE_REQUIRED");
+  } finally {legacyNoteDeletionCapabilities=false;}
+  await c.sync();assert.equal(serverDb.prepare("SELECT id FROM notes WHERE id=?").get(id),undefined);
 });

@@ -5,6 +5,7 @@ import type { WorkspaceRole } from "../middleware/acl";
 import {
   hasKnowledgeCapability,
   resolveResourceKnowledgeAccess,
+  resolveResourceKnowledgeAccessForTombstone,
 } from "../services/knowledgeCapabilities";
 import {
   SYNC_PERSONAL_SCOPE_KEY,
@@ -17,6 +18,7 @@ export type SyncScopeAccessStatus = "read" | "write";
 
 export interface SyncScopeDescriptor {
   assetOrganization?: string;
+  noteDeletionLifecycle?: "trash-before-delete-v1";
   taskRecurrenceLifecycle?: "v1";
   scopeKey: string;
   workspaceId: string | null;
@@ -289,7 +291,9 @@ export function assertSyncMutationAccess(
     resourceId: string,
     capability: "canCreate" | "canEdit" | "canDelete",
   ) => {
-    const access = resolveResourceKnowledgeAccess(resourceType, resourceId, userId, db);
+    const resolveAccess = resourceType === "note" && input.entityType === "note" && input.operation === "delete"
+      ? resolveResourceKnowledgeAccessForTombstone : resolveResourceKnowledgeAccess;
+    const access = resolveAccess(resourceType, resourceId, userId, db);
     if (!hasKnowledgeCapability(access, capability)) {
       throw new SyncError("SCOPE_FORBIDDEN", `缺少 ${capability} 权限`);
     }

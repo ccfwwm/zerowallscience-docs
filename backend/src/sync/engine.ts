@@ -1,3 +1,4 @@
+import { cleanupNoteDeletionFiles } from "./noteDeletion";
 import { assertAssetMetadata, prepareAssetBaseline, receiveAssetMetadata } from "./assetOrganization";
 import type Database from "better-sqlite3";
 import {
@@ -536,6 +537,9 @@ export class SyncEngine {
 
     const batch = coalesceMutations(rows);
     batch.sort((a,b)=>Number(a.entityType==="attachment_organization")-Number(b.entityType==="attachment_organization"));
+    if(batch.some(item=>item.entityType==="note" && item.operation==="delete") && scope.noteDeletionLifecycle!=="trash-before-delete-v1") {
+      throw new SyncError("NOTE_DELETION_UPGRADE_REQUIRED","请升级服务器以确认笔记回收站生命周期；删除队列和恢复副本已保留");
+    }
     if (batch.some(item => item.entityType === "task" && ["stop","series"].includes(String(item.payload?.recurrenceAction))) && scope.taskRecurrenceLifecycle !== "v1") {
       throw new SyncError("SERVER_ERROR","请升级服务器以同步循环任务操作；本机修改已保留");
     }
@@ -550,7 +554,7 @@ export class SyncEngine {
     try {
       response = await this.client.push(
         this.deviceId,
-        batch.map(({ supersededIds: _ignored, ...payload }) => payload),
+        batch.map(({ supersededIds: _ignored, ...payload }) => payload.entityType === "note" && payload.operation === "delete" ? {...payload,payload:undefined} : payload),
         scope.scopeKey,
         subscription,
       );
@@ -572,6 +576,12 @@ export class SyncEngine {
 
       if (result.status === "applied" || result.status === "duplicate") {
         const source = byMutation.get(result.mutationId);
+        const trashStage=source?.entityType === "note" && source.operation === "upsert"
+          && rows.some(row=>row.entityType === "note" && row.entityId===source.entityId && row.operation === "delete");
+        if(trashStage && (!Number.isSafeInteger(result.version) || Number(result.version)<1)) {
+          recoverInflightMutations(this.db);
+          throw new SyncError("SERVER_ERROR","回收站阶段 ACK 缺少有效版本，删除队列与恢复副本已保留");
+        }
         if (source?.entityType === "attachment_organization" && (!Number.isSafeInteger(result.version) || Number(result.version)<1)) {
           recoverInflightMutations(this.db);
           throw new SyncError("SERVER_ERROR","附件目录 ACK 缺少有效版本");
@@ -591,6 +601,10 @@ export class SyncEngine {
             this.userId, scope.workspaceId,
           );
         })();
+        if(source?.entityType === "note" && source.operation === "delete") {
+          try { await cleanupNoteDeletionFiles(this.db,(source.payload?._deletionRecovery as {attachments?:Array<{id:string;path:string}>}|undefined)?.attachments || []); }
+          catch { /* ACK is durable; unreferenced bytes can be reclaimed by the normal orphan scan. */ }
+        }
         continue;
       }
 
@@ -640,7 +654,8 @@ export class SyncEngine {
 
     let localPayload: Record<string, unknown> | null = null;
     try {
-      localPayload = source.payload ? JSON.parse(source.payload) : null;
+      const terminal=source.entityType === "note" ? rows.find(row=>row.entityType === "note" && row.entityId===source.entityId && row.operation === "delete") : undefined;
+      localPayload = terminal?.payload ? JSON.parse(terminal.payload) : source.payload ? JSON.parse(source.payload) : null;
     } catch {
       localPayload = null;
     }

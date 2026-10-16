@@ -1,3 +1,4 @@
+import { retainedNativeDeletionAttachments } from "./nativeNoteDeletionRecovery";
 import { prepareNativeAssetBaseline, sameNativeAssetOrganization, applyNativeAssetMetadata, assertNativeAssetMetadata, nativeAssetBindingKey, NATIVE_ASSET_ENTITY_SET, readNativeAssetMetadata } from "./nativeAssetOrganization";
 import type { NativeDatabase } from "./nativeDatabase";
 import type { NativeAttachmentStore } from "./nativeAttachmentStore";
@@ -21,6 +22,7 @@ type RemoteEntityType = EntityType | "knowledge_tree_node" | "attachment_organiz
 
 interface ScopeDescriptor {
   taskRecurrenceLifecycle?: string;
+  noteDeletionLifecycle?: "trash-before-delete-v1";
   assetOrganization?: string;
   scopeKey: string;
   workspaceId: string | null;
@@ -259,6 +261,21 @@ export class MobileSyncEngine {
       localVersion:number|null;remoteVersion:number|null;localPayload:string|null;remotePayload:string|null;status:string;
     }>("SELECT * FROM sync_conflicts WHERE id=? AND profileId=?",[conflictId,this.options.profileId]))[0];
     if(!row||row.status==="resolved")return;
+    const deletion=row.entityType === "note" && row.localPayload ? JSON.parse(row.localPayload)._deletionRecovery as {note:Record<string,unknown>}|undefined : undefined;
+    if(deletion && resolution === "keep-local") {
+      const remote=row.remotePayload?JSON.parse(row.remotePayload):null;
+      if(!remote || (!remote.__delete && (!Number.isSafeInteger(row.remoteVersion) || Number(row.remoteVersion)<1))) throw new Error("缺少服务器删除基线，恢复副本已保留");
+      await this.options.db.transaction(async tx=>{
+        await tx.run("DELETE FROM sync_outbox WHERE profileId=? AND scopeKey=? AND entityType='note' AND entityId=?",[this.options.profileId,row.scopeKey,row.entityId]);
+        const enqueue=async(operation:string,payload:Record<string,unknown>,base:number|null)=>tx.run(`INSERT INTO sync_outbox
+          (id,mutationId,profileId,deviceId,scopeKey,entityType,entityId,operation,baseVersion,payload,status,retryCount,createdAt)
+          VALUES(?,?,?,?,?,'note',?,?,?,?,'pending',0,?)`,[newLocalId(),newLocalId(),this.options.profileId,this.options.deviceId,row.scopeKey,row.entityId,operation,base,JSON.stringify(payload),now()]);
+        if(!remote.__delete) await enqueue("upsert",{...deletion.note,isTrashed:1,version:Number(row.remoteVersion)+1},row.remoteVersion);
+        await enqueue("delete",JSON.parse(row.localPayload!),remote.__delete?null:Number(row.remoteVersion)+1);
+        await tx.run("UPDATE sync_conflicts SET status='resolved',resolvedAt=? WHERE id=?",[now(),row.id]);
+      });
+      this.requestSync(0);return;
+    }
     if(row.entityType==="attachment_organization") {
       if(row.scopeKey!=="personal" || resolution==="manual") throw new Error("附件目录冲突请选择本机或服务器位置");
       const remote=row.remotePayload?JSON.parse(row.remotePayload) as Record<string,unknown>:null;
@@ -399,6 +416,7 @@ export class MobileSyncEngine {
           row.remoteVersion,JSON.stringify({...payload,workspaceId:workspace}),now(),
         ]);
       }
+      if(deletion) await tx.run("UPDATE sync_state SET lastSequence=0 WHERE profileId=? AND scopeKey=?",[this.options.profileId,row.scopeKey]);
       await tx.run("UPDATE sync_conflicts SET status='resolved',resolvedAt=? WHERE id=?",[now(),conflictId]);
     });
     this.requestSync(0);
@@ -753,6 +771,27 @@ export class MobileSyncEngine {
       ORDER BY createdAt,rowid LIMIT 100`,
     [this.options.profileId,scope.scopeKey]);
     if (!rows.length || !scope.canWrite && scope.workspaceId) return;
+    for(const row of rows) if(row.entityType === "note" && row.operation === "delete" && !JSON.parse(row.payload || "{}")._deletionRecovery) {
+      await this.options.db.transaction(async tx=>{
+        const previous=(await tx.query<{payload:string}>(`SELECT payload FROM sync_outbox
+          WHERE profileId=? AND scopeKey=? AND entityType='note' AND entityId=? AND operation='upsert'
+            AND rowid<(SELECT rowid FROM sync_outbox WHERE mutationId=?) ORDER BY rowid DESC LIMIT 1`,
+          [this.options.profileId,scope.scopeKey,row.entityId,row.mutationId]))[0];
+        if(previous?.payload) {
+          row.payload=JSON.stringify({...JSON.parse(previous.payload),_deletionRecovery:{note:JSON.parse(previous.payload),attachments:[]}});
+          await tx.run("UPDATE sync_outbox SET payload=? WHERE mutationId=? AND profileId=?",[row.payload,row.mutationId,this.options.profileId]);
+        }
+      });
+    }
+    // Commit the queued trash stage before sending a terminal delete. A lost ACK replays the same IDs.
+    const earlierNotes=new Set<string>();
+    for(let i=0;i<rows.length;i++) if(rows[i].entityType==="note") {
+      if(rows[i].operation==="delete" && earlierNotes.has(rows[i].entityId)) {rows.splice(i--,1);this.rerun=true;}
+      else earlierNotes.add(rows[i].entityId);
+    }
+    if(rows.some(row=>row.entityType==="note" && row.operation==="delete") && scope.noteDeletionLifecycle!=="trash-before-delete-v1") {
+      throw syncFailure("NOTE_DELETION_UPGRADE_REQUIRED","请升级服务器以确认笔记回收站生命周期；删除队列和恢复副本已保留");
+    }
     if (rows.some(row => row.entityType === "task" && ["stop","series"].includes(JSON.parse(row.payload || "{}").recurrenceAction)) && scope.taskRecurrenceLifecycle !== "v1") {
       throw syncFailure("SERVER_ERROR","请升级服务器以同步循环任务操作；本机修改已保留");
     }
@@ -784,7 +823,7 @@ export class MobileSyncEngine {
     rows.sort((a,b)=>Number(a.entityType==="attachment_organization")-Number(b.entityType==="attachment_organization"));
     if (!rows.length) return;
     const mutations = rows.map((row) => ({ ...row,
-      baseVersion:row.baseVersion??undefined,payload:row.payload?JSON.parse(row.payload):undefined }));
+      baseVersion:row.baseVersion??undefined,payload:row.entityType==="note" && row.operation==="delete" ? undefined : row.payload?JSON.parse(row.payload):undefined }));
     // Acknowledgements rebase all unsent descendants to the confirmed version.
     // The server applies this batch in order, so later note mutations must then
     // use the revision produced by the preceding mutation of the same note.
@@ -822,11 +861,13 @@ export class MobileSyncEngine {
         validateEncryptedNoteWrite(result.serverPayload, source.payload);
       }
     }
+    const deletedAttachments:Array<{id:string}>=[];
     await this.options.db.transaction(async (tx) => {
       for (const result of response.results) {
         const source = rows.find((row) => row.mutationId===result.mutationId);
         if (result.status === "applied" || result.status === "duplicate") {
           await tx.run("DELETE FROM sync_outbox WHERE mutationId=?",[result.mutationId]);
+          if(source?.entityType === "note" && source.operation === "delete") deletedAttachments.push(...(JSON.parse(source.payload || "{}")._deletionRecovery?.attachments || []));
           if (source?.entityType === "note" && source.operation === "upsert") {
             // Edits committed during Push descend from this server revision.
             // Keep their content and calibrate the next batch's base atomically.
@@ -853,7 +894,8 @@ export class MobileSyncEngine {
         } else if (result.code === "VERSION_CONFLICT" && source) {
           const local = await this.readEntity(tx, scope.scopeKey, source.entityType, source.entityId);
           const lifecycle = source.entityType==="knowledge_tree_node" ? (await readNativeTreeLifecycleIntents(tx,this.options.profileId)).filter((intent)=>intent.id===source.entityId).at(-1) : undefined;
-          const localPayload=lifecycle?JSON.stringify({...lifecycle,sortOrder:local?.sortOrder}):local?JSON.stringify(local):source.payload;
+          const terminal=source.entityType === "note" ? (await tx.query<{payload:string}>("SELECT payload FROM sync_outbox WHERE profileId=? AND scopeKey=? AND entityType='note' AND entityId=? AND operation='delete' ORDER BY rowid DESC LIMIT 1",[this.options.profileId,scope.scopeKey,source.entityId]))[0] : undefined;
+          const localPayload=terminal?.payload || (lifecycle?JSON.stringify({...lifecycle,sortOrder:local?.sortOrder}):local?JSON.stringify(local):source.payload);
           const existing = (await tx.query<{id:string}>(`SELECT id FROM sync_conflicts WHERE profileId=? AND scopeKey=?
             AND entityType=? AND entityId=? AND status='unresolved' LIMIT 1`,
           [this.options.profileId,scope.scopeKey,source.entityType,source.entityId]))[0];
@@ -879,6 +921,14 @@ export class MobileSyncEngine {
       }
     });
     if (rows.length === 100 && response.results.some((result) => result.status === "applied" || result.status === "duplicate")) this.rerun = true;
+    if(deletedAttachments.length) {
+      const retained=await retainedNativeDeletionAttachments(this.options.db);
+      for(const attachment of deletedAttachments) {
+        if(retained.has(attachment.id) || (await this.options.db.query("SELECT id FROM attachments WHERE id=?",[attachment.id])).length) continue;
+        await this.options.attachments.remove(attachment.id).catch(()=>undefined);
+      }
+    }
+
   }
 
   private async pull(scope: ScopeDescriptor): Promise<void> {

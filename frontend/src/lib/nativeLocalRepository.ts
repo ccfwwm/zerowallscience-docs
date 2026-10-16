@@ -1,3 +1,4 @@
+import { retainedNativeDeletionAttachments } from "./nativeNoteDeletionRecovery";
 import type { Note, NoteListItem, Notebook, Tag, Task, Workspace, WorkspaceRole } from "@/types";
 import { taskRemovalIds, type TaskRemovalMode } from "./taskRecurrenceRemoval";
 import {
@@ -384,17 +385,21 @@ export class NativeLocalRepository implements LocalRepository {
     const notes=await this.db.query<{id:string;version:number}>("SELECT id,version FROM notes WHERE scopeKey=? AND isTrashed=1",[scopeKey]);
     const attachments=await this.db.query<{id:string}>(`SELECT a.id FROM attachments a JOIN notes n
       ON n.scopeKey=a.scopeKey AND n.id=a.noteId WHERE n.scopeKey=? AND n.isTrashed=1`,[scopeKey]);
+    let syncEnabled=false;
     await this.db.transaction(async(tx)=>{
+      syncEnabled=Boolean(await this.syncContext(tx));
       for(const note of notes){
-        await tx.run("DELETE FROM notes WHERE scopeKey=? AND id=?",[scopeKey,note.id]);
-        await tx.run("DELETE FROM native_runtime_meta WHERE key=?", [unsentLocalNoteKey(scopeKey, note.id)]);
-        await this.enqueue(tx,"note",note.id,"delete",undefined,note.version,scopeKey);
+        const latest=await this.getNote(note.id,tx,scopeKey);
+        if(latest) await this.deleteTrashedNote(tx,latest,scopeKey);
       }
     });
     if (notes.length) notifyMobileSyncStatusChanged();
-    await Promise.all(attachments.map(({id})=>this.attachmentStore.remove(id).catch(()=>undefined)));
+    if(!syncEnabled) {
+      const retained=await retainedNativeDeletionAttachments(this.db);
+      await Promise.all(attachments.filter(({id})=>!retained.has(id)).map(({id})=>this.attachmentStore.remove(id).catch(()=>undefined)));
+    }
     for(const {id} of attachments)this.attachmentUrls.delete(id);
-    return {success:true,count:notes.length,skipped:0,noteIds:notes.map(({id})=>id),removedFiles:attachments.length};
+    return {success:true,count:notes.length,skipped:0,noteIds:notes.map(({id})=>id),removedFiles:syncEnabled?0:attachments.length};
   }
 
   private scope(): { scopeKey: string; workspaceId: string | null } {
@@ -753,6 +758,18 @@ export class NativeLocalRepository implements LocalRepository {
     return result;
   }
 
+  private async deleteTrashedNote(tx:NativeDatabase,note:Note,scopeKey:string):Promise<void> {
+    if(note.isLocked===1) throw Object.assign(new Error("Note is locked"),{code:"NOTE_LOCKED",status:403});
+    if(note.isTrashed!==1) throw Object.assign(new Error("请先将笔记移入回收站，再永久删除"),{code:"NOTE_NOT_TRASHED",status:409});
+    const attachments=await tx.query<Record<string,unknown>>("SELECT * FROM attachments WHERE scopeKey=? AND noteId=?",[scopeKey,note.id]);
+    const tree=await tx.query("SELECT * FROM native_knowledge_tree_nodes WHERE scopeKey=? AND resourceType='note' AND resourceId=?",[scopeKey,note.id]);
+    await this.enqueue(tx,"note",note.id,"delete",{...note,_deletionRecovery:{note,attachments,tree}},note.version,scopeKey);
+    await tx.run("UPDATE native_knowledge_tree_nodes SET parentId=NULL WHERE scopeKey=? AND parentId IN (SELECT id FROM native_knowledge_tree_nodes WHERE scopeKey=? AND resourceType='note' AND resourceId=?)",[scopeKey,scopeKey,note.id]);
+    await tx.run("DELETE FROM native_knowledge_tree_nodes WHERE scopeKey=? AND resourceType='note' AND resourceId=?",[scopeKey,note.id]);
+    await tx.run("DELETE FROM notes WHERE scopeKey=? AND id=?",[scopeKey,note.id]);
+    await tx.run("DELETE FROM native_runtime_meta WHERE key=?",[unsentLocalNoteKey(scopeKey,note.id)]);
+  }
+
   private async removeNote(id: string): Promise<void> {
     const current = await this.getNote(id);
     if (!current) return;
@@ -761,15 +778,7 @@ export class NativeLocalRepository implements LocalRepository {
     await this.db.transaction(async (tx) => {
       const latest = await this.getNote(id, tx, scope.scopeKey);
       if (!latest) return;
-      if (latest.isLocked === 1) {
-        throw Object.assign(new Error("Note is locked"), { code: "NOTE_LOCKED", status: 403 });
-      }
-      if (latest.isTrashed !== 1) {
-        throw Object.assign(new Error("请先将笔记移入回收站，再永久删除"), { code: "NOTE_NOT_TRASHED", status: 409 });
-      }
-      await tx.run("DELETE FROM notes WHERE scopeKey=? AND id=?", [scope.scopeKey, id]);
-      await tx.run("DELETE FROM native_runtime_meta WHERE key=?", [unsentLocalNoteKey(scope.scopeKey, id)]);
-      await this.enqueue(tx, "note", id, "delete", undefined, latest.version, scope.scopeKey);
+      await this.deleteTrashedNote(tx,latest,scope.scopeKey);
     });
     notifyMobileSyncStatusChanged();
   }

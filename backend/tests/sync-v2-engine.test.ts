@@ -247,7 +247,7 @@ test("同一实体的连续 update 合并为最新状态", () => {
   assert.equal(merged[0].supersededIds.length, 2, "被合并的条目要记账以便一并出队");
 });
 
-test("update + delete 合并后保留 delete", () => {
+test("note update + delete 保留待确认写入，永久删除留在队列", () => {
   resetSyncTables();
   const db = getDb();
   const { profileId } = createEngine();
@@ -264,7 +264,9 @@ test("update + delete 合并后保留 delete", () => {
 
   const merged = sync.coalesceMutations(sync.listPendingMutations(db, 100));
   assert.equal(merged.length, 1);
-  assert.equal(merged[0].operation, "delete");
+  assert.equal(merged[0].operation, "upsert");
+  assert.equal(sync.listPendingMutations(db,100).filter(row=>row.operation==="delete").length,1);
+  assert.equal(merged[0].supersededIds.length,0);
 });
 
 test("合并保留最早的 baseVersion，避免漏判与远端的真实冲突", () => {
@@ -998,4 +1000,24 @@ test("诊断状态暴露定位同步问题所需的全部字段", async () => {
   assert.equal(typeof status.pendingMutations, "number");
   assert.equal(typeof status.conflictCount, "number");
   assert.ok(status.lastPullAt, "应记录最近拉取时间");
+});
+
+test("legacy terminal delete is held for an older server without discarding its mutation or recovery body",async()=>{
+  resetSyncTables();const db=getDb(),{engine,remote,profileId}=createEngine();
+  const mutationId=sync.enqueueMutation(db,{entityType:"note",entityId:"old-server-delete",operation:"delete",deviceId:DEVICE_ID,profileId,baseVersion:1,payload:{content:"retained",_deletionRecovery:{note:{content:"retained"},attachments:[]}}});
+  await engine.syncOnce();
+  assert.equal(remote.pushCalls.length,0);
+  const pending=sync.listPendingMutations(db,100,profileId).find(row=>row.mutationId===mutationId)!;
+  assert.equal(JSON.parse(pending.payload!).content,"retained");
+});
+
+test("a missing trash-stage ACK version cannot dequeue the stage before permanent deletion",async()=>{
+  resetSyncTables();const db=getDb(),{engine,remote,profileId}=createEngine();
+  const trash=sync.enqueueMutation(db,{entityType:"note",entityId:"bad-trash-ack",operation:"upsert",deviceId:DEVICE_ID,profileId,baseVersion:1,payload:{content:"retained",isTrashed:1}});
+  const permanent=sync.enqueueMutation(db,{entityType:"note",entityId:"bad-trash-ack",operation:"delete",deviceId:DEVICE_ID,profileId,baseVersion:2,payload:{content:"retained",_deletionRecovery:{note:{content:"retained"},attachments:[]}}});
+  // FakeRemote deliberately omits the version; a real trash-stage ACK must supply it.
+  await engine.syncOnce();
+  assert.equal(remote.pushCalls.length,1);
+  const ids=sync.listPendingMutations(db,100,profileId).map(row=>row.mutationId);
+  assert.ok(ids.includes(trash!));assert.ok(ids.includes(permanent!));
 });

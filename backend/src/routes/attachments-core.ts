@@ -1,3 +1,4 @@
+import { pendingNoteDeletionAttachments } from "../sync/noteDeletion";
 import { retainAttachmentInTrash } from "../services/attachment-trash";
 /**
  * 附件管理路由（/api/attachments）
@@ -171,7 +172,7 @@ export function deleteAttachmentFilesByNoteIds(noteIds: string[]): number {
 
   // 引用计数：哪些 path 在"待死名单"以外还有活引用？这些 path 的物理文件不能删。
   const dyingPaths = Array.from(new Set(rows.map((r) => r.path).filter(Boolean)));
-  const livePaths = new Set<string>();
+  const livePaths = new Set(pendingNoteDeletionAttachments(db).map(attachment=>attachment.path));
   if (dyingPaths.length > 0) {
     try {
       for (let offset = 0; offset < dyingPaths.length; offset += QUERY_CHUNK_SIZE) {
@@ -1181,6 +1182,8 @@ export function scanOrphanAttachments(graceHours = 24): OrphanScanResult {
   const dbFilenames = new Set([
     ...dbRows.map((r) => r.path),
     ...templatePaths.map((r) => r.path),
+    ...pendingNoteDeletionAttachments(db).map((r)=>r.path),
+    ...(db.prepare("SELECT attachments FROM sync_note_deletion_cleanup").all() as {attachments:string}[]).flatMap(row=>(JSON.parse(row.attachments) as {path:string}[]).map(a=>a.path)),
   ]);
 
   // 3) DB 孤儿：磁盘有 + DB 无

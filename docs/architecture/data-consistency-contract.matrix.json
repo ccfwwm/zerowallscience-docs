@@ -23,6 +23,7 @@
       "title": "本地业务写入与 Outbox 变更应在持久化后可恢复",
       "status": "covered",
       "checks": [
+        {"file": "backend/tests/sync-v2-note-deletion-lifecycle.test.ts", "case": "desktop delete durably retains the last body and attachment bytes until the delete ACK"},
         { "file": "backend/tests/asset-ai.test.ts", "case": "a database failure rolls back metadata, folders, tags, result records and existing Outbox" },
         { "file": "backend/tests/asset-ai.test.ts", "case": "desktop sync refuses unsynced AI metadata writes rather than claiming success" },
         { "file": "backend/tests/asset-visual-tools.test.ts", "case": "batch rename captures existing attachment mutations atomically and rolls back names and Outbox on failure" },
@@ -86,6 +87,7 @@
       "title": "断网、服务端失败或停止调度不得静默丢弃待同步修改",
       "status": "covered",
       "checks": [
+        {"file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native offline trash then permanent delete acknowledges trash before deletion and replays a lost ACK"},
         { "file": "backend/tests/asset-organization-sync.test.ts", "case": "desktop directory CRUD captures durable organization mutations and converges through real Sync V2 routes" },
         {
           "file": "frontend/src/lib/__tests__/taskOfflineApi.test.ts",
@@ -122,6 +124,7 @@
       "title": "冲突必须保留本机意图和服务端版本，不能静默覆盖",
       "status": "covered",
       "checks": [
+        {"file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native deletion conflicts preserve both bodies and honor explicit keep-local and keep-remote choices"},
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent asset folder edits preserve both versions and explicit keep-local converges" },
         {
           "file": "backend/tests/sync-v2-mobile-multidevice.test.ts",
@@ -208,6 +211,7 @@
       "title": "删除必须以明确的删除操作或墓碑同步",
       "status": "covered",
       "checks": [
+        {"file": "backend/tests/sync-v2-note-deletion-lifecycle.test.ts", "case": "direct Sync delete refuses an active note without changing body, tree, history or attachments"},
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "asset tombstones reject stale offline resurrection without losing the offline name" },
         {
           "file": "frontend/src/lib/__tests__/nativeLocalNoteOrigin.test.ts",
@@ -268,6 +272,7 @@
       "title": "不完整备份不可直接覆盖线上数据，失败要回滚",
       "status": "covered",
       "checks": [
+        {"file": "backend/tests/sync-v2-note-deletion-lifecycle.test.ts", "case": "failed mutation ledger rolls back deletion, cleanup job and knowledge tree atomically"},
         { "file": "backend/tests/asset-organization-sync.test.ts", "case": "incoming trash visibility cannot reopen a previously public link after restoration" },
         { "file": "backend/tests/asset-organization-sync.test.ts", "case": "asset migration preserves queue order, failed retry state, conflict history and the feed high-water mark" },
         {
@@ -419,6 +424,7 @@
       "title": "Native independent SQLite clients preserve durable edits across sync failures",
       "status": "covered",
       "checks": [
+        {"file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "native permanent deletion retains its recoverable body and attachment metadata in the durable Outbox"},
         { "file": "frontend/src/lib/__tests__/assetAITransport.test.ts", "case": "Native local mode refuses every new AI transport before making a network request" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "concurrent asset folder edits preserve both versions and explicit keep-local converges" },
         { "file": "backend/tests/sync-v2-mobile-multidevice.test.ts", "case": "three independent SQLite clients converge bidirectionally" },

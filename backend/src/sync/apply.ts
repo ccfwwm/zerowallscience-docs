@@ -1,3 +1,4 @@
+import { assertPermanentNoteDeletion } from "./noteDeletion";
 import { applyAssetOrganization } from "./assetOrganization";
 import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
 import { invalidTaskDateField } from "../lib/taskDates.js";
@@ -208,10 +209,17 @@ function applyNote(db: Database.Database, input: ApplyMutationInput): number | n
     | undefined;
 
   if (input.operation === "delete") {
-    if (!existing) return null; // 已不存在：delete 天然幂等
-    if (input.baseVersion !== undefined && existing.version !== input.baseVersion) {
+    if (!existing) {
+      if(db.prepare("SELECT 1 FROM notes WHERE id=?").get(input.entityId)) throw new SyncError("SCOPE_FORBIDDEN","笔记不属于当前同步空间");
+      return null; // Already deleted: idempotent without reviving the note.
+    }
+    if (input.baseVersion === undefined || existing.version !== input.baseVersion) {
       throw new SyncError("VERSION_CONFLICT", `服务端版本 ${existing.version}`);
     }
+    assertPermanentNoteDeletion(db,input.entityId,input.userId);
+    const attachments=db.prepare("SELECT id,path FROM attachments WHERE noteId=?").all(input.entityId);
+    db.prepare("INSERT INTO sync_note_deletion_cleanup(mutationId,noteId,attachments) VALUES(?,?,?)")
+      .run(input.mutationId,input.entityId,JSON.stringify(attachments));
     db.prepare(`DELETE FROM notes WHERE id = ? AND workspaceId IS ?
       AND (? IS NOT NULL OR userId = ?)`)
       .run(input.entityId, workspaceIdOf(input), workspaceIdOf(input), input.userId);
