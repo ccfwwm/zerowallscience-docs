@@ -40,10 +40,14 @@ export class NowenApiClient {
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.username = config.username;
     this.password = config.password;
+    this.token = process.env.NOWEN_API_TOKEN?.trim() || null;
   }
 
   /** 登录获取 JWT Token */
   private async login(): Promise<void> {
+    if (!this.username || !this.password) {
+      throw new Error("请设置 NOWEN_API_TOKEN，或显式配置 NOWEN_USERNAME 和 NOWEN_PASSWORD；MCP 不再尝试默认管理员凭据");
+    }
     const res = await fetch(`${this.baseUrl}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -92,6 +96,9 @@ export class NowenApiClient {
 
     // Token 过期，重新登录后重试
     if (res.status === 401) {
+      if (process.env.NOWEN_API_TOKEN?.trim()) {
+        throw new Error("NOWEN_API_TOKEN 无效、已过期或权限不足；不会自动回退到账号密码");
+      }
       this.token = null;
       await this.login();
       headers["Authorization"] = `Bearer ${this.token}`;
