@@ -16,6 +16,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { NowenApiClient } from "./api-client.js";
 import { registerP1Tools } from "./p1-tools.js";
+import { registerP2Tools } from "./p2-tools.js";
 import { treeMutationRevision, treeMutationPreconditions, type TreeMutationNode } from "./tree-mutation.js";
 import {
   CONTENT_FORMAT_VALUES,
@@ -40,6 +41,7 @@ function requireDangerousToolOptIn(toolName: string): void {
 }
 
 // ===== 创建 MCP Server =====
+export function createNowenMcpServer(): McpServer {
 const server = new McpServer({
   name: "nowen-note",
   version: "1.0.0",
@@ -1277,10 +1279,14 @@ server.resource(
 
 // 注册 P1 安全网盘和任务成果转存工具。
 registerP1Tools(server, api);
+registerP2Tools(server, api);
+return server;
+}
 
 // ==================== 启动 ====================
 
 export async function main() {
+  const server = createNowenMcpServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error(`🚀 Nowen Note MCP Server 已启动`);
@@ -1288,4 +1294,4 @@ export async function main() {
   console.error(`   用户: ${config.username}`);
 }
 
-await main();
+
