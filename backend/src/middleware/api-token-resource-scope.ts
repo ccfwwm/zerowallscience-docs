@@ -217,6 +217,9 @@ function requiredScope(pathname: string, method: string): string | null {
   if (pathname.startsWith("/api/notes")) return write ? "notes:write" : "notes:read";
   if (pathname.startsWith("/api/blocks")) return write ? "notes:write" : "notes:read";
   if (pathname.startsWith("/api/search")) return "notes:read";
+  if (pathname.startsWith("/api/attachment-folders") || pathname.startsWith("/api/attachment-trash")) {
+    return write ? "attachments:write" : "notes:read";
+  }
   if (pathname.startsWith("/api/files") || pathname.startsWith("/api/attachments")) {
     return write ? "attachments:write" : "notes:read";
   }
@@ -331,6 +334,107 @@ function fileBelongsToScope(ctx: TokenAccessContext, file: any): boolean {
     for (const ref of file.references) if (ref?.notebookId) ids.add(ref.notebookId);
   }
   return Array.from(ids).some((id) => canRead(ctx, id));
+}
+
+/** File-manager folders have no notebook binding: scoped PATs must not enumerate or mutate them. */
+function requirePersonalFileManagerToken(ctx: TokenAccessContext, c: Context): void {
+  if (ctx.resourceMode !== "unrestricted") {
+    throw new ApiTokenAccessError("个人网盘操作需要未限定笔记本资源的 Token", "API_TOKEN_RESOURCE_DENIED");
+  }
+  if (c.req.query("workspaceId") && c.req.query("workspaceId") !== "personal") {
+    throw new ApiTokenAccessError("MCP 网盘仅支持个人空间", "API_TOKEN_RESOURCE_DENIED");
+  }
+}
+
+function assertPersonalManagedFile(ctx: TokenAccessContext, fileId: string): void {
+  const file = getDb().prepare("SELECT userId,workspaceId,uploadSource FROM attachments WHERE id=?")
+    .get(fileId) as { userId: string; workspaceId: string | null; uploadSource: string | null } | undefined;
+  if (!file || file.userId !== ctx.userId || file.workspaceId !== null || file.uploadSource !== "file_manager") {
+    throw new ApiTokenAccessError("MCP 只能管理本人个人网盘上传的文件", "API_TOKEN_RESOURCE_DENIED");
+  }
+}
+
+async function handlePersonalFileManagement(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
+  requirePersonalFileManagerToken(ctx, c);
+  const path = c.req.path;
+  const method = c.req.method.toUpperCase();
+  if (path === "/api/attachment-folders" || path === "/api/attachment-folders/") {
+    if (!["GET", "POST"].includes(method)) throw new ApiTokenAccessError("文件夹接口不允许此操作", "API_TOKEN_ENDPOINT_DENIED");
+    await next();
+    return;
+  }
+  const folder = /^\/api\/attachment-folders\/([^/]+)$/.exec(path);
+  if (folder) {
+    if (method !== "PATCH") throw new ApiTokenAccessError("MCP 禁止删除文件夹", "API_TOKEN_ENDPOINT_DENIED");
+    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+    if (typeof body.expectedName !== "string" || !Object.hasOwn(body, "expectedParentId")) {
+      throw new ApiTokenAccessError("请先预览文件夹并提交原名称和位置", "MCP_PREVIEW_REQUIRED", 409);
+    }
+    const row = getDb().prepare("SELECT name,parentId FROM attachment_folders WHERE id=? AND userId=?")
+      .get(decodeURIComponent(folder[1]), ctx.userId) as { name: string; parentId: string | null } | undefined;
+    if (!row || row.name !== body.expectedName || row.parentId !== body.expectedParentId) {
+      throw new ApiTokenAccessError("文件夹名称或位置已改变，请重新预览", "MCP_FOLDER_CONFLICT", 409);
+    }
+    await next();
+    return;
+  }
+  if (path === "/api/files/batch-move" && method === "POST") {
+    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+    if (!Array.isArray(body.ids) || body.ids.length < 1 || body.ids.length > 50
+        || body.ids.some((id) => typeof id !== "string" || !id)) {
+      throw new ApiTokenAccessError("单次仅允许整理 1 至 50 个文件", "API_TOKEN_ENDPOINT_DENIED");
+    }
+    if (!body.expectedFolderIds || typeof body.expectedFolderIds !== "object" || Array.isArray(body.expectedFolderIds)) {
+      throw new ApiTokenAccessError("缺少预览时的文件位置快照", "MCP_PREVIEW_REQUIRED", 409);
+    }
+    for (const id of body.ids) assertPersonalManagedFile(ctx, id);
+    await next();
+    return;
+  }
+  const file = /^\/api\/files\/([^/]+)$/.exec(path);
+  if (file) {
+    const id = decodeURIComponent(file[1]);
+    if (method === "GET") { assertPersonalManagedFile(ctx, id); await next(); return; }
+    if (!["PATCH", "DELETE"].includes(method)) throw new ApiTokenAccessError("不允许此文件操作", "API_TOKEN_ENDPOINT_DENIED");
+    assertPersonalManagedFile(ctx, id);
+    if (method === "DELETE") {
+      throw new ApiTokenAccessError("P1 禁止通过 MCP 删除网盘文件；只允许管理回收站恢复", "API_TOKEN_ENDPOINT_DENIED");
+    }
+    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+    if (typeof body.expectedFilename !== "string" || typeof body.filename !== "string") {
+      throw new ApiTokenAccessError("重命名必须提交原文件名与新文件名", "MCP_PREVIEW_REQUIRED", 409);
+    }
+    await next();
+    return;
+  }
+  if (path === "/api/attachment-trash" || path === "/api/attachment-trash/") {
+    if (method !== "GET") throw new ApiTokenAccessError("回收站列表仅可读取", "API_TOKEN_ENDPOINT_DENIED");
+    await next();
+    if (c.res.status >= 200 && c.res.status < 300) {
+      await replaceFilteredResponse(c, (data) => {
+        if (!data || !Array.isArray(data.entries)) return data;
+        const entries = data.entries.filter((item: any) => {
+          try { assertPersonalManagedFile(ctx, item.id); return true; } catch { return false; }
+        });
+        return { ...data, entries, total: entries.length };
+      });
+    }
+    return;
+  }
+  if (path === "/api/attachment-trash/restore" && method === "POST") {
+    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+    if (!Array.isArray(body.ids) || body.ids.length < 1 || body.ids.length > 50
+        || !body.expectedTrashedAt || typeof body.expectedTrashedAt !== "object" || Array.isArray(body.expectedTrashedAt)) {
+      throw new ApiTokenAccessError("恢复需要 1 至 50 个文件和回收站时间快照", "MCP_PREVIEW_REQUIRED", 409);
+    }
+    for (const id of body.ids) {
+      if (typeof id !== "string") throw new ApiTokenAccessError("文件 ID 无效", "API_TOKEN_ENDPOINT_DENIED");
+      assertPersonalManagedFile(ctx, id);
+    }
+    await next();
+    return;
+  }
+  throw new ApiTokenAccessError("MCP 禁止此网盘管理接口或永久清理", "API_TOKEN_ENDPOINT_DENIED");
 }
 
 async function handleFiles(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
@@ -844,6 +948,13 @@ export async function enforceApiTokenAccess(c: Context, next: Next): Promise<Res
     }
     if (c.req.path === "/api/knowledge-tree" || c.req.path.startsWith("/api/knowledge-tree/")) {
       await handleTokenKnowledgeTree(c, next, ctx);
+      return;
+    }
+    if (c.req.path.startsWith("/api/attachment-folders")
+      || c.req.path.startsWith("/api/attachment-trash")
+      || c.req.path === "/api/files/batch-move"
+      || (c.req.path.startsWith("/api/files/") && ["PATCH", "DELETE"].includes(c.req.method.toUpperCase()))) {
+      await handlePersonalFileManagement(c, next, ctx);
       return;
     }
 
