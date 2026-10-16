@@ -14,6 +14,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { NowenApiClient } from "./api-client.js";
+import { treeMutationRevision, treeMutationPreconditions, type TreeMutationNode } from "./tree-mutation.js";
 import {
   CONTENT_FORMAT_VALUES,
   buildCreateNotePayload,
@@ -960,6 +961,144 @@ server.tool(
       }
       const moved = await api.updateNote(noteId, { notebookId: targetNotebookId, version, writeSource: "mcp" });
       return { content: [{ type: "text" as const, text: JSON.stringify({ id: moved.id, notebookId: moved.notebookId, version: moved.version }, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+// ==================== P0: 知识树安全变更 ====================
+
+const treeOperationShape = {
+  operation: z.enum(["create", "rename", "move", "trash", "restore"]),
+  nodeId: z.string().min(1).optional().describe("要修改的知识树节点 ID；create 时可省略"),
+  parentId: z.string().min(1).optional().describe("create/move 需要目标文件夹节点 ID"),
+  title: z.string().trim().min(1).max(120).optional().describe("create/rename 使用的新名称"),
+  nodeType: z.enum(["folder", "markdown"]).optional().describe("create 使用，默认 folder"),
+};
+
+async function prepareTreeOperation(params: {
+  operation: "create" | "rename" | "move" | "trash" | "restore";
+  nodeId?: string;
+  parentId?: string;
+  title?: string;
+  nodeType?: "folder" | "markdown";
+}) {
+  const catalog = await api.getKnowledgeTree("personal", true);
+  const nodes = (Array.isArray(catalog?.nodes) ? catalog.nodes : []) as TreeMutationNode[];
+  const { operation, nodeId, parentId, title } = params;
+  if ((operation === "create" || operation === "rename") && !title?.trim()) {
+    throw new Error("创建或重命名时必须填写非空 title");
+  }
+  if ((operation === "create" || operation === "move") && !parentId) {
+    throw new Error("创建或移动必须指定目标文件夹 parentId");
+  }
+  if (operation !== "create" && !nodeId) throw new Error("必须指定 nodeId");
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const source = operation === "create" ? byId.get(parentId!) : byId.get(nodeId!);
+  if (!source) throw new Error("源节点或创建位置不存在，或者当前 Token 没有访问权限");
+  if (source.workspaceId != null) throw new Error("MCP P0 仅支持个人知识树操作");
+  if (operation === "create" && (source.isDeleted || source.resourceType !== "notebook")) {
+    throw new Error("只允许在有效文件夹下创建笔记或文件夹");
+  }
+  if (operation !== "create" && !["note", "notebook"].includes(source.resourceType)) {
+    throw new Error("只允许修改普通笔记或文件夹，其他资源类型暂不开放");
+  }
+  const target = parentId ? byId.get(parentId) : null;
+  if (parentId && (!target || target.workspaceId != null || target.isDeleted || target.resourceType !== "notebook")) {
+    throw new Error("目标文件夹不存在或不属于个人空间");
+  }
+  const isSubtree = ["move", "trash", "restore"].includes(operation);
+  const previewId = operation === "create" ? parentId! : nodeId!;
+  const revision = treeMutationRevision(nodes, previewId);
+  const subtreeRevision = isSubtree ? treeMutationRevision(nodes, previewId, true) : undefined;
+  const affectedNodeIds = isSubtree ? nodes.filter((node) => {
+    let current: TreeMutationNode | undefined = node;
+    const visited = new Set<string>();
+    while (current && !visited.has(current.id)) {
+      if (current.id === previewId) return true;
+      visited.add(current.id);
+      current = current.parentId ? byId.get(current.parentId) : undefined;
+    }
+    return false;
+  }).map((node) => node.id) : [previewId];
+  if (affectedNodeIds.length > 10000) throw new Error("受影响节点过多，请拆分操作");
+  return {
+    nodes, source, target, revision, subtreeRevision,
+    preconditions: treeMutationPreconditions(source, subtreeRevision),
+    affectedNodeIds,
+  };
+}
+
+server.tool(
+  "nowen_preview_knowledge_tree_change",
+  "预览创建、重命名、移动、回收站或恢复操作；不修改任何数据。返回修订指纹，实际操作前必须向用户确认",
+  treeOperationShape,
+  async (params) => {
+    try {
+      const plan = await prepareTreeOperation(params);
+      return {
+        content: [{
+          type: "text" as const,
+          text: JSON.stringify({
+            dryRun: true, operation: params.operation, nodeId: params.nodeId,
+            parentId: params.parentId, title: params.title, nodeType: params.nodeType || "folder",
+            source: {
+              id: plan.source.id, title: plan.source.title,
+              parentId: plan.source.parentId, isDeleted: Boolean(plan.source.isDeleted),
+            },
+            target: plan.target ? { id: plan.target.id, title: plan.target.title } : null,
+            affectedCount: plan.affectedNodeIds.length,
+            affectedNodeIds: plan.affectedNodeIds.slice(0, 30),
+            revision: plan.revision, subtreeRevision: plan.subtreeRevision,
+            nextStep: "征得用户确认后，在 nowen_apply_knowledge_tree_change 中填写相同参数、revision 和 confirmation。",
+          }, null, 2),
+        }],
+      };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "nowen_apply_knowledge_tree_change",
+  "在用户确认后执行知识树变更；必须先调用预览并提交匹配的 revision。删除仅移动至可恢复的回收站，绝不永久删除",
+  {
+    ...treeOperationShape,
+    expectedRevision: z.string().regex(/^[0-9a-f]{64}$/).describe("必须填写上次预览得到的 revision"),
+    expectedSubtreeRevision: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+    confirmation: z.enum(["APPLY_TREE_CHANGE", "MOVE_TREE_TO_TRASH", "RESTORE_TREE"])
+      .describe("删除必须 MOVE_TREE_TO_TRASH；恢复必须 RESTORE_TREE；其余操作 APPLY_TREE_CHANGE"),
+  },
+  async (params) => {
+    try {
+      const { operation, nodeId, parentId, title, nodeType, expectedRevision, expectedSubtreeRevision, confirmation } = params;
+      const requiredConfirmation = operation === "trash" ? "MOVE_TREE_TO_TRASH"
+        : operation === "restore" ? "RESTORE_TREE" : "APPLY_TREE_CHANGE";
+      if (confirmation !== requiredConfirmation) throw new Error("未提供本次操作要求的明确确认");
+      const plan = await prepareTreeOperation(params);
+      if (plan.revision !== expectedRevision) throw new Error("目录在预览后发生变化，请重新预览");
+      if (plan.subtreeRevision !== expectedSubtreeRevision) {
+        throw new Error("子目录内容在预览后发生变化，请重新预览，防止误操作");
+      }
+      const preconditions = plan.preconditions;
+      let result: any;
+      if (operation === "create") {
+        result = await api.createKnowledgeNode({
+          parentId: parentId!, title: title!.trim(), nodeType: nodeType || "folder",
+          ...preconditions,
+        });
+      } else if (operation === "rename") {
+        result = await api.renameKnowledgeNode(nodeId!, { title: title!.trim(), ...preconditions });
+      } else if (operation === "move") {
+        result = await api.moveKnowledgeNode(nodeId!, { parentId: parentId!, ...preconditions });
+      } else if (operation === "trash") {
+        result = await api.trashKnowledgeNode(nodeId!, preconditions);
+      } else {
+        result = await api.restoreKnowledgeNode(nodeId!, { includeSubtree: true, ...preconditions });
+      }
+      return { content: [{ type: "text" as const, text: JSON.stringify({ applied: true, operation, result }, null, 2) }] };
     } catch (error: any) {
       return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
     }
