@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { getDb } from "../db/schema";
 import { listKnowledgeTree } from "../services/knowledgeTree.js";
+import { createHash } from "node:crypto";
 import { hasPermission, resolveNotebookPermission } from "./acl";
 import { logAudit } from "../services/audit";
 
@@ -517,16 +518,49 @@ function assertTreeSubtreeForToken(ctx: TokenAccessContext, nodeId: string): voi
   for (const id of treeDescendants(nodeId)) assertTreeNodeForToken(ctx, id, true);
 }
 
-function assertTreeMutationPrecondition(ctx: TokenAccessContext, nodeId: string, body: Record<string, unknown>): void {
+function calculateTreeRevision(
+  nodes: Array<{ id: string; parentId: string | null; resourceType: string; resourceId: string;
+    title: string; updatedAt: string; isDeleted: number; childCount: number }>,
+  nodeId: string,
+  subtree = false,
+): string {
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  const visited = new Set<string>([nodeId]);
+  if (subtree) {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const node of nodes) {
+        if (node.parentId && visited.has(node.parentId) && !visited.has(node.id)) {
+          visited.add(node.id);
+          changed = true;
+        }
+      }
+    }
+  }
+  return createHash("sha256").update(JSON.stringify(Array.from(visited).sort().map((id) => {
+    const node = byId.get(id)!;
+    return [node.id, node.parentId, node.resourceType, node.resourceId,
+      node.title, node.updatedAt, node.isDeleted, node.childCount];
+  }))).digest("hex");
+}
+
+function assertTreeMutationPrecondition(
+  ctx: TokenAccessContext,
+  nodeId: string,
+  body: Record<string, unknown>,
+  subtree = false,
+): void {
   const required = ["expectedUpdatedAt", "expectedTitle", "expectedParentId", "expectedChildCount"];
-  if (required.some((key) => !(key in body))) {
+  if (required.some((key) => !(key in body)) || (subtree && !body.expectedSubtreeRevision)) {
     throw new ApiTokenAccessError("请先预览目录状态并提交完整预期版本", "MCP_PREVIEW_REQUIRED", 409);
   }
-  const node = listKnowledgeTree({ userId: ctx.userId, workspaceId: null, includeDeleted: true })
-    .find((item: any) => item.id === nodeId);
+  const nodes = listKnowledgeTree({ userId: ctx.userId, workspaceId: null, includeDeleted: true });
+  const node = nodes.find((item) => item.id === nodeId);
   if (!node || node.updatedAt !== body.expectedUpdatedAt || node.title !== body.expectedTitle
-      || node.parentId !== body.expectedParentId || node.childCount !== body.expectedChildCount) {
-    throw new ApiTokenAccessError("目录状态已变化，请重新预览后操作", "MCP_TREE_VERSION_CONFLICT", 409);
+      || node.parentId !== body.expectedParentId || node.childCount !== body.expectedChildCount
+      || (subtree && calculateTreeRevision(nodes, nodeId, true) !== body.expectedSubtreeRevision)) {
+    throw new ApiTokenAccessError("目录或子树状态已变化，请重新预览后操作", "MCP_TREE_VERSION_CONFLICT", 409);
   }
 }
 
@@ -598,6 +632,11 @@ async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccess
       assertTreeNodeForToken(ctx, body.parentId, true);
     }
     if (body.nodeType === "markdown") requireScope(ctx, "notes:write");
+    if (typeof body.parentId === "string") {
+      assertTreeMutationPrecondition(ctx, body.parentId, body);
+    } else if ("expectedUpdatedAt" in body) {
+      throw new ApiTokenAccessError("根目录创建不能伪造父节点预期版本", "MCP_PREVIEW_REQUIRED", 409);
+    }
     await next();
     return;
   }
@@ -621,7 +660,7 @@ async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccess
     throw new ApiTokenAccessError("MCP 禁止提升子节点的删除模式", "API_TOKEN_ENDPOINT_DENIED");
   }
   assertTreeNodeForToken(ctx, nodeId, true);
-  assertTreeMutationPrecondition(ctx, nodeId, body);
+  assertTreeMutationPrecondition(ctx, nodeId, body, method === "PUT" || method === "DELETE" || method === "POST");
   if (method === "PUT") {
     if (!("parentId" in body) || (body.parentId !== null && typeof body.parentId !== "string")) {
       throw new ApiTokenAccessError("必须明确目标 parentId", "API_TOKEN_ENDPOINT_DENIED");
