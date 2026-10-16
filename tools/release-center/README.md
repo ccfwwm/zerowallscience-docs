@@ -27,7 +27,7 @@ npm start
 
 Token 最小权限：目标仓库 Contents 读取、Actions 读取；启用调试才需要 Actions 写入。**不需要 Contents 写入、Packages 写入或商店凭据**。Token 从服务进程环境读取；不接受浏览器提交，不返回浏览器，不传递到打包脚本，不写入任务数据库。凭据轮换后重启服务，持久化任务继续对账。
 
-启用调试前，应先由维护者审查并将 `.github/workflows/release-center-debug.yml`、`scripts/release-center-assets.mjs` 和工具代码纳入仓库。GitHub 要求 dispatch 工作流在默认分支可被识别；工作流控制分支也必须包含该工作流。此交付没有替你推送或安装远端工作流。控制分支应受保护、限制修改发布工作流；服务会比较远端与本地审计过的 workflow 内容，并记录工作流 SHA；还会检查候选源码 SHA 中的 manifest 生成脚本及平台资产清单是否与已审计版本一致，缺失或不一致都不会派发。
+启用调试前，应先由维护者审查并将 `.github/workflows/release-center-debug.yml`、`scripts/release-center-assets.mjs` 和工具代码纳入仓库。GitHub 要求 dispatch 工作流在默认分支可被识别；工作流控制分支也必须包含该工作流。2026-10-16 已通过 PR #859 注册默认分支的专用工作流；工具 PR #858 尚待合并，`release/v1.5.2` 暂不具备这些新接口。本轮真实调试使用 `NOWEN_RELEASE_WORKFLOW_REF=codex/release-center-debug-v1.5.2`，源码固定为 `f1066e49`。控制分支应受保护、限制修改发布工作流；本轮临时候选分支没有配置保护，不能据此宣称生产发布治理已就绪。服务会比较远端与本地审计过的 workflow 内容，并记录工作流 SHA；还会检查候选源码 SHA 中的 manifest 生成脚本及平台资产清单是否与已审计版本一致，缺失或不一致都不会派发。
 
 网页不会修改版本号。先在独立提交中准备好 root/backend `package.json` 与两份 lockfile 的顶层及 `packages[""]` 版本、Android `versionName`，再预检。计划固定远端分支 SHA；存在同版本 Tag、Draft 或已发布 Release 会阻断，无法查询则标记未知。计划有效期 30 分钟，执行前再次预检；分支或工作流变化需要重新预览。
 
@@ -75,8 +75,8 @@ npm run test:browser
 npm audit
 ```
 
-浏览器测试使用真实 HTTP/SQLite/React 与模拟 GitHub 边界，不会运行远端构建。服务进程崩溃/重启测试使用真实子进程。根仓库发布、Store 回归与未运行项目见 [最新验收记录](../../docs/qa/v1.5.2/release-center-artifact-review.md)；[Phase 1 历史记录](../../docs/qa/v1.5.2/release-center.md)保留当时结果；架构与实际仓库审计见 [设计记录](../../docs/architecture/release-center.md)。
+浏览器测试使用真实 HTTP/SQLite/React 与模拟 GitHub 边界，不会运行远端构建。服务进程崩溃/重启测试使用真实子进程。真实三平台构建、16 个文件下载复核、CI 和未运行项目见 [最新验收记录](../../docs/qa/v1.5.2/release-center-remote-debug.md)；[Phase 2A 本地记录](../../docs/qa/v1.5.2/release-center-artifact-review.md)和 [Phase 1 历史记录](../../docs/qa/v1.5.2/release-center.md)保留当时结果；架构与实际仓库审计见 [设计记录](../../docs/architecture/release-center.md)。
 
 ## English scope
 
-An independent, loopback-only maintainer console. Phase 2A adds read-only archive downloads, safe extraction, archive/file hash and updater-metadata validation, plus explicit local acceptance of unsigned debug artifacts. Existing read-only visibility, immutable plans, preflight, dry runs and isolated debug builds remain. GitHub credentials remain server-side. SQLite records idempotency, mutual exclusion and audit history; ambiguous dispatches are reconciled and never automatically repeated. Formal release, tag pushes, Docker uploads and store submissions have no API in this phase. Local debug acceptance never grants release authority. Remote debug workflow installation and actual cross-platform package acceptance are still pending.
+An independent, loopback-only maintainer console. Phase 2A adds read-only archive downloads, safe extraction, archive/file hash and updater-metadata validation, plus explicit local acceptance of unsigned debug artifacts. Existing read-only visibility, immutable plans, preflight, dry runs and isolated debug builds remain. GitHub credentials remain server-side. SQLite records idempotency, mutual exclusion and audit history; ambiguous dispatches are reconciled and never automatically repeated. Formal release, tag pushes, Docker uploads and store submissions have no API in this phase. Local debug acceptance never grants release authority. The isolated workflow is registered and actual Windows/macOS/Linux debug builds plus all 16 files passed archive/file/updater verification. Physical installation, human acceptance and production branch governance remain pending. Downloads are bounded to 30 minutes per archive and 90 minutes per verification task, with earlier cancellation/deadline enforcement.

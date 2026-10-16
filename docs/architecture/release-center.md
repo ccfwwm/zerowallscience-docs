@@ -1,6 +1,6 @@
 # Nowen Release Center：审计与 Phase 1 设计
 
-> 后续实现进展见文末 Phase 2A 补充和 [最新验收](../qa/v1.5.2/release-center-artifact-review.md)。
+> 后续实现进展见文末 Phase 2A 补充和 [真实三平台调试验收](../qa/v1.5.2/release-center-remote-debug.md)；[Phase 2A 本地记录](../qa/v1.5.2/release-center-artifact-review.md)保留历史状态。
 
 日期：2026-10-16；开发基线：`release/v1.5.2`。首次审计 HEAD `a0f65787`；期间用户其他工作推进到 `7dcc450a`，本工具不修改、暂存或回退这些工作。任务源码取远端分支的固定完整 SHA，不使用当前工作区替代候选提交。新需求，没有需要编造的历史故障根因；目标是消除手工发布时对工作流、副作用和资产状态的判断负担。
 
