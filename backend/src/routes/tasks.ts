@@ -504,6 +504,14 @@ tasks.put("/:id", (c) => {
   return c.req.json().then((body: any) => {
     const existing = db.prepare("SELECT * FROM tasks WHERE id = ?").get(id) as any;
     if (!existing) return c.json({ error: "Task not found" }, 404);
+    if (Object.prototype.hasOwnProperty.call(body, "expectedUpdatedAt")
+      && body.expectedUpdatedAt !== existing.updatedAt) {
+      return c.json({ error: "Task changed since preview", code: "TASK_VERSION_CONFLICT" }, 409);
+    }
+    if (Object.prototype.hasOwnProperty.call(body, "expectedSortOrder")
+      && body.expectedSortOrder !== existing.sortOrder) {
+      return c.json({ error: "Task order changed since preview", code: "TASK_ORDER_CONFLICT" }, 409);
+    }
 
     if (!canManageResource(existing.userId, existing.workspaceId, userId)) {
       return c.json({ error: "无权修改该任务", code: "FORBIDDEN" }, 403);
