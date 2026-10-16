@@ -1,3 +1,4 @@
+import { openAICollaboration } from "@/lib/aiCollaboration";
 import React, { useEffect, useCallback, useState, useRef, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { motion, AnimatePresence } from "framer-motion";
@@ -3458,6 +3459,7 @@ export default function NoteList({ directorySearchActive = false }: { directoryS
         </button>
         <h2 className="min-w-0 flex-1 truncate text-center text-sm font-semibold text-tx-primary">{viewTitles[state.viewMode]}</h2>
         <div className="flex shrink-0 items-center gap-1 relative">
+          <button onClick={openAICollaboration} aria-label={t("aiCollaboration.entry")} title={t("aiCollaboration.entry")} className="shrink-0 rounded-lg p-2 text-accent-primary hover:bg-app-hover"><Sparkles size={18} /></button>
           {/* 移动端排序按钮（搜索/回收站不显示） */}
           {state.viewMode !== "search" && (
             <button

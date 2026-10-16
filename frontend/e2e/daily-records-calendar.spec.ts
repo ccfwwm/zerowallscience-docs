@@ -68,6 +68,33 @@ for (const width of [320, 360, 393, 430, 1440]) {
     const header = hub.locator("[data-daily-records-header]");
     const originalX = (await header.boundingBox())!.x;
     const dateInput = hub.locator('input[type="date"]');
+    // The date control must be usable without first scrolling the shortcut strip.
+    const picker = dateInput.locator("..");
+    const pickerBox = (await picker.boundingBox())!;
+    const headerBox = (await header.boundingBox())!;
+    expect(pickerBox.x).toBeGreaterThanOrEqual(headerBox.x + 8);
+    expect(pickerBox.x + pickerBox.width).toBeLessThanOrEqual(headerBox.x + headerBox.width - 8);
+    if (width < 640) {
+      expect(pickerBox.height).toBeLessThanOrEqual(40);
+      expect(headerBox.height).toBeLessThanOrEqual(180);
+    }
+
+    const shortcuts = hub.locator("[data-daily-records-shortcut-scroll]");
+    await shortcuts.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+    await expect.poll(async () => (await picker.boundingBox())!.x).toBe(pickerBox.x);
+    if (width < 640) {
+      expect(await hub.getByRole("heading", { level: 2 }).first().evaluate(element => parseFloat(getComputedStyle(element).fontSize))).toBeLessThanOrEqual(20);
+      // Date and weekday may use two lines; the weekday itself must stay intact.
+      const weekday = hub.getByRole("heading", { level: 2 }).first().locator(":scope > span").nth(1);
+      expect((await weekday.boundingBox())!.height).toBeLessThanOrEqual(28);
+    }
+
+    const actions = hub.locator("[data-daily-journal-actions]");
+    const actionBoxes = await actions.getByRole("button").evaluateAll(buttons => buttons.map(button => {
+      const box = button.getBoundingClientRect(); return { top: box.top, right: box.right };
+    }));
+    expect(Math.max(...actionBoxes.map(box => box.top)) - Math.min(...actionBoxes.map(box => box.top))).toBeLessThanOrEqual(4);
+    expect(Math.max(...actionBoxes.map(box => box.right))).toBeLessThanOrEqual(width);
 
     // Touch focus, not just shrinking a desktop viewport, triggers the regression.
     await hub.getByText("选择日期", { exact: true }).tap();

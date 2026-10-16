@@ -74,3 +74,33 @@ describe("login refresh over remote gateways", () => {
     expect(transport.mock.calls[0][1].signal.aborted).toBe(false);
   });
 });
+
+describe("account changes during authentication retries", () => {
+  const token = (userId: string) => `e30.${btoa(JSON.stringify({ userId }))}.signature`;
+  it("never replays an old write body using the next account's token", async () => {
+    storeAuthTokens({ token: token("account-a"), refreshToken: "refresh-a" });
+    const request = vi.fn().mockImplementation(async () => {
+      storeAuthTokens({ token: token("account-b"), refreshToken: "refresh-b" });
+      return new Response(null, { status: 401 });
+    });
+    const response = await fetchWithAuthRefresh("https://nas.example/api/notes", {
+      method: "POST", headers: { Authorization: `Bearer ${token("account-a")}` }, body: "private idea",
+    }, "https://nas.example/api", request);
+    expect(response.status).toBe(401);
+    expect(request).toHaveBeenCalledOnce();
+    expect(localStorage.getItem("nowen-token")).toBe(token("account-b"));
+  });
+  it("does not replace or clear a new account with a late refresh result", async () => {
+    for (const status of [200, 401]) {
+      storeAuthTokens({ token: token("account-a"), refreshToken: "refresh-a" });
+      let finish!: (response: Response) => void;
+      vi.stubGlobal("fetch", vi.fn().mockImplementation(() => new Promise<Response>(resolve => { finish = resolve; })));
+      const pending = refreshAccessToken(`https://nas.example/switch-${status}/api`);
+      storeAuthTokens({ token: token("account-b"), refreshToken: "refresh-b" });
+      finish(new Response(status === 200 ? JSON.stringify({ token: token("account-a") }) : null, { status }));
+      await pending.catch(() => null);
+      expect(localStorage.getItem("nowen-token")).toBe(token("account-b"));
+      expect(localStorage.getItem("nowen-refresh-token")).toBe("refresh-b");
+    }
+  });
+});

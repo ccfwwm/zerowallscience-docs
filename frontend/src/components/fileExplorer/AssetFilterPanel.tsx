@@ -25,7 +25,7 @@ export default function AssetFilterPanel({
       aria-label={t("assetOrganization.filters")}
       className="space-y-3 rounded-lg border border-app-border bg-app-surface p-3 text-xs"
     >
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      <div className="grid grid-cols-2 gap-2 [&>label]:min-w-0 md:gap-3 lg:grid-cols-3">
         <label>
           {t("assetOrganization.mime")}
           <select
@@ -34,7 +34,7 @@ export default function AssetFilterPanel({
             onChange={(event) =>
               change({ mime: event.target.value || undefined })
             }
-            className="mt-1 block w-full rounded border border-app-border bg-app-bg p-2"
+            className="mt-1 block min-w-0 max-w-full w-full rounded border border-app-border bg-app-bg p-2"
           >
             <option value="">{t("assetOrganization.any")}</option>
             {[
@@ -71,7 +71,7 @@ export default function AssetFilterPanel({
                       : Math.round(Number(event.target.value) * 1048576),
                 })
               }
-              className="mt-1 block w-full rounded border border-app-border bg-app-bg p-2"
+              className="mt-1 block min-w-0 max-w-full w-full rounded border border-app-border bg-app-bg p-2"
             />
           </label>
         ))}
@@ -90,7 +90,7 @@ export default function AssetFilterPanel({
                   ),
                 })
               }
-              className="mt-1 block w-full rounded border border-app-border bg-app-bg p-2"
+              className="mt-1 block min-w-0 max-w-full w-full rounded border border-app-border bg-app-bg p-2"
             />
           </label>
         ))}
@@ -105,7 +105,7 @@ export default function AssetFilterPanel({
                   undefined) as AssetFilters["referenceState"],
               })
             }
-            className="mt-1 block w-full rounded border border-app-border bg-app-bg p-2"
+            className="mt-1 block min-w-0 max-w-full w-full rounded border border-app-border bg-app-bg p-2"
           >
             <option value="">{t("assetOrganization.any")}</option>
             {(["referenced", "unreferenced", "multiple"] as const).map(

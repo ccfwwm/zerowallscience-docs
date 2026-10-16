@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X } from "lucide-react";
+import { Menu, Sparkles, X } from "lucide-react";
+import { openAICollaboration } from "@/lib/aiCollaboration";
+import AICollaborationCenter from "@/components/AICollaborationCenter";
 import { useTranslation } from "react-i18next";
 import Sidebar from "@/components/Sidebar";
 import WorkspaceIssues from "@/components/issues/WorkspaceIssues";
@@ -1036,6 +1038,7 @@ function AppLayout() {
 }
 
 function MobileTopBar() {
+  const { t } = useTranslation();
   const actions = useAppActions();
   const { siteConfig } = useSiteSettings();
   return (
@@ -1046,7 +1049,8 @@ function MobileTopBar() {
       >
         <Menu size={24} />
       </button>
-      <span className="ml-3 text-sm font-semibold text-tx-primary">{siteConfig.title}</span>
+      <span className="ml-3 min-w-0 flex-1 truncate text-sm font-semibold text-tx-primary">{siteConfig.title}</span>
+      <button onClick={openAICollaboration} aria-label={t("aiCollaboration.entry")} title={t("aiCollaboration.entry")} className="shrink-0 rounded-lg p-2 text-accent-primary hover:bg-app-hover"><Sparkles size={18} /></button>
     </header>
   );
 }
@@ -1492,6 +1496,7 @@ function AuthGate() {
   // 已登录
   return (
     <AppProvider>
+      <AICollaborationCenter />
       <SidebarSearchExperienceBridge />
       {user && <WechatClipboardBridge key={`${getServerUrl() || "local"}:${user.id}`} />}
       <TooltipProvider>
