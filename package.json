@@ -53,9 +53,9 @@
     "electron:build:store": "npm run fetch:node && npm run build:all && npm run rebuild:native && electron-builder --config electron/builder.store.config.js --win appx --publish never"
   },
   "devDependencies": {
-    "@capacitor/android": "^8.2.0",
-    "@capacitor/cli": "^7.6.0",
-    "@capacitor/core": "^8.2.0",
+    "@capacitor/android": "8.4.3",
+    "@capacitor/cli": "8.4.3",
+    "@capacitor/core": "8.4.3",
     "@electron/notarize": "^2.5.0",
     "@electron/rebuild": "^3.7.0",
     "archiver": "^7.0.1",
