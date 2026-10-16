@@ -73,7 +73,7 @@ test("MCP PAT tree CRUD enforces personal grants, previews and subtree revisions
     const preview = async (id: string, subtree = false) => {
       const nodes = await tree();
       const node = nodes.find((entry) => entry.id === id);
-      assert.ok(node, "node must be visible to authorized PAT");
+      assert.ok(node, `node must be visible to authorized PAT: ${id}; tree=${nodes.map((entry) => `${entry.id}:${entry.isDeleted}`).join(",")}`);
       return {
         ...treeMutationPreconditions(node,
           subtree ? treeMutationRevision(nodes, id, true) : undefined),
