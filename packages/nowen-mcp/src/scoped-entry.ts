@@ -455,6 +455,39 @@ async function handlePersonalProjectRequest(request: Request, url: URL): Promise
   return originalFetch(request);
 }
 
+async function handleKnowledgeTreeRequest(request: Request, url: URL): Promise<Response> {
+  if (!["/api/knowledge-tree", "/api/knowledge-tree/"].includes(url.pathname)
+      || request.method.toUpperCase() !== "GET") {
+    throw new ScopeDeniedError("scoped MCP 仅允许读取知识树");
+  }
+  await ensureDescendantsHydrated(request);
+  const response = await originalFetch(request);
+  if (!response.ok) return response;
+  const body = await readJsonResponse(response);
+  if (!body || !Array.isArray(body.nodes)) return response;
+  const nodes = policy.filterKnowledgeTree(body.nodes);
+  const selectedIds = new Set(nodes.map((node: any) => node.id));
+  const selectedNotes = new Set(nodes.filter((node: any) => node.resourceType === "note")
+    .map((node: any) => node.resourceId));
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    if (node.parentId && selectedIds.has(node.parentId)) {
+      counts.set(node.parentId, (counts.get(node.parentId) || 0) + 1);
+    }
+  }
+  return replaceJsonResponse(response, {
+    ...body,
+    nodes: nodes.map((node: any) => ({
+      ...node,
+      parentId: node.parentId && selectedIds.has(node.parentId) ? node.parentId : null,
+      childCount: counts.get(node.id) || 0,
+    })),
+    passwordAuthorizedNotes: Array.isArray(body.passwordAuthorizedNotes)
+      ? body.passwordAuthorizedNotes.filter((entry: any) => selectedNotes.has(entry.noteId))
+      : [],
+  });
+}
+
 async function scopedFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   let request = new Request(input, init);
   const url = new URL(request.url);
@@ -510,6 +543,9 @@ async function scopedFetch(input: string | URL | Request, init?: RequestInit): P
     }
     if (url.pathname === "/api/task-projects" || url.pathname.startsWith("/api/task-projects/")) {
       return await handlePersonalProjectRequest(request, url);
+    }
+    if (url.pathname === "/api/knowledge-tree" || url.pathname.startsWith("/api/knowledge-tree/")) {
+      return await handleKnowledgeTreeRequest(request, url);
     }
     if (url.pathname === "/api/ai/chat") {
       return originalFetch(request);
