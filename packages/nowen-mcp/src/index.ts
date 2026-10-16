@@ -32,6 +32,12 @@ const config = {
 
 const api = new NowenApiClient(config);
 
+/** Plugin execution, webhooks and automation can have external side effects. */
+function requireDangerousToolOptIn(toolName: string): void {
+  if (process.env.MCP_ENABLE_DANGEROUS_TOOLS?.trim().toLowerCase() === "true") return;
+  throw new Error(`${toolName} 已默认关闭；请在确认宿主客户端授权策略后设置 MCP_ENABLE_DANGEROUS_TOOLS=true`);
+}
+
 // ===== 创建 MCP Server =====
 const server = new McpServer({
   name: "nowen-note",
@@ -704,6 +710,7 @@ server.tool(
   },
   async ({ pluginId, actionId, input }) => {
     try {
+      requireDangerousToolOptIn("nowen_execute_plugin_action");
       const result = await api.executePluginAction(pluginId, actionId, input);
       return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
     } catch (err: any) {
@@ -1126,6 +1133,7 @@ server.tool(
   { workflowId: z.string().describe("工作流 ID") },
   async ({ workflowId }) => {
     try {
+      requireDangerousToolOptIn("nowen_run_workflow");
       const run = await api.runWorkflow(workflowId);
       return { content: [{ type: "text" as const, text: JSON.stringify(run, null, 2) }] };
     } catch (err: any) { return { content: [{ type: "text" as const, text: `错误: ${err.message}` }], isError: true }; }
@@ -1169,6 +1177,7 @@ server.tool(
   },
   async ({ url, events, description }) => {
     try {
+      requireDangerousToolOptIn("nowen_create_webhook");
       const webhook = await api.createWebhook({ url, events, description });
       return { content: [{ type: "text" as const, text: `Webhook 创建成功!\nID: ${webhook.id}\nSecret: ${webhook.secret}\n\n请妥善保存 Secret，后续不会再显示。` }] };
     } catch (err: any) {
@@ -1232,6 +1241,7 @@ server.tool(
   },
   async ({ type }) => {
     try {
+      requireDangerousToolOptIn("nowen_create_backup");
       const backup = await api.createBackup(type || "db-only");
       return { content: [{ type: "text" as const, text: `✅ 备份创建成功!\n文件: ${backup.filename}\n大小: ${(backup.size / 1024).toFixed(1)}KB\n笔记: ${backup.noteCount} 篇\n校验: ${backup.checksum}` }] };
     } catch (err: any) {
