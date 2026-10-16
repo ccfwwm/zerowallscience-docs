@@ -122,7 +122,9 @@ export class NotebookScopePolicy {
   }
 
   /** Enforce nearest-notebook scope for mixed knowledge-tree nodes. */
-  filterKnowledgeTree<T extends { id: string; parentId?: string | null; resourceType: string; resourceId: string }>(nodes: T[]): T[] {
+  filterKnowledgeTree<T extends { id: string; parentId?: string | null; resourceType: string; resourceId: string }>(
+    nodes: T[], includeDeletedDescendants = false,
+  ): T[] {
     if (!this.enabled) return nodes;
     const byId = new Map(nodes.map((node) => [node.id, node]));
     const allowed = (node: T): boolean => {
@@ -130,7 +132,12 @@ export class NotebookScopePolicy {
       const seen = new Set<string>();
       while (current && !seen.has(current.id)) {
         seen.add(current.id);
-        if (current.resourceType === "notebook") return this.isNotebookAllowed(current.resourceId);
+        if (current.resourceType === "notebook") {
+          if (this.isNotebookAllowed(current.resourceId)) return true;
+          // Only recycle-bin operations may traverse a previously deleted
+          // descendant whose ID is absent from the live notebook catalog.
+          if (!includeDeletedDescendants || !this.includeDescendants) return false;
+        }
         current = current.parentId ? byId.get(current.parentId) : undefined;
       }
       return false;
