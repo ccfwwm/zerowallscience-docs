@@ -70,6 +70,13 @@ test("remote HTTP enforces bearer, origin, hostname and request size before MCP 
     const handshake = await valid.json() as any;
     assert.equal(handshake.jsonrpc, "2.0");
     assert.ok(handshake.result?.serverInfo?.name);
+    const listing = await fetch(url, { method: "POST", headers: {
+      ...auth, "MCP-Protocol-Version": "2025-03-26",
+    }, body: JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} }) });
+    assert.equal(listing.status, 200, await listing.clone().text());
+    const listed = await listing.json() as any;
+    assert.ok(listed.result?.tools?.some((entry: any) => entry.name === "nowen_preview_workflow_change"),
+      "remote HTTP should expose P2 tools after client initialization");
     assert.equal((await fetch(url, { headers: { Authorization: `Bearer ${token}` } })).status, 405);
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
