@@ -128,3 +128,73 @@ export interface Overview {
   githubError?: string;
   tasks: Task[];
 }
+
+export const CHANNELS = ["microsoft-store", "docker-hub", "nas"] as const;
+export type ChannelId = (typeof CHANNELS)[number];
+export type ChannelState = "available" | "pending" | "not_found" | "not_configured" | "unknown" | "error";
+export interface ChannelObservation {
+  channel: ChannelId;
+  version: string;
+  at: string;
+  state: ChannelState;
+  summary: string;
+  details: string[];
+  url: string;
+  // Provider metadata is observed evidence, never a content-validation result.
+  evidence: Record<string, unknown>;
+}
+export interface DistributionAsset {
+  id: number;
+  name: string;
+  size: number;
+  digest: string | null;
+  contentVerified: false;
+}
+export interface DistributionSource {
+  releaseId: number;
+  tag: string;
+  sha: string;
+  url: string;
+  publishedAt: string;
+  assets: DistributionAsset[];
+}
+export interface ChannelHandoff {
+  channel: ChannelId;
+  target: string;
+  blockers: string[];
+  instructions: string[];
+  assets: DistributionAsset[];
+  metadata: Record<string, unknown>;
+}
+export interface DistributionPlan {
+  id: string;
+  version: string;
+  createdAt: string;
+  source: DistributionSource;
+  handoffs: ChannelHandoff[];
+  executable: false;
+  approval: "not_connected";
+}
+export const RECEIPT_STATES = ["submitted", "reviewing", "published", "rejected", "withdrawn"] as const;
+export interface DistributionReceipt {
+  id: string;
+  planId: string;
+  channel: ChannelId;
+  version: string;
+  sha: string;
+  at: string;
+  status: (typeof RECEIPT_STATES)[number];
+  reference: string;
+  evidenceUrl: string;
+  notes: string;
+  source: "maintainer-report";
+  verifiedByProvider: false;
+}
+export interface ChannelView {
+  version: string;
+  observations: ChannelObservation[];
+  history: ChannelObservation[];
+  plans: DistributionPlan[];
+  receipts: DistributionReceipt[];
+  formalDistribution: false;
+}

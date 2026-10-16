@@ -6,10 +6,12 @@ import { Planner } from "./planner.ts";
 import { Store } from "./store.ts";
 import { Engine } from "./engine.ts";
 import { createApp } from "./app.ts";
+import { Channels } from "./channels.ts";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const tool = fileURLToPath(new URL("../", import.meta.url));
 const token = process.env.NOWEN_RELEASE_GITHUB_TOKEN || "";
+const storeToken = process.env.NOWEN_RELEASE_STORE_ACCESS_TOKEN || "";
 const port = Number(process.env.NOWEN_RELEASE_PORT || 4318);
 if (!Number.isInteger(port) || port < 1024 || port > 65535)
   throw new Error("无效的 NOWEN_RELEASE_PORT");
@@ -24,7 +26,7 @@ const store = new Store(
     process.env.NOWEN_RELEASE_DATA || join(homedir(), ".nowen-release-center"),
     "center.sqlite",
   ),
-  [token],
+  [token, storeToken],
 );
 const engine = new Engine(store, planner);
 let vite:
@@ -41,9 +43,10 @@ engine.start();
 const server = createApp(engine, {
   dist: join(tool, "dist"),
   dev: vite?.middlewares,
+  channels: new Channels(store, planner.github, { storeToken }),
 });
 server.listen(port, "127.0.0.1", () =>
-  console.log(`Nowen Release Center · Phase 2A · http://127.0.0.1:${port}`),
+  console.log(`Nowen Release Center · Phase 3 · http://127.0.0.1:${port}`),
 );
 let stopping = false;
 async function stop() {

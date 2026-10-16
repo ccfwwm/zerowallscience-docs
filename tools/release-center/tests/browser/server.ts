@@ -9,6 +9,8 @@ import { createApp } from "../../server/app";
 import { validateInput } from "../../server/planner";
 import { FakeGitHub, FakePlanner, makePlan } from "../helpers";
 import { seedDebugArtifacts } from "../verification-fixture";
+import { Channels } from "../../server/channels";
+import { ChannelGitHub, ChannelProvider, storeToken } from "../channels-fixture";
 
 class BrowserPlanner extends FakePlanner {
   override async create(raw?: any) {
@@ -52,6 +54,7 @@ const engine = new Engine(store, new BrowserPlanner(github, makePlan()));
 engine.start();
 const server = createApp(engine, {
   dist: fileURLToPath(new URL("../../dist", import.meta.url)),
+  channels: new Channels(store, new ChannelGitHub(), { storeToken }, new ChannelProvider().transport),
 });
 server.listen(4328, "127.0.0.1");
 async function stop() {

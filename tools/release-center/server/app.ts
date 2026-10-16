@@ -8,6 +8,7 @@ import { readFile } from "node:fs/promises";
 import { resolve, extname } from "node:path";
 import type { Engine } from "./engine.ts";
 import { AppError, redact } from "./errors.ts";
+import { Channels } from "./channels.ts";
 
 async function body(req: IncomingMessage): Promise<any> {
   if (!req.headers["content-type"]?.startsWith("application/json"))
@@ -33,8 +34,9 @@ type Middleware = (
 ) => void;
 export function createApp(
   engine: Engine,
-  options: { dist: string; dev?: Middleware },
+  options: { dist: string; dev?: Middleware; channels?: Channels },
 ) {
+  const channels = options.channels || new Channels(engine.store, engine.planner.github);
   const session = randomBytes(32).toString("hex");
   let cached:
     | { expires: number; promise: ReturnType<typeof engine.planner.overview> }
@@ -66,7 +68,7 @@ export function createApp(
           "Set-Cookie",
           `rc_session=${session}; HttpOnly; SameSite=Strict; Path=/`,
         );
-        json({ phase: "2a", formalPublishing: false });
+        json({ phase: "3", formalPublishing: false, formalDistribution: false });
         return;
       }
       if (path.startsWith("/api/")) {
@@ -83,6 +85,22 @@ export function createApp(
           throw new AppError(401, "请刷新页面以建立本机会话");
         if (req.method !== "GET" && req.headers["x-release-center"] !== "1")
           throw new AppError(403, "缺少同源操作标识");
+        if (path === "/api/channels" && req.method === "GET") {
+          json(channels.view(url.searchParams.get("version")));
+          return;
+        }
+        if (path === "/api/channels/refresh" && req.method === "POST") {
+          json(await channels.refresh(await body(req)));
+          return;
+        }
+        if (path === "/api/distribution/plans" && req.method === "POST") {
+          json(await channels.createPlan(await body(req)), 201);
+          return;
+        }
+        if (path === "/api/distribution/receipts" && req.method === "POST") {
+          json(channels.record(await body(req)), 201);
+          return;
+        }
         if (path === "/api/overview" && req.method === "GET") {
           if (!cached || cached.expires < Date.now())
             cached = {
