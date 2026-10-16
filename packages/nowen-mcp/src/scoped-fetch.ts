@@ -634,6 +634,11 @@ async function scopedFetch(input: string | URL | Request, init?: RequestInit): P
     if (url.pathname === "/api/knowledge-tree" || url.pathname.startsWith("/api/knowledge-tree/")) {
       return await handleKnowledgeTreeRequest(request, url);
     }
+    if (url.pathname === "/api/automations" || url.pathname.startsWith("/api/automations/")) {
+      // Workflow scopes and ownership are enforced by the backend for all PATs.
+      // Notebook restrictions do not confer workspace workflow access.
+      return originalFetch(request);
+    }
     if (url.pathname === "/api/ai/chat") {
       return originalFetch(request);
     }
