@@ -123,3 +123,13 @@ test("Windows Node ZIP 使用 PowerShell Expand-Archive 解压", async () => {
   assert.match(fetchNode, /powershell\.exe/);
   assert.match(fetchNode, /Expand-Archive/);
 });
+
+test("debug Linux artifact names follow electron-builder target-specific architecture expansion", () => {
+  const { requiredDebugReleaseAssets } = require("../lib/release-platform-assets.cjs");
+  const { Arch, getArtifactArchName } = require("builder-util");
+  const names = requiredDebugReleaseAssets("linux", "1.5.2");
+  for (const extension of ["AppImage", "deb"]) {
+    assert.ok(names.includes(`Nowen-Note-1.5.2-${getArtifactArchName(Arch.x64, extension)}.${extension}`));
+  }
+  assert.ok(names.includes("latest-linux.yml"));
+});

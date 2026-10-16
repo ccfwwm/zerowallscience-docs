@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **maintenance / Release Center**：新增独立本机发布控制台的预检、Dry Run、调试任务和产物下载复核；校验 archive、逐文件摘要与更新元数据，持久化仅调试验收记录；修复 macOS 发布版本同步及版本标签不一致。Add an isolated local release console with preflight, dry runs, debug tasks, artifact/hash/updater validation and debug-only acceptance; repair macOS version synchronization and align lockfile version labels. Draft 与正式发布尚未实现，远端工作流及真实构建未验收；drafts, formal publishing and live remote-build acceptance remain pending. [验证记录 / Validation](./docs/qa/v1.5.2/release-center-artifact-review.md)。
+
 - **Markdown / #853**：修复斜杠菜单在编辑器更新阶段读取布局而失效的问题，支持 `/H1`、`/code`、`/tab` 等筛选、键盘和触控选择；补齐视口避让、代码与只读保护、取消及撤销，修复标题后继续输入位置错误和代码块插入吞掉邻近文字的问题。Repair Markdown slash commands with safe cursor measurement, searchable keyboard/touch actions, viewport placement, code/read-only guards and undo; preserve the typing position and surrounding text. [使用说明 / Usage](./docs/user/markdown-slash-commands.md) · [验证记录 / Validation](./docs/qa/v1.5.2/markdown-slash-menu.md)。尚未发布。Unreleased.
 
 - **daily records / date picker**：修复点击“选择日期”文字仅聚焦而不弹出日历的问题；显式触发原生选择器，并扩大原生日历图标点击区域。Open the native date picker when clicking anywhere on the daily-records date shortcut, with full native-indicator hit coverage.
