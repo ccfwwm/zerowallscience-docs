@@ -242,6 +242,40 @@ P0 仅支持**本人个人空间**内普通文件夹和 Markdown 笔记的创建
 
 `npm test` 包含：MCP 构建、笔记本范围和只读策略、被删除子目录授权、修订指纹/子树冲突、真实 MCP SDK stdio 客户端调用（使用隔离的模拟 HTTP 后端）。CI 中另运行真实知识树路由 + SQLite 的 API Token 集成测试，覆盖越权节点、未授权目标、预览冲突、回收站删除/恢复。**仍需要在实际 Claude Desktop/Codex 客户端、真实账号和多端同步环境执行发布验收。**
 
+## v1.5.2 P1：个人网盘与任务成果复盘
+
+本阶段新增以下 **8 个** MCP 工具，复用既有网盘 API 与任务快照业务服务，不另建文件存储与任务数据库：
+
+| 功能 | MCP 工具 |
+| --- | --- |
+| 网盘文件夹列表 | `nowen_list_file_folders` |
+| 网盘文件搜索、分页 | `nowen_list_managed_files` |
+| 文件回收站 | `nowen_list_file_trash` |
+| 网盘整理预览 | `nowen_preview_file_change` |
+| 网盘整理执行 | `nowen_apply_file_change` |
+| 任务成果转笔记预览 | `nowen_preview_task_to_note` |
+| 任务成果转笔记执行 | `nowen_save_task_to_note` |
+| 单任务顺序调整 | `nowen_reorder_task` |
+
+### 网盘整理的傻瓜式流程
+
+1. 通过 `nowen_list_file_folders`、`nowen_list_managed_files` 查看文件与目录；通过 `nowen_list_file_trash` 查看回收站。
+2. 调用 `nowen_preview_file_change` 选择 `create_folder`、`update_folder`、`rename_file`、`move_files`、`restore_files`。其中 `update_folder` 支持仅改名、仅移动或同时调整；`move_files` 单次最多 50 个，`parentId=null` 表示未归档。
+3. AI 将预览结果（文件名、数量、源目录、目标目录）展示给用户，**仅在宿主客户端获得明确授权后**，传同一组参数、`expectedRevision` 和 `confirmation` 调用 `nowen_apply_file_change`。恢复必须使用 `RESTORE_FILES`，其他使用 `APPLY_FILE_CHANGE`。
+4. 后端再次校验 Token scopes、用户归属、源文件夹/名称或回收站时间。如果数据变化，返回 409，AI 必须重新预览。网盘目录同步尚未完成时不得强行写入。
+
+**网盘安全约束**：由于现有 `attachment_folders` 是用户级数据、没有笔记本资源字段，网盘 MCP 工具**必须使用未绑定 `ALLOWED_NOTEBOOK_IDS` 的个人 API Token**。受限笔记本资源的 Token 暂不能访问网盘目录，防止跨笔记本泄露；建议新建仅包含 `notes:read`、`attachments:write` 的专用个人 Token，避免与普通笔记 Agent 共用。只允许管理 `uploadSource=file_manager`、归属于本人个人空间的文件；禁止跨团队操作、永久清理、直接整理编辑器附件。无需也不允许为此放开 `MCP_ENABLE_DANGEROUS_TOOLS`。
+
+### 任务成果与排序
+
+- `nowen_preview_task_to_note` 会读取任务的现有标题、Markdown 详情、最后修改时间，预览保存位置。用户确认后调用 `nowen_save_task_to_note` 并传 `expectedRevision` 与 `confirmation=SAVE_TASK_NOTE`；后端验证个人任务归属、目标笔记本写权限及任务未被修改，并使用幂等请求号。**原任务不删除、不转移；附件由现有服务安全复制，笔记可独立保存**。
+- `nowen_reorder_task` 默认预览；确认后传 `dryRun=false`、`expectedUpdatedAt`、`expectedSortOrder`、`confirmation=REORDER_TASK`。单任务排序不会改变父子关系和项目归属。
+- 这些功能使用 `tasks:read`/`tasks:write` 和笔记快照所需的 `notes:write` scopes。restricted Token 保存任务笔记时，还必须对目标笔记本具有写入授权。首次运行建议用非正式数据检验多端同步。
+
+### 验证与边界
+
+专项 CI 包括真实 MCP SDK stdio 客户端 + 隔离 HTTP 后端的 P1 端到端调用，以及后端 API Token 安全测试。涉及文件位置、名称和回收站恢复的预览冲突均必须阻止危险操作。**P1 未开放跨空间文件搬运、自动永久删除、全量批量操作以及会破坏原笔记附件引用关系的重写**。正式发布仍需 Windows/macOS/Android 及浏览器实际回归。
+
 ## 发行说明
 
 当前仓库保证的是源码构建方式。除非 Nowen Note 的 Release 或官方文档明确宣布 npm / DXT 包，避免假设 `npx nowen-mcp` 或一键 DXT 已经可用。
