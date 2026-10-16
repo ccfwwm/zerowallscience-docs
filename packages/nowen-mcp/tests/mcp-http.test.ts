@@ -19,6 +19,9 @@ test("remote HTTP gateway is disabled without separate, strong credentials", () 
   assert.throws(() => createMcpHttpGateway({
     NOWEN_API_TOKEN: backend, NOWEN_MCP_HTTP_TOKEN: token, MCP_ACCESS_MODE: "read-write",
   }), /MCP_ACCESS_MODE/);
+  assert.throws(() => createMcpHttpGateway({
+    NOWEN_API_TOKEN: backend, NOWEN_MCP_HTTP_TOKEN: token, NOWEN_MCP_HTTP_ALLOW_WRITE: "true",
+  }), /MCP_ACCESS_MODE/, "write opt-in alone must not bypass explicit read-write mode");
 });
 
 test("remote HTTP enforces bearer, origin, hostname and request size before MCP protocol", async () => {
