@@ -882,6 +882,26 @@ async function handleTokenTasks(c: Context, next: Next, ctx: TokenAccessContext)
     await next();
     return;
   }
+  const saveNoteMatch = /^\/api\/tasks\/([^/]+)\/note$/.exec(path);
+  if (saveNoteMatch && method === "POST") {
+    requireScope(ctx, "notes:write");
+    const task = getDb().prepare("SELECT userId,workspaceId,updatedAt FROM tasks WHERE id=?")
+      .get(decodeURIComponent(saveNoteMatch[1])) as
+      { userId: string; workspaceId: string | null; updatedAt: string } | undefined;
+    if (!task || task.userId !== ctx.userId || task.workspaceId !== null) {
+      throw new ApiTokenAccessError("只能保存本人个人任务", "API_TOKEN_RESOURCE_DENIED");
+    }
+    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+    if (typeof body.notebookId !== "string") {
+      throw new ApiTokenAccessError("必须选择目标笔记本", "MCP_PREVIEW_REQUIRED", 409);
+    }
+    assertNotebook(ctx, body.notebookId, true);
+    if (!body.expectedTaskUpdatedAt || body.expectedTaskUpdatedAt !== task.updatedAt) {
+      throw new ApiTokenAccessError("任务已变化，请重新预览详情", "MCP_TASK_VERSION_CONFLICT", 409);
+    }
+    await next();
+    return;
+  }
   const archiveMatch = /^\/api\/tasks\/([^/]+)\/archive$/.exec(path);
   if (archiveMatch && method === "PATCH") {
     const task = getDb().prepare("SELECT userId, workspaceId, parentId FROM tasks WHERE id = ?")
