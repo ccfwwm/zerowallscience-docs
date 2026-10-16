@@ -1031,6 +1031,10 @@ app.patch("/:id", async (c) => {
     | (FileAttachmentAccessRow & { id: string; filename: string })
     | undefined;
   if (!row) return c.json({ error: "文件不存在" }, 404);
+  if (Object.prototype.hasOwnProperty.call(body, "expectedFilename")
+      && body.expectedFilename !== row.filename) {
+    return c.json({ error: "文件名已变化，请重新预览", code: "FILE_NAME_CONFLICT" }, 409);
+  }
 
   // 权限：本人 + 笔记 write
   if (row.userId !== userId) {
