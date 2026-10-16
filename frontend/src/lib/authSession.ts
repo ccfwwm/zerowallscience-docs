@@ -1,3 +1,5 @@
+import { getOfflineQueueStorageKey } from "./offlineScope";
+
 const ACCESS_TOKEN_KEY = "nowen-token";
 const REFRESH_TOKEN_KEY = "nowen-refresh-token";
 
@@ -96,6 +98,7 @@ export async function refreshAccessToken(
   apiBaseUrl: string,
   options?: { refreshToken?: string | null; persist?: boolean },
 ): Promise<string | null> {
+  const accountScope = getOfflineQueueStorageKey();
   const refreshToken = options?.refreshToken ?? getRefreshToken();
   if (!refreshToken) return null;
   const refreshKey = `${apiBaseUrl}\n${refreshToken}`;
@@ -111,10 +114,11 @@ export async function refreshAccessToken(
 
   try {
     const token = await pending;
-    if (options?.persist !== false) storeAuthTokens({ token });
+    if (options?.persist !== false && getOfflineQueueStorageKey() === accountScope && getRefreshToken() === refreshToken) storeAuthTokens({ token });
     return token;
   } catch (error) {
-    if ((error as { terminal?: boolean })?.terminal && options?.persist !== false) {
+    if ((error as { terminal?: boolean })?.terminal && options?.persist !== false
+      && getOfflineQueueStorageKey() === accountScope && getRefreshToken() === refreshToken) {
       clearAuthTokens();
     }
     throw error;
@@ -133,12 +137,16 @@ export async function fetchWithAuthRefresh(
   apiBaseUrl: string,
   fetchImpl: typeof globalThis.fetch = fetch,
 ): Promise<Response> {
+  const accountScope = getOfflineQueueStorageKey();
   const initialHeaders = new Headers(init?.headers || {});
   const usesLoginToken = initialHeaders.has("Authorization");
   const requestToken = getAccessToken();
   const first = await fetchImpl(input, usesLoginToken && requestToken ? withBearer(init, requestToken) : init);
   if (first.status !== 401 || !usesLoginToken || !requestToken) return first;
 
+  // A response belonging to the previous account must never replay its body
+  // under a newly signed-in account (including note creation and AI requests).
+  if (getOfflineQueueStorageKey() !== accountScope) return first;
   const latestToken = getAccessToken();
   if (latestToken && latestToken !== requestToken) {
     return fetchImpl(input, withBearer(init, latestToken));
@@ -151,6 +159,6 @@ export async function fetchWithAuthRefresh(
     if (error instanceof RefreshUnavailableError) throw error;
     return first;
   }
-  if (!refreshed) return first;
+  if (!refreshed || getOfflineQueueStorageKey() !== accountScope) return first;
   return fetchImpl(input, withBearer(init, refreshed));
 }

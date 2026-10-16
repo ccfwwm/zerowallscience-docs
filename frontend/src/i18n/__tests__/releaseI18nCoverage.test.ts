@@ -1,3 +1,4 @@
+import { enAICollaborationTranslations, zhCNAICollaborationTranslations } from "../aiCollaborationTranslations";
 import { enAssetReliabilityTranslations, zhCNAssetReliabilityTranslations } from "../assetReliabilityTranslations";
 import { enAssetOrganizationTranslations, zhCNAssetOrganizationTranslations } from "../assetOrganizationTranslations";
 import { describe, expect, it } from "vitest";
@@ -164,6 +165,7 @@ const zh = mergePatches(
   zhCNFileExplorerTranslations,
   zhCNAssetOrganizationTranslations,
   zhCNAssetReliabilityTranslations,
+  zhCNAICollaborationTranslations,
 );
 const en = mergePatches(
   enBase as TranslationTree,
@@ -185,6 +187,7 @@ const en = mergePatches(
   enFileExplorerTranslations,
   enAssetOrganizationTranslations,
   enAssetReliabilityTranslations,
+  enAICollaborationTranslations,
 );
 
 const criticalNamespaces = [

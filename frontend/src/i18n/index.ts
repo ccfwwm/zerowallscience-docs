@@ -1,3 +1,4 @@
+import { enAICollaborationTranslations, zhCNAICollaborationTranslations } from "./aiCollaborationTranslations";
 import { enAssetReliabilityTranslations, zhCNAssetReliabilityTranslations } from "./assetReliabilityTranslations";
 import { enAssetOrganizationTranslations, zhCNAssetOrganizationTranslations } from "./assetOrganizationTranslations";
 import i18n from "i18next";
@@ -88,6 +89,7 @@ const zhCNWithReleaseTranslations = mergeTranslationPatches(
   zhCNFileExplorerTranslations,
   zhCNAssetOrganizationTranslations,
   zhCNAssetReliabilityTranslations,
+  zhCNAICollaborationTranslations,
   zhCNTaskRemovalTranslations,
 );
 
@@ -110,6 +112,7 @@ const enWithReleaseTranslations = mergeTranslationPatches(
   enFileExplorerTranslations,
   enAssetOrganizationTranslations,
   enAssetReliabilityTranslations,
+  enAICollaborationTranslations,
   enTaskRemovalTranslations,
 );
 
