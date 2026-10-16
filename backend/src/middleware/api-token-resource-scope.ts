@@ -485,6 +485,28 @@ async function handleTokenTaskProjects(c: Context, next: Next, ctx: TokenAccessC
   await next();
 }
 
+async function assertTokenPersonalTaskLinks(ctx: TokenAccessContext, body: Record<string, unknown>): Promise<void> {
+  if (body.workspaceId || body.noteId) {
+    throw new ApiTokenAccessError("任务 Token 不允许关联工作区或笔记", "API_TOKEN_RESOURCE_DENIED");
+  }
+  if (body.parentId) {
+    if (typeof body.parentId !== "string") throw new ApiTokenAccessError("父任务 ID 非法");
+    const parent = getDb().prepare("SELECT userId, workspaceId FROM tasks WHERE id = ?")
+      .get(body.parentId) as { userId: string; workspaceId: string | null } | undefined;
+    if (!parent || parent.userId !== ctx.userId || parent.workspaceId !== null) {
+      throw new ApiTokenAccessError("父任务不属于当前个人空间", "API_TOKEN_RESOURCE_DENIED");
+    }
+  }
+  if (body.projectId) {
+    if (typeof body.projectId !== "string") throw new ApiTokenAccessError("项目 ID 非法");
+    const project = getDb().prepare("SELECT userId, workspaceId FROM task_projects WHERE id = ?")
+      .get(body.projectId) as { userId: string; workspaceId: string | null } | undefined;
+    if (!project || project.userId !== ctx.userId || project.workspaceId !== null) {
+      throw new ApiTokenAccessError("项目不属于当前个人空间", "API_TOKEN_RESOURCE_DENIED");
+    }
+  }
+}
+
 /** PAT 的任务访问与笔记本白名单分离：默认仅本人个人任务。
  * 即使令牌是 unrestricted，也不得通过切换 workspaceId 访问共享工作区。
  */
@@ -501,9 +523,7 @@ async function handleTokenTasks(c: Context, next: Next, ctx: TokenAccessContext)
     }
     if (method === "POST") {
       const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
-      if (body.workspaceId || body.parentId || body.noteId || body.projectId) {
-        throw new ApiTokenAccessError("任务 Token 不允许关联工作区、父任务、笔记或项目", "API_TOKEN_RESOURCE_DENIED");
-      }
+      await assertTokenPersonalTaskLinks(ctx, body);
     }
     await next();
     return;
@@ -534,9 +554,7 @@ async function handleTokenTasks(c: Context, next: Next, ctx: TokenAccessContext)
   }
   if (method === "PUT") {
     const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
-    if (body.workspaceId || body.parentId || body.noteId || body.projectId) {
-      throw new ApiTokenAccessError("任务 Token 不允许修改任务资源归属或关联", "API_TOKEN_RESOURCE_DENIED");
-    }
+    await assertTokenPersonalTaskLinks(ctx, body);
   }
   await next();
   if (method === "GET" && c.res.status >= 200 && c.res.status < 300) {
