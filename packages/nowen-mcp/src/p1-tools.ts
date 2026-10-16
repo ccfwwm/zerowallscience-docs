@@ -59,6 +59,12 @@ async function prepareFileChange(api: NowenApiClient, params: FileChange) {
   if (operation === "update_folder" && name !== undefined && !name.trim()) {
     throw new Error("文件夹名称不能为空");
   }
+  if (operation === "move_files" && parentId === undefined) {
+    throw new Error("移动文件必须显式指定目标 parentId；null 表示未归档");
+  }
+  if (["create_folder", "update_folder"].includes(operation) && name !== undefined && name.trim().length > 100) {
+    throw new Error("文件夹名称不能超过 100 个字符");
+  }
   if ((operation === "create_folder" || operation === "update_folder" || operation === "move_files") && parentId) {
     if (!byId.has(parentId)) throw new Error("目标文件夹不存在或未授权");
   }
@@ -72,6 +78,16 @@ async function prepareFileChange(api: NowenApiClient, params: FileChange) {
     if (!folderId || !byId.has(folderId)) throw new Error("待修改文件夹不存在");
     folder = byId.get(folderId);
     if (parentId === folderId) throw new Error("不能移动到自身");
+    if (parentId) {
+      let cursor: any = byId.get(parentId);
+      const seen = new Set<string>();
+      while (cursor && !seen.has(cursor.id)) {
+        if (cursor.id === folderId) throw new Error("不能将文件夹移动到自身的后代目录");
+        seen.add(cursor.id);
+        cursor = cursor.parentId ? byId.get(cursor.parentId) : undefined;
+      }
+      if (cursor) throw new Error("目录存在循环关系，禁止修改");
+    }
   }
   if (operation === "rename_file" || operation === "move_files") {
     const ids = operation === "rename_file" ? [folderId] : params.fileIds;
@@ -227,7 +243,10 @@ export function registerP1Tools(server: McpServer, api: NowenApiClient): void {
         const { task, title, description, revision } = await planTask(params);
         return response({
           dryRun: true, taskId: task.id, notebookId: params.notebookId, title,
-          description, taskUpdatedAt: task.updatedAt, revision,
+          descriptionPreview: description.slice(0, 2000),
+          descriptionLength: description.length,
+          descriptionTruncated: description.length > 2000,
+          taskUpdatedAt: task.updatedAt, revision,
           retainsOriginalTask: true,
           nextStep: "确认后调用 nowen_save_task_to_note，并传入 expectedRevision 与 SAVE_TASK_NOTE。",
         });
