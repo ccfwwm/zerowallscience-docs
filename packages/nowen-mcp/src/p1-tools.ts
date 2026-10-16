@@ -264,6 +264,7 @@ export function registerP1Tools(server: McpServer, api: NowenApiClient): void {
         const result = await api.saveTaskAsNote(params.taskId, {
           requestId, notebookId: params.notebookId, title: plan.title,
           description: plan.description, expectedTaskUpdatedAt: plan.task.updatedAt,
+          expectedTaskTitle: plan.task.title, expectedTaskDescription: plan.description,
         });
         return response({ saved: true, taskId: params.taskId, originalTaskRetained: true, noteId: result.id, title: result.title });
       } catch (error) { return failure(error); }
