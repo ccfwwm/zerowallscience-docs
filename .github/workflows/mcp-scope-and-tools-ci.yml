@@ -9,12 +9,16 @@ on:
       - "packages/nowen-mcp/**"
       - "backend/src/middleware/api-token-resource-scope.ts"
       - "backend/tests/api-token-resource-scope.test.ts"
+      - "backend/tests/mcp-knowledge-tree-p0.test.ts"
+      - "backend/src/routes/knowledge-tree.ts"
       - ".github/workflows/mcp-scope-and-tools-ci.yml"
   pull_request:
     paths:
       - "packages/nowen-mcp/**"
       - "backend/src/middleware/api-token-resource-scope.ts"
       - "backend/tests/api-token-resource-scope.test.ts"
+      - "backend/tests/mcp-knowledge-tree-p0.test.ts"
+      - "backend/src/routes/knowledge-tree.ts"
       - ".github/workflows/mcp-scope-and-tools-ci.yml"
   workflow_dispatch:
 
@@ -53,6 +57,11 @@ jobs:
         run: npm ci --prefix backend
       - name: Test PAT resource and task boundaries
         run: node --import tsx --test tests/api-token-resource-scope.test.ts
+        working-directory: backend
+        env:
+          NODE_ENV: test
+      - name: Test real knowledge-tree route via MCP API Token
+        run: node --import tsx --test tests/mcp-knowledge-tree-p0.test.ts
         working-directory: backend
         env:
           NODE_ENV: test
