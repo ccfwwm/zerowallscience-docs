@@ -398,6 +398,35 @@ export class NowenApiClient {
     return this.request("/api/tasks/stats/summary", { query: { workspaceId: "personal" } });
   }
 
+  /** 个人任务归档或恢复；后端会校验子任务全部完成。 */
+  async archiveTask(taskId: string, archived: boolean): Promise<any> {
+    return this.request(`/api/tasks/${encodeURIComponent(taskId)}/archive`, {
+      method: "PATCH",
+      body: { archived },
+    });
+  }
+
+  /** MCP Token 的项目操作仅支持本人个人空间。 */
+  async listTaskProjects(): Promise<any[]> {
+    return this.request("/api/task-projects", { query: { workspaceId: "personal" } });
+  }
+
+  async createTaskProject(params: { name: string; icon?: string; color?: string }): Promise<any> {
+    return this.request("/api/task-projects", {
+      method: "POST",
+      query: { workspaceId: "personal" },
+      body: params,
+    });
+  }
+
+  async updateTaskProject(id: string, params: { name?: string; icon?: string; color?: string }): Promise<any> {
+    return this.request(`/api/task-projects/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      query: { workspaceId: "personal" },
+      body: params,
+    });
+  }
+
   // ==================== 搜索 ====================
 
   /** 全文搜索笔记 */
