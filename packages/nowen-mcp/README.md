@@ -182,6 +182,40 @@ npm run build
 - `NOWEN_URL` 指向 NAS 时，先从客户端电脑浏览器验证地址可访问。
 - 权限结果为：用户 ACL、Token scopes、Token 笔记本授权以及本地 MCP 白名单的交集。
 
+## v1.5.2 MCP 能力扩展
+
+新增以下 MCP 工具，均复用原有 REST 业务逻辑和服务端 ACL：
+
+| 能力 | MCP 工具 |
+| --- | --- |
+| 个人任务更新 | `nowen_update_task` |
+| 创建个人子任务 | `nowen_create_subtask` |
+| 完成后的任务树归档/恢复 | `nowen_archive_task` |
+| 个人项目 | `nowen_list_task_projects`、`nowen_create_task_project`、`nowen_update_task_project` |
+| 任务与个人项目关联 | `nowen_assign_task_project` |
+| 笔记元数据 | `nowen_set_note_flags`（收藏/置顶） |
+| 安全移动笔记 | `nowen_move_note`（默认预览；实际操作必须传入预览版本） |
+| 统一知识树查询 | `nowen_get_knowledge_tree`（只读；可按工作区查询） |
+
+### 重要权限说明
+
+- 任务和项目工具使用 `tasks:read` / `tasks:write` Token scopes，且 **只支持本人个人空间**。创建子任务、关联项目时，后端会核对父任务和项目实际归属。
+- 知识树查询使用 `notebooks:read`，restricted Token 只返回授权笔记本以及所允许的子树。未授权节点及对应笔记的密码授权元数据不会返回。
+- 笔记移动依赖 `notes:write`，当前源笔记与目标笔记本必须都有权限。执行前先调用 `nowen_move_note`（省略 `dryRun`），随后在确认移动方案后提交 `dryRun=false` 和 `expectedVersion`。发生版本冲突时重新预览。
+- `MCP_ACCESS_MODE=read-only` **独立于** `ALLOWED_NOTEBOOK_IDS` 生效；本地白名单未设置时也会拦截写入请求。仅知识库问答、AI 文本处理和认证使用的只读用途 POST 例外。
+- 系统级自动化、Webhook、备份、管理员操作仍遵循已有 Token 权限约束；restricted Token 不会因为此次扩展获得这些权限。
+- 面向所有客户端的远程 Streamable HTTP MCP、知识树批量写入、文件夹批量整理、工作流编辑仍需单独安全评审和兼容性测试，本次没有宣称已开放。
+
+### 开发验证
+
+```bash
+cd packages/nowen-mcp
+npm ci
+npm test
+```
+
+GitHub Actions 见 `.github/workflows/mcp-scope-and-tools-ci.yml`。
+
 ## 发行说明
 
 当前仓库保证的是源码构建方式。除非 Nowen Note 的 Release 或官方文档明确宣布 npm / DXT 包，避免假设 `npx nowen-mcp` 或一键 DXT 已经可用。
