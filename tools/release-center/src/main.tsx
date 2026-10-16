@@ -35,6 +35,7 @@ import type { Audit, Overview, Plan, PlanInput, Task } from "../shared";
 import { Button, Card, Input, cn } from "./components/ui";
 import "./style.css";
 import { ArtifactReview } from "./components/ArtifactReview";
+import { ChannelsPanel } from "./components/ChannelsPanel";
 
 const modeName = (mode: Task["mode"]) =>
   mode === "debug" ? "调试构建" : mode === "verify" ? "产物复核" : "Dry Run";
@@ -45,6 +46,7 @@ const pages = [
   { id: "preflight", label: "发布前检查", icon: ShieldCheck },
   { id: "builds", label: "构建任务", icon: Terminal },
   { id: "artifacts", label: "产物管理", icon: Package },
+  { id: "channels", label: "渠道分发", icon: Radio },
   { id: "history", label: "发布历史", icon: History },
 ];
 const stateNames: Record<string, string> = {
@@ -348,10 +350,10 @@ function App() {
         <div className="mx-4 mt-8 rounded-xl border border-dashed border-slate-200 p-4 dark:border-slate-700">
           <div className="flex items-center gap-2 text-xs font-medium">
             <LockKeyhole size={14} />
-            安全模式 · 产物复核
+            安全模式 · 渠道追踪
           </div>
           <p className="mt-2 text-xs leading-5 text-slate-400">
-            预检、隔离调试构建与产物复核。正式发布尚未开放。
+            预检、产物复核与渠道交接。正式发布和分发执行尚未开放。
           </p>
         </div>
         <div className="mt-auto border-t border-slate-100 p-5 dark:border-slate-800">
@@ -1199,6 +1201,7 @@ function App() {
                   )}
                 </div>
               )}
+              {page === "channels" && <ChannelsPanel initialVersion={data?.localVersion || "1.5.2"} revision={audit[0]?.seq || 0} request={api} />}
               {page === "artifacts" && (
                 <div className="space-y-6">
                   <ArtifactReview
@@ -1431,7 +1434,7 @@ function App() {
             <span>NOWEN · Release with confidence</span>
             <span className="flex items-center gap-1">
               <ShieldCheck size={12} />
-              本机独立控制台 · Phase 2A
+              本机独立控制台 · Phase 3
             </span>
           </footer>
         </main>
