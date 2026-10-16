@@ -521,13 +521,13 @@ export class NowenApiClient {
   }
 
   async listPersonalFileTrash(page = 1): Promise<any> {
-    return this.request("/api/attachment-trash/", {
+    return this.request("/api/files/trash/", {
       query: { workspaceId: "personal", page, pageSize: 100 },
     });
   }
 
   async restorePersonalFiles(ids: string[], expectedTrashedAt: Record<string, string>): Promise<any> {
-    return this.request("/api/attachment-trash/restore", {
+    return this.request("/api/files/trash/restore", {
       method: "POST", query: { workspaceId: "personal" }, body: { ids, expectedTrashedAt },
     });
   }
