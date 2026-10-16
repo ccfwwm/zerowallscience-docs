@@ -137,8 +137,8 @@ claude mcp list
 |---|---|---|
 | `NOWEN_URL` | Nowen Note 服务地址 | `http://localhost:3001` |
 | `NOWEN_API_TOKEN` | Personal API Token | — |
-| `NOWEN_USERNAME` | 旧版用户名认证 | `admin` |
-| `NOWEN_PASSWORD` | 旧版密码认证 | `admin123` |
+| `NOWEN_USERNAME` | 可选显式用户名认证 | 不设置 |
+| `NOWEN_PASSWORD` | 可选显式密码认证 | 不设置 |
 | `ALLOWED_NOTEBOOK_IDS` | MCP 本地笔记本白名单，逗号分隔 | 未启用 |
 | `MCP_ACCESS_MODE` | `read-only` 或 `read-write` | `read-write` |
 | `MCP_INCLUDE_DESCENDANTS` | 本地白名单是否包含子笔记本 | `false` |
@@ -202,7 +202,7 @@ npm run build
 - 任务和项目工具使用 `tasks:read` / `tasks:write` Token scopes，且 **只支持本人个人空间**。创建子任务、关联项目时，后端会核对父任务和项目实际归属。
 - 知识树查询使用 `notebooks:read`，restricted Token 只返回授权笔记本以及所允许的子树。未授权节点及对应笔记的密码授权元数据不会返回。
 - 笔记移动依赖 `notes:write`，当前源笔记与目标笔记本必须都有权限。执行前先调用 `nowen_move_note`（省略 `dryRun`），随后在确认移动方案后提交 `dryRun=false` 和 `expectedVersion`。发生版本冲突时重新预览。
-- `MCP_ACCESS_MODE=read-only` **独立于** `ALLOWED_NOTEBOOK_IDS` 生效；本地白名单未设置时也会拦截写入请求。仅知识库问答、AI 文本处理和认证使用的只读用途 POST 例外。
+- `MCP_ACCESS_MODE=read-only` **独立于** `ALLOWED_NOTEBOOK_IDS` 生效；本地白名单未设置时也会拦截写入请求。仅受限知识库问答和登录认证用途的 POST 例外；AI Chat 可能触发副作用，因此也会被阻止。
 - 系统级自动化、Webhook、备份、管理员操作仍遵循已有 Token 权限约束；restricted Token 不会因为此次扩展获得这些权限。
 - 面向所有客户端的远程 Streamable HTTP MCP、知识树批量写入、文件夹批量整理、工作流编辑仍需单独安全评审和兼容性测试，本次没有宣称已开放。
 
@@ -215,6 +215,30 @@ npm test
 ```
 
 GitHub Actions 见 `.github/workflows/mcp-scope-and-tools-ci.yml`。
+
+## P0 安全能力与集成验收
+
+### 知识树安全闭环
+
+新增 `nowen_preview_knowledge_tree_change` 与 `nowen_apply_knowledge_tree_change`：
+
+1. 先用预览工具选择 `create`、`rename`、`move`、`trash`、`restore`，查看标题、目标目录、受影响节点数、`revision`（移动、删除、恢复还返回 `subtreeRevision`）。
+2. 向用户确认操作对象和范围；**AI 返回预览并不代表用户已经授权执行**。
+3. 再用执行工具传入完全相同的参数、预览生成的 `expectedRevision`、必要的 `expectedSubtreeRevision`，以及明确的 `confirmation`。删除使用 `MOVE_TREE_TO_TRASH`，恢复使用 `RESTORE_TREE`，其他使用 `APPLY_TREE_CHANGE`。
+4. 后端检查父目录、当前节点、所有后代的授权和预览版本；不符返回 403/409，必须重新预览。删除始终进入可恢复的回收站，绝不执行永久删除。
+
+P0 仅支持**本人个人空间**内普通文件夹和 Markdown 笔记的创建、重命名、移动、软删除、恢复。受限 PAT 必须授予 `notebooks:read`、`notebooks:write`，操作笔记还需要 `notes:write`；本地白名单适用时，在受限文件夹下创建/恢复子目录还需要 `MCP_INCLUDE_DESCENDANTS=true`。跨工作区、高级文件类型、批量删除、权限管理不属于此阶段。
+
+### 笔记删除及账号安全
+
+- `nowen_delete_note` 默认预览。执行软删除需提供 `dryRun=false`、匹配的 `expectedVersion` 和 `confirmation=MOVE_TO_TRASH`。设置 `permanent=true` 总是被拒绝；永久删除只能通过主应用回收站完成。
+- `MCP_ACCESS_MODE=read-only` 即使没有配置 `ALLOWED_NOTEBOOK_IDS` 也会拒绝写入；同时拒绝可能触发插件和任务副作用的 AI Chat。
+- **不再默认使用 `admin/admin123` 登录**。推荐 `NOWEN_API_TOKEN`，或者同时显式设置 `NOWEN_USERNAME` 与 `NOWEN_PASSWORD`。PAT 无效时不会回退到账号密码。
+- 预览修订值、确认字符串是操作安全防线，不是用户身份验证；实际人机确认仍由 MCP 宿主客户端提供，服务端会独立验证 ACL 与 Token grants。
+
+### 已自动化验证的 P0 场景
+
+`npm test` 包含：MCP 构建、笔记本范围和只读策略、被删除子目录授权、修订指纹/子树冲突、真实 MCP SDK stdio 客户端调用（使用隔离的模拟 HTTP 后端）。CI 中另运行真实知识树路由 + SQLite 的 API Token 集成测试，覆盖越权节点、未授权目标、预览冲突、回收站删除/恢复。**仍需要在实际 Claude Desktop/Codex 客户端、真实账号和多端同步环境执行发布验收。**
 
 ## 发行说明
 
