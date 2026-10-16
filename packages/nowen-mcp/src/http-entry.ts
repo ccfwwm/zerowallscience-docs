@@ -45,7 +45,8 @@ export function createMcpHttpGateway(env: NodeJS.ProcessEnv = process.env) {
   if (gatewayToken.length < 32 || backendToken.length < 12 || gatewayToken === backendToken) {
     throw new Error("HTTP MCP 需要不同的 NOWEN_MCP_HTTP_TOKEN (≥32 字符) 与 NOWEN_API_TOKEN");
   }
-  if (env.MCP_ACCESS_MODE !== "read-only" && env.NOWEN_MCP_HTTP_ALLOW_WRITE !== "true") {
+  if (env.MCP_ACCESS_MODE !== "read-only"
+      && !(env.MCP_ACCESS_MODE === "read-write" && env.NOWEN_MCP_HTTP_ALLOW_WRITE === "true")) {
     throw new Error("HTTP MCP 默认只能只读；开启写入需设置 MCP_ACCESS_MODE=read-write 和 NOWEN_MCP_HTTP_ALLOW_WRITE=true");
   }
   const host = env.NOWEN_MCP_HTTP_HOST || "127.0.0.1";
