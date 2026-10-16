@@ -292,9 +292,42 @@ export class NowenApiClient {
   }
 
   /** 从知识树服务读取统一目录；所有目录权限交由服务端与 scoped MCP 再校验。 */
-  async getKnowledgeTree(workspaceId?: string): Promise<any> {
+  async getKnowledgeTree(workspaceId?: string, includeDeleted = false): Promise<any> {
     return this.request("/api/knowledge-tree/", {
-      query: { workspaceId: workspaceId || "personal" },
+      query: { workspaceId: workspaceId || "personal", includeDeleted: includeDeleted ? "1" : undefined },
+    });
+  }
+
+  async createKnowledgeNode(params: {
+    parentId: string | null; title: string; nodeType: "folder" | "markdown";
+  }): Promise<any> {
+    return this.request("/api/knowledge-tree/nodes", {
+      method: "POST", query: { workspaceId: "personal" }, body: params,
+    });
+  }
+
+  /** 版本预条件由后端 PAT 中间件在业务写入前验证。 */
+  async renameKnowledgeNode(nodeId: string, payload: Record<string, unknown>): Promise<any> {
+    return this.request(`/api/knowledge-tree/nodes/${encodeURIComponent(nodeId)}`, {
+      method: "PATCH", query: { workspaceId: "personal" }, body: payload,
+    });
+  }
+
+  async moveKnowledgeNode(nodeId: string, payload: Record<string, unknown>): Promise<any> {
+    return this.request(`/api/knowledge-tree/nodes/${encodeURIComponent(nodeId)}/move`, {
+      method: "PUT", query: { workspaceId: "personal" }, body: payload,
+    });
+  }
+
+  async trashKnowledgeNode(nodeId: string, payload: Record<string, unknown>): Promise<any> {
+    return this.request(`/api/knowledge-tree/nodes/${encodeURIComponent(nodeId)}`, {
+      method: "DELETE", query: { workspaceId: "personal", mode: "subtree" }, body: payload,
+    });
+  }
+
+  async restoreKnowledgeNode(nodeId: string, payload: Record<string, unknown>): Promise<any> {
+    return this.request(`/api/knowledge-tree/nodes/${encodeURIComponent(nodeId)}/restore`, {
+      method: "POST", query: { workspaceId: "personal" }, body: payload,
     });
   }
 
