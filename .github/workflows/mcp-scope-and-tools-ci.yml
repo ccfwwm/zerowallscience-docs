@@ -8,11 +8,13 @@ on:
     paths:
       - "packages/nowen-mcp/**"
       - "backend/src/middleware/api-token-resource-scope.ts"
+      - "backend/tests/api-token-resource-scope.test.ts"
       - ".github/workflows/mcp-scope-and-tools-ci.yml"
   pull_request:
     paths:
       - "packages/nowen-mcp/**"
       - "backend/src/middleware/api-token-resource-scope.ts"
+      - "backend/tests/api-token-resource-scope.test.ts"
       - ".github/workflows/mcp-scope-and-tools-ci.yml"
   workflow_dispatch:
 
