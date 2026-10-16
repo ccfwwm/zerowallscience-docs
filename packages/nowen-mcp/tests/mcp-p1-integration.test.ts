@@ -106,6 +106,11 @@ test("P1 personal file and task tools enforce preview, token and optimistic posi
     }
     const listed = await client.callTool({ name: "nowen_list_managed_files", arguments: {} });
     assert.equal(JSON.parse(asText(listed)).items[0].id, "file-a");
+    const missingTarget = await client.callTool({
+      name: "nowen_preview_file_change",
+      arguments: { operation: "move_files", fileIds: ["file-a"] },
+    });
+    assert.equal(missingTarget.isError, true, "file move must explicitly choose root or a folder");
     const prev = await client.callTool({
       name: "nowen_preview_file_change", arguments: {
         operation: "move_files", fileIds: ["file-a"], parentId: null,
