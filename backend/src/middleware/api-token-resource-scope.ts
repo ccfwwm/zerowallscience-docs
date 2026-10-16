@@ -209,6 +209,7 @@ function requiredScope(pathname: string, method: string): string | null {
   if (pathname === "/api/me") return null;
   if (pathname.startsWith("/api/tokens")) return "__login_only__";
   if (pathname.startsWith("/api/task-digest")) return "__login_only__";
+  if (pathname === "/api/automations" || pathname.startsWith("/api/automations/")) return write ? "automations:write" : "automations:read";
   if (pathname.startsWith("/api/ai/task-plan")) return "__login_only__";
   if (pathname === "/api/tasks" || pathname.startsWith("/api/tasks/") || pathname === "/api/task-projects" || pathname.startsWith("/api/task-projects/")) return write ? "tasks:write" : "tasks:read";
   if (pathname === "/api/knowledge-tree" || pathname.startsWith("/api/knowledge-tree/")) return write ? "notebooks:write" : "notebooks:read";
@@ -799,6 +800,67 @@ async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccess
   await next();
 }
 
+/**
+ * PAT access is always limited to the token owner's personal automation resources.
+ * Prohibit system events, plugin callbacks, administrative runtime and other users'
+ * workflows even for an unrestricted token.
+ */
+async function handleTokenAutomations(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
+  const path = c.req.path.replace(/\/$/, "");
+  const method = c.req.method.toUpperCase();
+  if (path === "/api/automations") {
+    if (method === "GET") {
+      await next();
+      if (c.res.status >= 200 && c.res.status < 300) {
+        await replaceFilteredResponse(c, (items) =>
+          Array.isArray(items) ? items.filter((item: any) =>
+            item.userId === ctx.userId && item.workspaceId == null) : []);
+      }
+      return;
+    }
+    if (method === "POST") {
+      const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+      if (body.workspaceId != null) {
+        throw new ApiTokenAccessError("MCP 工作流仅允许个人空间", "API_TOKEN_RESOURCE_DENIED");
+      }
+      if (body.definition == null || typeof body.name !== "string") {
+        throw new ApiTokenAccessError("工作流定义或名称无效", "API_TOKEN_ENDPOINT_DENIED");
+      }
+      await next();
+      return;
+    }
+  }
+  const match = /^\/api\/automations\/([^/]+)(?:\/(enable|disable|runs))?$/.exec(path);
+  if (!match || !(
+    (method === "GET" && (!match[2] || match[2] === "runs"))
+    || (method === "PUT" && !match[2])
+    || (method === "DELETE" && !match[2])
+    || (method === "POST" && (match[2] === "enable" || match[2] === "disable"))
+  )) {
+    throw new ApiTokenAccessError("Token 不允许管理系统事件、运行历史重放或直接执行工作流", "API_TOKEN_ENDPOINT_DENIED");
+  }
+  const workflowId = decodeURIComponent(match[1]);
+  const workflow = getDb().prepare(
+    "SELECT id,userId,workspaceId FROM automation_workflows WHERE id=?"
+  ).get(workflowId) as { id: string; userId: string; workspaceId: string | null } | undefined;
+  if (!workflow || workflow.userId !== ctx.userId || workflow.workspaceId != null) {
+    throw new ApiTokenAccessError("工作流不属于当前用户个人空间", "API_TOKEN_RESOURCE_DENIED");
+  }
+  if (method !== "GET") {
+    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+    if (typeof body.expectedRevision !== "string" || !/^[a-f0-9]{64}$/.test(body.expectedRevision)) {
+      throw new ApiTokenAccessError("请先预览工作流并提交版本指纹", "MCP_PREVIEW_REQUIRED", 409);
+    }
+    if (method === "PUT" && body.workspaceId != null) {
+      throw new ApiTokenAccessError("MCP 工作流不可移动到团队空间", "API_TOKEN_RESOURCE_DENIED");
+    }
+    if (method === "DELETE" && body.confirmation !== "DELETE_WORKFLOW") {
+      throw new ApiTokenAccessError("删除需要明确确认 DELETE_WORKFLOW", "MCP_CONFIRMATION_REQUIRED", 409);
+    }
+  }
+  await next();
+}
+
 async function handleTokenTaskProjects(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
   const path = c.req.path;
   const method = c.req.method.toUpperCase();
@@ -962,6 +1024,10 @@ export async function enforceApiTokenAccess(c: Context, next: Next): Promise<Res
     }
     if (required) requireScope(ctx, required);
     // 对 unrestricted 和 restricted PAT 同样应用个人任务资源边界。
+    if (c.req.path === "/api/automations" || c.req.path.startsWith("/api/automations/")) {
+      await handleTokenAutomations(c, next, ctx);
+      return;
+    }
     if (c.req.path === "/api/tasks" || c.req.path.startsWith("/api/tasks/")) {
       await handleTokenTasks(c, next, ctx);
       return;
