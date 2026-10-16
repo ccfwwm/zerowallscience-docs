@@ -10,6 +10,10 @@ on:
       - "backend/src/middleware/api-token-resource-scope.ts"
       - "backend/tests/api-token-resource-scope.test.ts"
       - "backend/tests/mcp-knowledge-tree-p0.test.ts"
+      - "backend/tests/mcp-automation-p2.test.ts"
+      - "backend/src/automation/workflowService.ts"
+      - "backend/src/routes/automations.ts"
+      - "backend/src/lib/api-tokens.ts"
       - "backend/src/routes/files.ts"
       - "backend/src/routes/attachment-folders.ts"
       - "backend/src/routes/attachment-trash.ts"
@@ -23,6 +27,10 @@ on:
       - "backend/src/middleware/api-token-resource-scope.ts"
       - "backend/tests/api-token-resource-scope.test.ts"
       - "backend/tests/mcp-knowledge-tree-p0.test.ts"
+      - "backend/tests/mcp-automation-p2.test.ts"
+      - "backend/src/automation/workflowService.ts"
+      - "backend/src/routes/automations.ts"
+      - "backend/src/lib/api-tokens.ts"
       - "backend/src/routes/files.ts"
       - "backend/src/routes/attachment-folders.ts"
       - "backend/src/routes/attachment-trash.ts"
@@ -72,6 +80,11 @@ jobs:
           NODE_ENV: test
       - name: Test real knowledge-tree route via MCP API Token
         run: node --import tsx --test tests/mcp-knowledge-tree-p0.test.ts
+        working-directory: backend
+        env:
+          NODE_ENV: test
+      - name: Test workflow ownership, version checks and token permissions
+        run: node --import tsx --test tests/mcp-automation-p2.test.ts
         working-directory: backend
         env:
           NODE_ENV: test
