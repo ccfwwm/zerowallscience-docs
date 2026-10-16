@@ -16,6 +16,9 @@ jobs:
       - run: npx vitest run src/lib/__tests__/serverUrl.test.ts src/lib/__tests__/notebookPublicationAttachmentAccess.test.ts src/lib/__tests__/noteAttachmentAccessBridge.test.ts src/hooks/__tests__/useAttachmentImageRenderSource.test.tsx src/components/__tests__/MarkdownPreview.test.tsx src/components/__tests__/PublicNotebookReadOnlyPermissions.test.ts src/components/__tests__/PublicNotebookAttachmentRefresh.test.tsx
         working-directory: frontend
       - run: python3 scripts/tests/zerowall-deploy.test.py
+      - run: npm ci && npm test
+        working-directory: packages/nowen-mcp
+      - run: docker build -f deploy/mcp/Dockerfile -t zerowallscience-docs-mcp:ci .
       - run: npm ci
         working-directory: backend
       - run: npm run build

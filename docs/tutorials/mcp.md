@@ -4,6 +4,8 @@
 
 [返回教程中心](./README.md) · [English](./mcp.en.md) · [MCP 包说明](../../packages/nowen-mcp/README.md)
 
+已部署 ZeroWall 官网文档的用户，可通过 [正式文档远程 MCP](../../deploy/mcp/README.md) 使用生产域名 `/mpcdocs` 和独立网关 Key 连接，无需在本机启动 stdio 服务。
+
 ## 先看结论
 
 - MCP 功能仍然受支持，服务端代码位于 `packages/nowen-mcp/`。
