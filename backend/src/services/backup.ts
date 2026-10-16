@@ -23,6 +23,7 @@
  */
 
 import fs from "fs";
+import { nextDailyBackupRunAt, isValidBackupTimeZone } from "./backup-schedule.js";
 import { markSyncNeedsReconcile } from "../sync/bootstrap";
 import path from "path";
 import crypto from "crypto";
@@ -30,6 +31,7 @@ import os from "os";
 import JSZip from "jszip";
 import Database from "better-sqlite3";
 import { closeDb, getDb, getDbSchemaVersion } from "../db/schema.js";
+import { requireSqliteVecForStoredTables } from "../db/sqlite-vec-extension.js";
 import { noteVersionsRepository } from "../repositories";
 import {
   createBackupFilename,
@@ -112,7 +114,7 @@ const FAILURE_DEGRADE_THRESHOLD = 3;
  *
  * 字段语义：
  *   - mode="interval"：从启动那一刻起每 intervalHours 小时跑一次（旧行为）。
- *   - mode="daily"   ：每天到达 dailyAt（"HH:mm"，服务器本地时区）跑一次；
+ *   - mode="daily"   ：每天到达 dailyAt（"HH:mm"，timeZone 指定的时区）跑一次；
  *                       服务启动时若今日时间点还没到 → 调度到今日；已过 → 明日。
  *                       重启不会立即触发（避免运维半夜重启抖一次备份）。
  *
@@ -127,8 +129,10 @@ interface AutoBackupConfig {
   enabled: boolean;
   intervalHours: number;
   mode?: "interval" | "daily";
-  /** "HH:mm" 24 小时制（服务器本地时区）；mode="daily" 时使用 */
+  /** "HH:mm" 24 小时制；mode="daily" 时使用 */
   dailyAt?: string;
+  /** IANA 时区；未设置时保留旧版服务器本地时间调度语义 */
+  timeZone?: string;
   /** 自动备份保留数；手动创建时也用于清理 db-only。默认 15 */
   keepCount?: number;
   /** 自动备份成功后是否自动发邮件 */
@@ -250,6 +254,10 @@ export interface BackupHealth {
   autoBackupMode?: "interval" | "daily";
   /** mode="daily" 时的每日触发时间 "HH:mm" */
   autoBackupDailyAt?: string;
+  /** 显式的备份时区；null 表示旧版服务器本地调度 */
+  autoBackupTimeZone?: string | null;
+  /** 用于展示旧调度实际依赖的服务器时区 */
+  autoBackupServerTimeZone?: string;
   /** 自动备份保留数；手动创建时也用于清理 db-only */
   autoBackupKeepCount?: number;
   /** 是否启用"备份成功后自动发邮件" */
@@ -390,6 +398,7 @@ function checkSqliteIntegrity(dbPath: string, label: string): void {
   let db: Database.Database | null = null;
   try {
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    requireSqliteVecForStoredTables(db, label);
     const row = db.prepare("PRAGMA integrity_check").get() as { integrity_check: string };
     if (row.integrity_check !== "ok") {
       throw new Error(`${label}完整性检查失败: ${row.integrity_check}`);
@@ -768,12 +777,14 @@ export class BackupManager {
       // 关键：不能因为旧行没这些字段就把 enabled 推翻成 false。
       const mode: "interval" | "daily" = parsed.mode === "daily" ? "daily" : "interval";
       const dailyAt = isValidHHmm(parsed.dailyAt) ? parsed.dailyAt : "03:00";
+      // Do not silently shift schedules created before explicit time zones.
+      const timeZone = isValidBackupTimeZone(parsed.timeZone) ? parsed.timeZone : undefined;
       let keepCount = Number(parsed.keepCount);
       if (!Number.isFinite(keepCount)) keepCount = KEEP_COUNT_DEFAULT;
       keepCount = Math.max(KEEP_COUNT_MIN, Math.min(KEEP_COUNT_MAX, Math.round(keepCount)));
       const emailOnSuccess = parsed.emailOnSuccess === true;
       const emailTo = typeof parsed.emailTo === "string" ? parsed.emailTo.trim() : "";
-      return { enabled, intervalHours, mode, dailyAt, keepCount, emailOnSuccess, emailTo };
+      return { enabled, intervalHours, mode, dailyAt, timeZone, keepCount, emailOnSuccess, emailTo };
     } catch {
       return null;
     }
@@ -1373,10 +1384,12 @@ export class BackupManager {
       try {
         // 用 better-sqlite3 直接打开（独立连接）
         const Database = (await import("better-sqlite3")).default;
-        let tmp: InstanceType<typeof Database>;
+        let tmp: InstanceType<typeof Database> | null = null;
         try {
           tmp = new Database(tmpDb, { readonly: true });
+          requireSqliteVecForStoredTables(tmp, "备份预览");
         } catch (e) {
+          try { tmp?.close(); } catch { /* ignore */ }
           // 透传 SQLite 错误 + 临时路径，管理员可凭此定位 AV / 权限 / 路径问题
           throw new Error(
             `预览恢复失败：无法打开 zip 内的数据库快照（tmp=${tmpDb}）：${
@@ -1384,6 +1397,7 @@ export class BackupManager {
             }`,
           );
         }
+        if (!tmp) throw new Error("预览恢复失败：未能打开备份数据库");
         const attachmentAudit = auditAttachmentBackup(
           tmpDb,
           attachmentArchivePaths,
@@ -1598,6 +1612,12 @@ export class BackupManager {
       // 用 readonly 临时打开备份 DB，统计行数
       const Database = (await import("better-sqlite3")).default;
       const tmp = new Database(filePath, { readonly: true });
+      try {
+        requireSqliteVecForStoredTables(tmp, "备份预览");
+      } catch (error) {
+        tmp.close();
+        throw error;
+      }
       const tables = listAllTables(tmp as unknown as ReturnType<typeof getDb>);
       const cur = getDb();
       const list = tables.map((name) => {
@@ -1693,7 +1713,7 @@ export class BackupManager {
       console.log(`[Backup] 自动备份已启动（间隔模式，每 ${cfg.intervalHours} 小时）`);
     } else {
       this.scheduleNextDaily(cfg.dailyAt || "03:00");
-      console.log(`[Backup] 自动备份已启动（每日 ${cfg.dailyAt} 模式）`);
+      console.log(`[Backup] 自动备份已启动（每日 ${cfg.dailyAt}，${cfg.timeZone || "服务器本地时区（旧配置）"}）`);
     }
 
     if (opts.persist) {
@@ -1707,13 +1727,8 @@ export class BackupManager {
    * 触发完后递归调用自己重排下一日，形成稳定的"每天一次"链。
    */
   private scheduleNextDaily(hhmm: string): void {
-    const [hh, mm] = hhmm.split(":").map((n) => Number(n));
     const now = new Date();
-    const next = new Date(now);
-    next.setHours(hh, mm, 0, 0);
-    if (next.getTime() <= now.getTime()) {
-      next.setDate(next.getDate() + 1);
-    }
+    const next = nextDailyBackupRunAt(hhmm, this.autoBackupConfig.timeZone, now);
     const delay = next.getTime() - now.getTime();
     this.autoBackupNextRunAt = next.getTime();
     this.autoBackupTimer = setTimeout(async () => {
@@ -1999,6 +2014,8 @@ export class BackupManager {
       autoBackupIntervalHours: this.autoBackupIntervalHours,
       autoBackupMode: this.autoBackupMode,
       autoBackupDailyAt: this.autoBackupConfig.dailyAt,
+      autoBackupTimeZone: this.autoBackupConfig.timeZone || null,
+      autoBackupServerTimeZone: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC",
       autoBackupKeepCount: this.autoBackupConfig.keepCount ?? KEEP_COUNT_DEFAULT,
       autoBackupEmailOnSuccess: this.autoBackupConfig.emailOnSuccess === true,
       autoBackupEmailTo: this.autoBackupConfig.emailTo ?? "",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Capacitor } from "@capacitor/core";
 
 import { getBaseUrl, resolveAttachmentUrl } from "@/lib/api";
@@ -8,9 +8,16 @@ import {
   getAttachmentAccessSnapshot,
   getAttachmentRenderSource,
   invalidateOfflineAttachmentRenderUrl,
+  requiresVerifiedAttachmentAccess,
   subscribeAttachmentAccess,
 } from "@/lib/noteAttachmentAccessBridge";
 import { primeNoteAttachmentAccess } from "@/lib/noteAttachmentAccessPriming";
+import { getAccessToken } from "@/lib/authSession";
+
+// Each editor/preview supplies its own note, including when two notes are open side by side.
+export const AttachmentNoteContext = createContext<string | null>(null);
+// 公开阅读使用原发布接口续签，不要求访客具备登录 JWT。
+export const AttachmentAccessRefreshContext = createContext<(() => Promise<number>) | null>(null);
 
 type ImageLoadState = {
   requestKey: string;
@@ -33,19 +40,8 @@ export type AttachmentImageRenderSource = {
   onError: () => void;
 };
 
-const signedAccessRefreshInFlight = new Map<string, Promise<number>>();
-
 function refreshSignedAccess(noteId: string): Promise<number> {
-  const existing = signedAccessRefreshInFlight.get(noteId);
-  if (existing) return existing;
-  const pending = primeNoteAttachmentAccess(noteId, getBaseUrl(), { timeoutMs: 2_500 })
-    .finally(() => {
-      if (signedAccessRefreshInFlight.get(noteId) === pending) {
-        signedAccessRefreshInFlight.delete(noteId);
-      }
-    });
-  signedAccessRefreshInFlight.set(noteId, pending);
-  return pending;
+  return primeNoteAttachmentAccess(noteId, getBaseUrl(), { timeoutMs: 2_500 });
 }
 
 /**
@@ -59,6 +55,9 @@ export function useAttachmentImageRenderSource(
   options: { enabled?: boolean } = {},
 ): AttachmentImageRenderSource {
   const enabled = options.enabled !== false;
+  const noteId = useContext(AttachmentNoteContext);
+  const publicRefresh = useContext(AttachmentAccessRefreshContext);
+  const refreshAccess = useCallback((id: string) => publicRefresh ? publicRefresh() : refreshSignedAccess(id), [publicRefresh]);
   useSyncExternalStore(
     subscribeAttachmentAccess,
     getAttachmentAccessSnapshot,
@@ -71,7 +70,11 @@ export function useAttachmentImageRenderSource(
   // more importantly, lets the attachment access bridge atomically replace a raw/stale
   // attachment URL with the latest signed/offline render URL as soon as that mapping arrives.
   // The persisted document still stays stable through source.persistentSrc.
-  const resolvedSrc = rawSrc ? resolveAttachmentUrl(rawSrc) : "";
+  const resolvedSrc = !rawSrc
+    ? ""
+    : rawSrc.startsWith("//") ? rawSrc : resolveAttachmentUrl(rawSrc);
+  const unsignedAttachment = enabled && requiresVerifiedAttachmentAccess(resolvedSrc);
+  const needsSignedAccess = unsignedAttachment && !!noteId && (!!publicRefresh || !!getAccessToken());
   const needsAndroidBlob = enabled
     && Capacitor.getPlatform() === "android"
     && !!source.attachmentId
@@ -79,6 +82,7 @@ export function useAttachmentImageRenderSource(
   const requestKey = [
     enabled ? "enabled" : "disabled",
     rawSrc || "",
+    noteId || "",
     source.attachmentId || "",
     resolvedSrc,
   ].join("\n");
@@ -94,7 +98,7 @@ export function useAttachmentImageRenderSource(
 
   useEffect(() => {
     signedRetryAttemptedRef.current = false;
-  }, [rawSrc]);
+  }, [source.persistentSrc, noteId]);
 
   useEffect(() => {
     const releaseRenderUrl = enabled && resolvedSrc
@@ -106,14 +110,45 @@ export function useAttachmentImageRenderSource(
 
     setState({
       requestKey,
-      renderSrc: enabled ? resolvedSrc : "",
+      renderSrc: enabled && !unsignedAttachment ? resolvedSrc : "",
       loading: enabled && !!resolvedSrc,
       error: null,
       preparingAndroidBlob: needsAndroidBlob,
       imageLoaded: false,
     });
 
-    if (needsAndroidBlob) {
+    if (unsignedAttachment && !needsSignedAccess) {
+      setState((current) => current.requestKey === requestKey ? {
+        ...current,
+        loading: false,
+        error: new Error("未获取到图片授权，请重新打开笔记"),
+        preparingAndroidBlob: false,
+      } : current);
+    } else if (needsSignedAccess) {
+      const prepare = async () => {
+        if (publicRefresh) {
+          await refreshAccess(noteId!);
+          if (!getAttachmentRenderSource(rawSrc).signedUrlPresent) throw new Error("未获取到图片访问地址");
+          return;
+        }
+        try { await refreshSignedAccess(noteId!); }
+        catch (error) {
+          const status = (error as { status?: number })?.status;
+          // Retry transient failures once; permission denial and missing resources stay explicit.
+          if (cancelled || (status && status < 500 && status !== 408 && status !== 429)) throw error;
+          await refreshSignedAccess(noteId!);
+        }
+        if (cancelled) return;
+        if (!getAttachmentRenderSource(rawSrc).signedUrlPresent) throw new Error("未获取到图片访问地址");
+      };
+      void prepare().catch((error: unknown) => {
+        if (cancelled) return;
+        setState((current) => current.requestKey === requestKey ? {
+          ...current, loading: false, preparingAndroidBlob: false,
+          error: error instanceof Error ? error : new Error("图片授权失败"),
+        } : current);
+      });
+    } else if (needsAndroidBlob) {
       fetch(resolvedSrc, abortController ? { signal: abortController.signal } : undefined)
         .then((response) => {
           if (!response.ok) throw new Error(`fetch image failed: ${response.status}`);
@@ -165,13 +200,13 @@ export function useAttachmentImageRenderSource(
       releaseRenderUrl();
       if (ownedBlobUrl) URL.revokeObjectURL(ownedBlobUrl);
     };
-  }, [enabled, needsAndroidBlob, requestKey, resolvedSrc, source.attachmentId, rawSrc]);
+  }, [enabled, needsAndroidBlob, needsSignedAccess, unsignedAttachment, noteId, requestKey, resolvedSrc, source.attachmentId, rawSrc, publicRefresh, refreshAccess]);
 
   const activeState = state.requestKey === requestKey
     ? state
     : {
         requestKey,
-        renderSrc: enabled ? resolvedSrc : "",
+        renderSrc: enabled && !unsignedAttachment ? resolvedSrc : "",
         loading: enabled && !!resolvedSrc,
         error: null,
         preparingAndroidBlob: needsAndroidBlob,
@@ -202,9 +237,7 @@ export function useAttachmentImageRenderSource(
     // in that note, then let the bridge subscription re-resolve this persistent attachment node.
     // The server remains authoritative: extracting noteId from scope only selects the endpoint;
     // `/attachments/access/urls` still performs the real ACL check.
-    const signedNoteId = source.signedUrlPresent
-      ? extractNoteIdFromSignedAttachmentUrl(activeRenderSrc)
-      : null;
+    const signedNoteId = noteId || extractNoteIdFromSignedAttachmentUrl(activeRenderSrc);
     if (
       source.attachmentId
       && signedNoteId
@@ -215,7 +248,7 @@ export function useAttachmentImageRenderSource(
       setState((current) => current.requestKey === requestKey
         ? { ...current, loading: true, error: null, imageLoaded: false }
         : current);
-      void refreshSignedAccess(signedNoteId)
+      void refreshAccess(signedNoteId)
         .then((registered) => {
           if (registered > 0) {
             // A changed signed URL triggers the access-store subscription and a new requestKey.
@@ -252,7 +285,7 @@ export function useAttachmentImageRenderSource(
         imageLoaded: false,
       };
     });
-  }, [activeRenderSrc, activeState.preparingAndroidBlob, requestKey, source.attachmentId, source.signedUrlPresent]);
+  }, [activeRenderSrc, activeState.preparingAndroidBlob, noteId, requestKey, source.attachmentId, refreshAccess]);
 
   return {
     attachmentId: source.attachmentId,

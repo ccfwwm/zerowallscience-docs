@@ -22,6 +22,7 @@ import { formatTiptapCodeBlock } from "@/lib/tiptapCodeBlockFormatting";
 import { formatCodeBlockLanguageLabel } from "@/lib/codeBlockLowlight";
 import { CODE_BLOCK_POPULAR_LANGUAGES } from "@/lib/codeBlockLanguageRegistry";
 import { copyText } from "@/lib/clipboard";
+import { useTranslation } from "react-i18next";
 import { recordPhaseAPerfEvent } from "@/lib/phaseAPerfDiagnostics";
 import {
   getEditorEditableSnapshot,
@@ -61,7 +62,10 @@ function EncryptedCodeBlockView({ node, editor, getPos }: NodeViewProps) {
     const current = typeof position === "number" ? editor.state.doc.nodeAt(position) : null;
     if (typeof position !== "number" || !editor.isEditable || !current?.eq(node)) throw new Error("Encrypted region changed");
     if (!editor.commands.insertContentAt({ from: position, to: position + node.nodeSize }, { type: "codeBlock", attrs: node.attrs, content: [{ type: "text", text: next }] })) throw new Error("Encrypted region write failed");
-  } : undefined} /></NodeViewWrapper>;
+  } : undefined} />
+    {/* Keep ProseMirror's ciphertext content inside a hidden container. */}
+    <NodeViewContent hidden aria-hidden="true" contentEditable={false} />
+  </NodeViewWrapper>;
 }
 function OrdinaryCodeBlockView(props: NodeViewProps) {
   const { node, updateAttributes, extension, editor, getPos } = props;
@@ -70,6 +74,9 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
   recordPhaseAPerfEvent({ type: "code-block-render", blockId: perfBlockId });
 
   const currentLang: string = node.attrs.language || "auto";
+  const { t } = useTranslation();
+  const [titleDraft, setTitleDraft] = useState<string>(node.attrs.title || "");
+  useEffect(() => setTitleDraft(node.attrs.title || ""), [node.attrs.title]);
   const indent = normalizeCodeBlockIndent(node.attrs.indent);
   const isMermaid = isMermaidLang(currentLang);
   const [copied, setCopied] = useState(false);
@@ -325,9 +332,31 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
     >
       {/* 顶部工具栏（不可编辑） */}
       <div
-        className={CODE_BLOCK_TOOLBAR_CLASS}
+        className={cn(CODE_BLOCK_TOOLBAR_CLASS, "max-sm:h-auto max-sm:flex-wrap max-sm:gap-2")}
         contentEditable={false}
       >
+        <input
+          value={titleDraft}
+          disabled={!canChangeLanguage}
+          aria-label={t("richText.codeBlockTitle")}
+          placeholder={t("richText.codeBlockTitle")}
+          className="min-w-0 max-w-40 flex-1 rounded bg-transparent px-1 text-xs text-tx-secondary outline-none disabled:cursor-default max-sm:basis-full max-sm:max-w-none"
+          onChange={(event) => setTitleDraft(event.target.value)}
+          onBlur={(event) => {
+            const title = event.currentTarget.value.trim();
+            if (canUseCodeBlockToolbarAction("language", editor) && title !== (node.attrs.title || "")) updateAttributes({ title: title || null });
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" && event.key !== "Escape") return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.key === "Escape") {
+              event.currentTarget.value = node.attrs.title || "";
+              setTitleDraft(node.attrs.title || "");
+            }
+            event.currentTarget.blur();
+          }}
+        />
         {/* 左侧：mac 风格小圆点 + 语言徽章（可点击切换） */}
         <div className="flex items-center gap-2">
           <span className="flex items-center gap-1">
@@ -352,7 +381,7 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
                 "code-block-tool-btn flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] font-mono transition-colors",
                 !canChangeLanguage && "opacity-40 cursor-not-allowed",
               )}
-              title={canChangeLanguage ? "切换语言" : "笔记本已锁定，不能修改代码语言"}
+              title={canChangeLanguage ? t("codeToolbar.switchLanguage") : t("codeToolbar.languageLocked")}
             >
               <span>{formatCodeBlockLanguageLabel(currentLang)}</span>
               <ChevronDown size={11} />
@@ -377,12 +406,12 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
                   autoFocus
                   value={langFilter}
                   onChange={(e) => setLangFilter(e.target.value)}
-                  placeholder="搜索语言..."
+                  placeholder={t("codeToolbar.searchLanguage")}
                   className="code-block-popup-input w-full px-2 py-1.5 border-b text-[11px] focus:outline-none"
                 />
                 <div className="max-h-56 overflow-auto py-1">
                   {filteredLanguages.length === 0 ? (
-                    <div className="code-block-popup-empty px-2 py-1.5 text-[11px]">无匹配</div>
+                    <div className="code-block-popup-empty px-2 py-1.5 text-[11px]">{t("codeToolbar.noMatches")}</div>
                   ) : (
                     filteredLanguages.map((lang) => (
                       <button
@@ -407,17 +436,16 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
 
         {/* 右侧：折叠/展开 + mermaid 切换 + 主题切换 + 复制按钮 */}
         <div className="flex items-center gap-1">
-          {!isMermaid && (
-            <button
-              type="button"
-              onClick={() => setCollapseOverride(!collapsed)}
-              className={CODE_BLOCK_TOOL_BUTTON_CLASS}
-              title={collapsed ? "展开代码" : "折叠代码"}
-            >
-              {collapsed ? <Maximize2 size={12} /> : <Minimize2 size={12} />}
-              <span className="hidden sm:inline">{collapsed ? "展开" : "折叠"}</span>
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={() => setCollapseOverride(!collapsed)}
+            className={CODE_BLOCK_TOOL_BUTTON_CLASS}
+            title={collapsed ? t("codeToolbar.expandCode") : t("codeToolbar.collapseCode")}
+            aria-label={collapsed ? t("codeToolbar.expandCode") : t("codeToolbar.collapseCode")}
+          >
+            {collapsed ? <Maximize2 size={12} /> : <Minimize2 size={12} />}
+            <span className="hidden sm:inline">{collapsed ? t("codeToolbar.expand") : t("codeToolbar.collapse")}</span>
+          </button>
           {/* 仅 mermaid 语言显示：源码 / 预览 切换。预览时按钮显示"代码"图标
               （提示点击会切回源码视图），源码时显示"眼睛"图标（提示切回预览） */}
           {isMermaid && (
@@ -425,10 +453,10 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
               type="button"
               onClick={() => setMermaidPreview((v) => !v)}
               className="code-block-tool-btn flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
-              title={mermaidPreview ? "切换到源码" : "切换到预览"}
+              title={mermaidPreview ? t("codeToolbar.switchToSource") : t("codeToolbar.switchToPreview")}
             >
               {mermaidPreview ? <Code2 size={12} /> : <Eye size={12} />}
-              <span className="hidden sm:inline">{mermaidPreview ? "源码" : "预览"}</span>
+              <span className="hidden sm:inline">{mermaidPreview ? t("codeToolbar.source") : t("codeToolbar.preview")}</span>
             </button>
           )}
           <div className="relative" data-codeblock-themepicker>
@@ -441,10 +469,10 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
                 setShowLangPicker(false);
               }}
               className="code-block-tool-btn flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors"
-              title="切换代码块主题"
+              title={t("codeToolbar.switchTheme")}
             >
               <Palette size={12} />
-              <span className="hidden sm:inline">主题</span>
+              <span className="hidden sm:inline">{t("codeToolbar.theme")}</span>
             </button>
 
             {showThemePicker && themePopupPos && createPortal(
@@ -463,7 +491,7 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
                 onMouseDown={(e) => e.stopPropagation()}
               >
                 <div className="code-block-popup-title px-2 py-1.5 text-[11px] font-medium border-b">
-                  代码块主题
+                  {t("codeToolbar.themeTitle")}
                 </div>
                 <div className="max-h-64 overflow-auto py-1">
                   {CODE_BLOCK_THEMES.map((t) => (
@@ -512,10 +540,10 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
               "code-block-tool-btn flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
               copied && "is-copied",
             )}
-            title={copied ? "已复制" : "复制代码"}
+            title={copied ? t("codeToolbar.copied") : t("codeToolbar.copyCode")}
           >
             {copied ? <Check size={12} /> : <Copy size={12} />}
-            <span>{copied ? "已复制" : "复制"}</span>
+            <span>{copied ? t("codeToolbar.copied") : t("codeToolbar.copy")}</span>
           </button>
           <button
             type="button"
@@ -527,10 +555,10 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
               "code-block-tool-btn flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-medium transition-colors",
               !canDissolve && "opacity-40 cursor-not-allowed",
             )}
-            title={canDissolve ? "解散为文本" : "笔记本已锁定，不能解散代码块"}
+            title={canDissolve ? t("codeToolbar.dissolveTitle") : t("codeToolbar.dissolveLocked")}
           >
             <FileText size={12} />
-            <span className="hidden sm:inline">解散</span>
+            <span className="hidden sm:inline">{t("codeToolbar.dissolve")}</span>
           </button>
         </div>
       </div>
@@ -545,15 +573,54 @@ function OrdinaryCodeBlockView(props: NodeViewProps) {
           {/* 双击预览区进入源码态，便于直接编辑（与脚注/公式 NodeView 交互一致）；
               单击不切换，避免阅读时误触把图变成代码。 */}
           <div
-            className="mermaid-preview-host px-3 py-2 cursor-text"
+            className="mermaid-preview-host relative px-3 py-2 cursor-text"
             contentEditable={false}
             onDoubleClick={(e) => {
               e.stopPropagation();
               setMermaidPreview(false);
             }}
-            title="双击进入源码编辑"
+            title={t("codeToolbar.sourceDoubleClick")}
           >
-            <MermaidView source={node.textContent} debounceMs={250} />
+            {collapsed ? (
+              // Keep the ProseMirror contentDOM mounted below while deferring SVG work.
+              <div className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-app-border bg-app-hover/30 px-3 py-2 text-xs text-tx-secondary">
+                <span className="font-medium">Mermaid</span>
+                <button
+                  type="button"
+                  className="mermaid-preview-collapse-button inline-flex items-center gap-1 rounded-md px-2 py-1 font-medium text-tx-secondary hover:bg-app-hover hover:text-tx-primary"
+                  title={t("codeToolbar.expandCode")}
+                  aria-label={t("codeToolbar.expandCode")}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setCollapseOverride(false);
+                  }}
+                >
+                  <Maximize2 size={12} />
+                  {t("codeToolbar.expand")}
+                </button>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="mermaid-preview-collapse-button absolute left-2 top-2 z-20 inline-flex items-center gap-1 rounded-md border border-app-border bg-app-surface/90 px-2 py-1 text-xs font-medium text-tx-secondary shadow-sm hover:bg-app-hover hover:text-tx-primary"
+                  title={t("codeToolbar.collapseCode")}
+                  aria-label={t("codeToolbar.collapseCode")}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onDoubleClick={(event) => event.stopPropagation()}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setCollapseOverride(true);
+                  }}
+                >
+                  <Minimize2 size={12} />
+                  {t("codeToolbar.collapse")}
+                </button>
+                <MermaidView source={node.textContent} debounceMs={250} />
+              </>
+            )}
           </div>
           {/* 隐藏但保留的可编辑内容承载节点；ProseMirror 需要它存在 */}
           <pre

@@ -112,6 +112,7 @@ import {
   BrainCircuit,
 } from "lucide-react";
 import { MarkdownPreview } from "./MarkdownPreview";
+import { markdownLivePreviewNoteId } from "@/lib/markdownLivePreview";
 import EncryptedBlockDialog from "./EncryptedBlockDialog";
 import { markdownEncryptedBlocks } from "@/lib/encryptedNotes/blockDocument";
 import AttachmentLibraryPicker from "@/components/AttachmentLibraryPicker";
@@ -175,6 +176,7 @@ import {
   insertLink,
   insertImage,
   replaceSelection,
+  applyMarkdownCjkTypography,
 } from "@/lib/markdownCommands";
 import {
   MarkdownSlashMenu,
@@ -793,6 +795,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
 
   // �����л��õ� Compartment
   const themeCompartmentRef = useRef(new Compartment());
+  const attachmentNoteCompartmentRef = useRef(new Compartment());
   const historyCompartmentRef = useRef(new Compartment());
   const editableCompartmentRef = useRef(new Compartment());
   const searchPhraseCompartmentRef = useRef(new Compartment());
@@ -873,12 +876,8 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     // ���꣺����ѡ����㣬�䵽��Ļ��
     const coords = view.coordsAtPos(sel.from);
     if (coords) {
-      const panelWidth = Math.min(900, Math.max(0, window.innerWidth - 16));
-      const panelHeight = Math.min(760, Math.max(0, window.innerHeight - 16));
-      setAiPosition({
-        top: Math.max(8, Math.min(coords.top + 24, window.innerHeight - panelHeight - 8)),
-        left: Math.max(8, Math.min(coords.left, window.innerWidth - panelWidth - 8)),
-      });
+      // Shared assistant owns viewport clamping (including mobile keyboards).
+      setAiPosition({ top: coords.top + 24, left: coords.left });
     }
     setAiOpen(true);
   }, [isGuest, onAIAssistant]);
@@ -945,6 +944,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
 
   const closeAttachmentLibrary = useCallback(() => {
     setAttachmentLibraryOpen(false);
+    if (attachmentLibrarySelectionRef.current) asyncPasteAnchorsRef.current.delete(attachmentLibrarySelectionRef.current);
     attachmentLibrarySelectionRef.current = null;
   }, []);
 
@@ -956,10 +956,14 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
       from: selection.from,
       to: selection.to,
     };
+    asyncPasteAnchorsRef.current.add(attachmentLibrarySelectionRef.current);
     setAttachmentLibraryOpen(true);
   }, [editable]);
 
+  useEffect(() => { closeAttachmentLibrary(); }, [note.id, closeAttachmentLibrary]);
+
   const insertExistingAttachment = useCallback((item: FileItem) => {
+    if (!editable || noteRef.current.isTrashed) return;
     const view = viewRef.current;
     const selection = attachmentLibrarySelectionRef.current;
     if (!view || !selection || selection.to > view.state.doc.length) {
@@ -979,7 +983,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     closeAttachmentLibrary();
     queueMicrotask(() => view.focus());
     toast.success(tr("tiptap.attachmentLinkInserted", { defaultValue: "附件链接已插入" }));
-  }, [closeAttachmentLibrary, tr]);
+  }, [closeAttachmentLibrary, editable, tr]);
 
   // slash 菜单项：基础 Markdown、附件、AI 与日期日记命令共享同一个 CodeMirror 菜单。
   const openVoiceRecorder = useCallback(() => {
@@ -1318,6 +1322,11 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
         };
       },
       isReady: () => !!viewRef.current,
+      applyCjkTypography: (action) => {
+        const view = viewRef.current;
+        if (!view || !editable || !view.state.facet(EditorView.editable)) return false;
+        return applyMarkdownCjkTypography(view, action);
+      },
       insertMarkdownAtCursor: (md: string) => {
         const view = viewRef.current;
         if (!view) return false;
@@ -1485,6 +1494,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     const state = EditorState.create({
       doc: initialDoc,
       extensions: [
+        attachmentNoteCompartmentRef.current.of(markdownLivePreviewNoteId.of(isGuest ? null : note.id)),
         // Phase 3: CRDT Эͬ��չ�������ã�
         // yCollab ������ڿ�ǰ��λ�ã������ȴ��� doc ���
         // P3-#14����ʽ���� UndoManager �ó������Ȱ�����ϲ���350ms window��
@@ -1722,6 +1732,11 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
   // ---------- �л��ʼ� / �ⲿ�ָ��汾��ͬ���ĵ����� ----------
 
   const lastSyncedNoteIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: attachmentNoteCompartmentRef.current.reconfigure(
+      markdownLivePreviewNoteId.of(isGuest ? null : note.id),
+    ) });
+  }, [note.id, isGuest]);
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
@@ -2565,8 +2580,8 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
           readOnly={!editable}
           className="block w-full resize-none overflow-hidden break-words bg-transparent p-0 outline-none text-lg leading-7 md:text-xl font-semibold text-tx-primary placeholder:text-tx-tertiary/60"
         />
-        {!isGuest && !compactMobileEditing && (
-          <div className="mt-1">
+        {!isGuest && (
+          <div className={cn("mt-1", compactMobileEditing && "hidden focus-within:block")}>
             <TagInput
               noteId={note.id}
               noteTags={noteTags}
@@ -2617,6 +2632,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
           )} style={viewMode === "split" ? { width: `${100 - sourcePaneWidthPercent}%` } : undefined}>
             <MarkdownPreview
               markdown={previewMarkdown}
+              noteId={isGuest ? undefined : note.id}
               className="h-full"
               compact={viewMode === "split"}
               containerRef={previewRootRef}
@@ -2652,6 +2668,9 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
       />
 
       <AttachmentLibraryPicker
+        key={note.id}
+        noteId={note.id}
+        workspaceId={note.workspaceId}
         open={attachmentLibraryOpen}
         onClose={closeAttachmentLibrary}
         onSelect={insertExistingAttachment}

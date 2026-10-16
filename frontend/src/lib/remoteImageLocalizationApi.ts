@@ -26,19 +26,20 @@ export interface RemoteImageLocalizationNoteResult {
 export interface RemoteImageLocalizationJob {
   id: string; status: RemoteImageLocalizationJobStatus; createdAt: string; updatedAt: string;
   startedAt: string | null; completedAt: string | null; cancelRequested: boolean;
-  source: "note_ids" | "notebook"; notebookId: string | null; noteIds: string[];
+  source: "note_ids" | "notebook" | "all_personal"; notebookId: string | null; noteIds: string[];
   currentNoteId: string | null; currentNoteTitle: string | null; currentUrl: string | null; error: string | null;
   summary: {
     totalNotes: number; scannedNotes: number; processedNotes: number; updatedNotes: number; skippedNotes: number;
     conflictNotes: number; notesWithFailures: number; totalImageReferences: number; remoteReferenceCount: number;
-    uniqueRemoteUrlCount: number; downloadedUniqueUrls: number; reusedDownloads: number;
+    uniqueRemoteUrlCount: number; totalImageOperations?: number; processedImageOperations?: number; skippedImageOperations?: number; downloadedUniqueUrls: number; reusedDownloads: number;
     localizedReferences: number; localizedUrls: number; deduplicatedAttachments: number; failedUrls: number; downloadedBytes: number;
   };
   noteResults: RemoteImageLocalizationNoteResult[]; failures: RemoteImageLocalizationFailure[];
 }
 export type RemoteImageLocalizationScope =
   | { noteIds: string[]; expectedVersions?: Record<string, number> }
-  | { notebookId: string; expectedVersions?: Record<string, number> };
+  | { notebookId: string; expectedVersions?: Record<string, number> }
+  | { allPersonal: true };
 
 async function authenticatedJson<T>(path: string, init?: RequestInit): Promise<T> {
   const token = localStorage.getItem("nowen-token");

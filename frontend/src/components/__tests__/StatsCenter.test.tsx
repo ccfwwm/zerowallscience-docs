@@ -7,6 +7,7 @@ import { StatsCenter } from "../tasks/StatsCenter";
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
 vi.mock("react-i18next", () => ({
+  initReactI18next: { type: "3rdParty", init: () => undefined },
   useTranslation: () => ({
     t: (key: string, params?: Record<string, unknown>) => {
       if (typeof params?.defaultValue === "string") return params.defaultValue;

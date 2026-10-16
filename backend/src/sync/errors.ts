@@ -11,6 +11,10 @@
  */
 
 export const SYNC_ERROR_CODES = [
+  "NOTE_NOT_TRASHED",
+  "NOTE_LOCKED",
+  "ATTACHMENT_TRASH_RETAINED",
+  "NOTE_DELETION_UPGRADE_REQUIRED",
   /** 携带的 baseVersion 与服务端当前版本不一致，禁止静默覆盖正文。 */
   "VERSION_CONFLICT",
   /** 客户端游标早于服务端可增量供给的最小序号，需回退 snapshot。 */
@@ -75,9 +79,18 @@ export function isRetryableSyncError(code: SyncErrorCode): boolean {
  * 404 归为 SERVER_ERROR 而非"数据不存在"：它通常意味着远端未启用 Sync V2
  * 或路由未挂载，属于配置/部署问题，重试是合理的。
  */
-export function classifyHttpStatus(status: number): SyncErrorCode {
-  if (status === 401 || status === 403) return "AUTH_EXPIRED";
-  if (status === 400 || status === 413 || status === 415) return "INVALID_PAYLOAD";
+/**
+ * Classify transport failures while preserving explicit server business codes.
+ * HTTP 403 is *not* automatically an expired session: it can indicate a revoked
+ * workspace or missing write permission. Silent refresh must never override ACLs.
+ */
+export function classifyHttpStatus(status: number, serverCode?: unknown): SyncErrorCode {
+  if (isSyncErrorCode(serverCode)) return serverCode;
+  if (serverCode === "CHECKSUM_MISMATCH") return "VALIDATION_FAILED";
+  if (serverCode === "UNAUTHORIZED" || serverCode === "TOKEN_INVALID") return "AUTH_EXPIRED";
+  if (status === 401) return "AUTH_EXPIRED";
+  if (status === 403) return "SCOPE_FORBIDDEN";
+  if (status === 400 || status === 413 || status === 415 || status === 422) return "INVALID_PAYLOAD";
   if (status >= 500 || status === 404) return "SERVER_ERROR";
   return "SERVER_ERROR";
 }

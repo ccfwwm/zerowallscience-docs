@@ -89,6 +89,7 @@ function stabilizeMarkupImages(content: string): string {
 }
 
 export function stabilizePersistedNoteContent(content: string, contentFormat: string): string {
+  if (contentFormat === "plaintext") return content;
   if (!content) return content;
   if (contentFormat === "tiptap-json") {
     try {

@@ -13,14 +13,14 @@ jobs:
       - run: npm run build
         env: { NODE_OPTIONS: --max-old-space-size=4096 }
         working-directory: frontend
-      - run: npx vitest run src/lib/__tests__/serverUrl.test.ts
+      - run: npx vitest run src/lib/__tests__/serverUrl.test.ts src/lib/__tests__/notebookPublicationAttachmentAccess.test.ts src/lib/__tests__/noteAttachmentAccessBridge.test.ts src/hooks/__tests__/useAttachmentImageRenderSource.test.tsx src/components/__tests__/MarkdownPreview.test.tsx src/components/__tests__/PublicNotebookReadOnlyPermissions.test.ts src/components/__tests__/PublicNotebookAttachmentRefresh.test.tsx
         working-directory: frontend
       - run: python3 scripts/tests/zerowall-deploy.test.py
       - run: npm ci
         working-directory: backend
       - run: npm run build
         working-directory: backend
-      - run: node --import tsx --test tests/official-site-bootstrap.test.ts tests/notebook-publication-standard-entry.test.ts
+      - run: node --import tsx --import ./tests/setup-db-isolation.ts --test tests/official-site-bootstrap.test.ts tests/notebook-publication-standard-entry.test.ts tests/notebook-publication-attachment-access.test.ts tests/attachment-shared-access.test.ts
         working-directory: backend
       - run: npm ci
         working-directory: website

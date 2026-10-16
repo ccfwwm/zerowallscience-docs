@@ -2,6 +2,7 @@ import { getBaseUrl, getCurrentWorkspace } from "@/lib/api";
 import { applyKnowledgeTreeSort } from "@/lib/knowledgeTreeSort";
 import type { SheetDataModel } from "@/lib/sheetModel";
 import type { NoteColorMark } from "@/types";
+import { folderUnlockRequestHeaders } from "./knowledgeTreePassword";
 
 export type KnowledgeNodeType = "folder" | "note" | "markdown" | "word" | "mindmap" | "file";
 export type KnowledgeRolePreset = "readonly" | "editor" | "maintainer" | "admin" | "deny";
@@ -68,6 +69,12 @@ export interface KnowledgePermissionRow {
   updatedAt: string;
 }
 
+export interface KnowledgeTreeResponse {
+  nodes: KnowledgeTreeNode[];
+  /** 仅本次在线请求有效，不能随树快照持久化。旧服务端不返回此字段。 */
+  passwordAuthorizedNotes?: Array<{ noteId: string; folderIds: string[] }>;
+}
+
 export interface KnowledgePermissionsResponse {
   direct: KnowledgePermissionRow[];
   inheritsFromParent: string | null;
@@ -116,18 +123,21 @@ function workspaceQuery(includeDeleted = false, workspaceIdOverride?: string): s
   return params.toString();
 }
 
-function withDisplaySort(result: { nodes: KnowledgeTreeNode[] }): { nodes: KnowledgeTreeNode[] } {
-  return { nodes: applyKnowledgeTreeSort(result.nodes) };
+function withDisplaySort(result: KnowledgeTreeResponse): KnowledgeTreeResponse {
+  return { ...result, nodes: applyKnowledgeTreeSort(result.nodes) };
 }
 
 export const knowledgeTreeApi = {
   list(includeDeleted = false) {
-    return request<{ nodes: KnowledgeTreeNode[] }>(`/?${workspaceQuery(includeDeleted)}`).then(withDisplaySort);
+    return request<KnowledgeTreeResponse>(`/?${workspaceQuery(includeDeleted)}`, {
+      headers: folderUnlockRequestHeaders(),
+    }).then(withDisplaySort);
   },
 
   listForWorkspace(workspaceId: string, includeDeleted = false) {
-    return request<{ nodes: KnowledgeTreeNode[] }>(
+    return request<KnowledgeTreeResponse>(
       `/?${workspaceQuery(includeDeleted, workspaceId)}`,
+      { headers: folderUnlockRequestHeaders() },
     ).then(withDisplaySort);
   },
 
@@ -135,7 +145,7 @@ export const knowledgeTreeApi = {
     return request<{ nodes: KnowledgeTreeNode[] }>(`/shared-with-me?${workspaceQuery()}`).then(withDisplaySort);
   },
 
-  create(input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word" | "mindmap" | "sheet"; title: string; sheetData?: SheetDataModel }) {
+  create(input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word" | "mindmap" | "sheet"; title: string; contentFormat?: "plaintext"; sheetData?: SheetDataModel }) {
     return request<KnowledgeTreeNode>(`/nodes?${workspaceQuery()}`, {
       method: "POST",
       body: JSON.stringify(input),
@@ -151,7 +161,7 @@ export const knowledgeTreeApi = {
 
   createForWorkspace(
     workspaceId: string,
-    input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word" | "mindmap" | "sheet"; title: string },
+    input: { parentId: string | null; nodeType: "folder" | "note" | "markdown" | "word" | "mindmap" | "sheet"; title: string; contentFormat?: "plaintext" },
   ) {
     return request<KnowledgeTreeNode>(`/nodes?${workspaceQuery(false, workspaceId)}`, {
       method: "POST",

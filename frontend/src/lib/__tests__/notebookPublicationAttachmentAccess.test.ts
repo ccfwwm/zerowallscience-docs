@@ -23,7 +23,7 @@ describe("public notebook attachment access", () => {
 
   it("keeps publication attachment signing on the backend instead of exposing bare attachment URLs", () => {
     expect(publicationBackendSource).toContain("createPublicationAttachmentScope");
-    expect(publicationBackendSource).toContain("const attachmentUrls = attachmentUrlsForNote(c, p, noteId);");
+    expect(publicationBackendSource).toContain('const attachmentUrls = attachmentUrlsForNote(c, p, noteId, note.content || "");');
     expect(publicationBackendSource).toContain("attachmentUrls,");
   });
 });

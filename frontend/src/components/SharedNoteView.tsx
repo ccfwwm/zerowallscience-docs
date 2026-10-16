@@ -5,6 +5,8 @@ import { api, resolveAttachmentUrl } from "@/lib/api";
 import VoiceMemoAudio from "@/components/VoiceMemoAudio";
 import { ShareInfo, SharedNoteContent, ShareComment, Note } from "@/types";
 import { cn } from "@/lib/utils";
+import { sharePageWidthClass } from "@/lib/sharePageWidth";
+import { useSiteSettings } from "@/hooks/useSiteSettings";
 import { toast } from "@/lib/toast";
 import { common, createLowlight } from "lowlight";
 import ReactMarkdown from "react-markdown";
@@ -12,6 +14,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
 import { sanitizeForShare, sanitizeSvg } from "@/lib/sanitizeHtml";
+import PlainTextEditor from "@/components/PlainTextEditor";
 import TiptapEditor from "@/components/TiptapEditor";
 import { MotionPhotoOverlay, SharedPhotoMotionBridge } from "@/components/MotionPhotoOverlay";
 import { AttachmentPhotoPreview } from "@/components/attachmentPreview/AttachmentPreview";
@@ -79,6 +82,7 @@ export function prepareSharedMarkdownForDisplay(markdown: string): string {
 }
 
 export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
+  const { siteConfig } = useSiteSettings();
   const [shareInfo, setShareInfo] = useState<ShareInfo | null>(null);
   const [content, setContent] = useState<SharedNoteContent | null>(null);
   const [loading, setLoading] = useState(true);
@@ -141,10 +145,10 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
   } | null>(null);
   const isReadOnlyContent = !(isEditing && (content?.permission === "edit" || content?.permission === "edit_auth"));
   const sharedMarkdownForDisplay = useMemo(
-  () => content && detectFormat(content.content) === "md"
+  () => content && content.contentFormat !== "plaintext" && detectFormat(content.content) === "md"
     ? preprocessSharedMindMapMarkdown(prepareSharedMarkdownForDisplay(content.content))
     : "",
-  [content?.content],
+  [content?.content, content?.contentFormat],
 );
 
   // DOM 后处理 + DEBUG：统一给分享页正文图片补 width style
@@ -1053,7 +1057,7 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
     >
       {/* 顶部信息栏 */}
       <header className="sticky top-0 z-10 bg-white/80 dark:bg-zinc-900/80 backdrop-blur-md border-b border-zinc-200 dark:border-zinc-800">
-        <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
+        <div className={cn(sharePageWidthClass(siteConfig.sharePageWidth), "mx-auto px-4 py-3 flex items-center justify-between")}>
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-lg bg-indigo-500/10 flex items-center justify-center shrink-0">
               <FileText size={16} className="text-indigo-500" />
@@ -1177,7 +1181,7 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
         </div>
         {/* 保存失败时的错误提示条 */}
         {saveStatus === "error" && saveError && (
-          <div className="max-w-4xl mx-auto px-4 pb-2 -mt-1">
+          <div className={cn(sharePageWidthClass(siteConfig.sharePageWidth), "mx-auto px-4 pb-2 -mt-1")}>
             <p className="text-[11px] text-red-500 flex items-center gap-1">
               <AlertCircle size={11} />
               {saveError}
@@ -1186,25 +1190,33 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
         )}
       </header>
 
+      {siteConfig.shareBannerEnabled && siteConfig.shareBannerImage && (
+        <div className={cn(sharePageWidthClass(siteConfig.sharePageWidth), "mx-auto px-4 pt-6")} data-shared-note-banner="">
+          <div className="aspect-[3/1] sm:aspect-[4/1] overflow-hidden rounded-xl">
+            <img src={siteConfig.shareBannerImage} alt="" className="h-full w-full object-cover" />
+          </div>
+        </div>
+      )}
+
       {/* 笔记内容：edit / edit_auth + isEditing 时走 TiptapEditor；否则继续走只读 HTML 渲染 */}
       <main
         className={cn(
           "mx-auto px-4 py-8",
-          showDesktopOutline
-            ? "max-w-6xl lg:grid lg:grid-cols-[minmax(0,56rem)_16rem] lg:gap-8 lg:items-start"
-            : "max-w-4xl"
+          sharePageWidthClass(siteConfig.sharePageWidth, showDesktopOutline)
         )}
       >
         <section className="min-w-0">
           {isEditing && (content.permission === "edit" || content.permission === "edit_auth") && fakeNoteForEditing ? (
             <div className="shared-note-editor">
-              <TiptapEditor
+              {content.contentFormat === "plaintext" ? <PlainTextEditor key={fakeNoteForEditing.id} note={fakeNoteForEditing} onUpdate={handleGuestSave} editable={!content.isLocked} isGuest /> : <TiptapEditor
                 note={fakeNoteForEditing}
                 onUpdate={handleGuestSave}
                 editable={!content.isLocked}
                 isGuest
-              />
+              />}
             </div>
+          ) : content.contentFormat === "plaintext" ? (
+            <pre className="whitespace-pre-wrap break-words text-tx-primary" style={{ fontFamily: "inherit" }}>{content.content}</pre>
           ) : detectFormat(content.content) === "md" ? (
             // 新编辑器保存的 Markdown：用 react-markdown 渲染
             <div
@@ -1430,7 +1442,7 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
 
       {/* 评论区域 */}
       {showComments && (
-        <div className="max-w-4xl mx-auto px-4 pb-8">
+        <div className={cn(sharePageWidthClass(siteConfig.sharePageWidth), "mx-auto px-4 pb-8")}>
           <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6">
             <h3 className="text-sm font-semibold text-zinc-800 dark:text-zinc-200 mb-4 flex items-center gap-2">
               <MessageCircle size={16} className="text-blue-500" />
@@ -1484,9 +1496,9 @@ export default function SharedNoteView({ shareToken }: SharedNoteViewProps) {
 
       {/* 底部 */}
       <footer className="border-t border-zinc-200 dark:border-zinc-800 py-6 text-center">
-        <p className="text-xs text-zinc-400">
+        <p className="text-xs text-zinc-400 px-4 break-words">
           <Globe size={12} className="inline mr-1" />
-          通过 Nowen Note 分享
+          {siteConfig.shareFooterText?.trim() || "通过 Nowen Note 分享"}
         </p>
       </footer>
 
@@ -1843,7 +1855,8 @@ function renderNode(node: any): string {
       return `<ul class="task-list"${renderSharedIndentAttribute(node)}>${renderChildren(node)}</ul>`;
     case "taskItem": {
       const checked = node.attrs?.checked ? "checked" : "";
-      return `<li class="task-item"><input type="checkbox" ${checked} disabled />${renderChildren(node)}</li>`;
+      const status = node.attrs?.checked ? "true" : "false";
+      return `<li class="task-item" data-checked="${status}"><input type="checkbox" ${checked} disabled />${renderChildren(node)}</li>`;
     }
     case "codeBlock":
       return renderCodeBlock(node);

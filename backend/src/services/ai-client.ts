@@ -1,3 +1,4 @@
+import { aiOutboundFetch } from "./ai-outbound-fetch.js";
 /**
  * AI Client 适配层
  *
@@ -27,6 +28,7 @@ export interface CallAIOptions {
   temperature?: number;
   max_tokens?: number;
   timeout_ms?: number;
+  signal?: AbortSignal;
 }
 
 /**
@@ -201,11 +203,11 @@ export async function callAIChat(
   };
   if (options.max_tokens !== undefined) responsesBody.max_output_tokens = options.max_tokens;
 
-  let res = await fetch(resolveAIEndpoint(settings.ai_api_url, "responses"), {
+  let res = await aiOutboundFetch(resolveAIEndpoint(settings.ai_api_url, "responses"), {
     method: "POST",
     headers,
     body: JSON.stringify(responsesBody),
-    signal: AbortSignal.timeout(options.timeout_ms ?? 30000),
+    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout_ms ?? 30000)]) : AbortSignal.timeout(options.timeout_ms ?? 30000),
   });
 
   // Keep compatibility with providers that expose only Chat Completions.
@@ -213,11 +215,11 @@ export async function callAIChat(
     const chatBody: Record<string, unknown> = { model: settings.ai_model, messages, stream: false };
     if (options.temperature !== undefined) chatBody.temperature = options.temperature;
     if (options.max_tokens !== undefined) chatBody.max_tokens = options.max_tokens;
-    res = await fetch(resolveAIEndpoint(settings.ai_api_url, "chat/completions"), {
+    res = await aiOutboundFetch(resolveAIEndpoint(settings.ai_api_url, "chat/completions"), {
       method: "POST",
       headers,
       body: JSON.stringify(chatBody),
-      signal: AbortSignal.timeout(options.timeout_ms ?? 30000),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout_ms ?? 30000)]) : AbortSignal.timeout(options.timeout_ms ?? 30000),
     });
   }
 
@@ -253,22 +255,22 @@ export async function* callAIChatStream(
   };
   if (options.max_tokens !== undefined) responsesBody.max_output_tokens = options.max_tokens;
 
-  let res = await fetch(resolveAIEndpoint(settings.ai_api_url, "responses"), {
+  let res = await aiOutboundFetch(resolveAIEndpoint(settings.ai_api_url, "responses"), {
     method: "POST",
     headers,
     body: JSON.stringify(responsesBody),
-    signal: AbortSignal.timeout(options.timeout_ms ?? 60000),
+    signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout_ms ?? 60000)]) : AbortSignal.timeout(options.timeout_ms ?? 60000),
   });
 
   if (!res.ok && shouldFallbackToChat(res.status)) {
     const chatBody: Record<string, unknown> = { model: settings.ai_model, messages, stream: true };
     if (options.temperature !== undefined) chatBody.temperature = options.temperature;
     if (options.max_tokens !== undefined) chatBody.max_tokens = options.max_tokens;
-    res = await fetch(resolveAIEndpoint(settings.ai_api_url, "chat/completions"), {
+    res = await aiOutboundFetch(resolveAIEndpoint(settings.ai_api_url, "chat/completions"), {
       method: "POST",
       headers,
       body: JSON.stringify(chatBody),
-      signal: AbortSignal.timeout(options.timeout_ms ?? 60000),
+      signal: options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(options.timeout_ms ?? 60000)]) : AbortSignal.timeout(options.timeout_ms ?? 60000),
     });
   }
 

@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X } from "lucide-react";
+import { Menu, Sparkles, X } from "lucide-react";
+import { openAICollaboration } from "@/lib/aiCollaboration";
+import AICollaborationCenter from "@/components/AICollaborationCenter";
 import { useTranslation } from "react-i18next";
 import Sidebar from "@/components/Sidebar";
 import WorkspaceIssues from "@/components/issues/WorkspaceIssues";
@@ -65,6 +67,7 @@ import { isAccountLoginHistorySupported, saveAccountLoginHistory } from "@/lib/a
 import SidebarSearchExperienceBridge from "@/components/SidebarSearchExperienceBridge";
 import FloatingLayerHost from "@/components/FloatingLayerHost";
 import { isNativeClientRuntime, stripServerBasePath } from "@/lib/serverUrl";
+import { reportBootStage } from "@/lib/bootSplash";
 import {
   APP_PATH_CHANGED_EVENT,
   replaceAppPathState,
@@ -563,6 +566,9 @@ function AppLayout() {
 
   useEffect(() => {
     const off = realtime.on("open", () => {
+      // Android 已登录客户端的 Native SQLite + Sync V2 是唯一同步写入链路。
+      // WebSocket 重连不得再触发旧版 IndexedDB 全量补拉，避免双引擎争用与重复加载。
+      if (isAndroidNativeRuntime()) return;
       void syncNow().catch((e) => console.warn("[App] sync after realtime open failed:", e));
     });
     return off;
@@ -872,7 +878,7 @@ function AppLayout() {
           v16 P3 后续：Rail 三档模式（icon=48px 纯图标 / label=64px 图标+文字 / hidden=完全隐藏）；
           hidden 模式下若主侧栏也折叠，强制保留 Rail（避免完全无侧栏入口）。 */}
       {showRail && <PhaseAPerfProfiler id="NavRail"><NavRail notificationCount={notificationCount} /></PhaseAPerfProfiler>}
-      {showSidebar && !mediumNoteWorkspace && (
+      {showSidebar && !mediumNoteWorkspace && !isFilesView && (
         <div
           className="hidden md:flex shrink-0"
           style={{ width: `${state.sidebarWidth}px` }}
@@ -880,7 +886,7 @@ function AppLayout() {
           <PhaseAPerfProfiler id="Sidebar"><Sidebar variant="desktop" /></PhaseAPerfProfiler>
         </div>
       )}
-      {showSidebar && !mediumNoteWorkspace && <SidebarResizeHandle />}
+      {showSidebar && !mediumNoteWorkspace && !isFilesView && <SidebarResizeHandle />}
 
       {/* ===== 主内容区 ===== */}
       {state.viewMode === "trash" ? (
@@ -942,7 +948,7 @@ function AppLayout() {
           <DiaryCenter />
         </div>
       ) : isFilesView ? (
-        <div className="flex-1 flex flex-col">
+        <div className="flex-1 min-h-0 min-w-0 flex flex-col overflow-hidden">
           <MobileTopBar />
           <FileManager />
         </div>
@@ -1031,6 +1037,7 @@ function AppLayout() {
 }
 
 function MobileTopBar() {
+  const { t } = useTranslation();
   const actions = useAppActions();
   const { siteConfig } = useSiteSettings();
   return (
@@ -1041,7 +1048,8 @@ function MobileTopBar() {
       >
         <Menu size={24} />
       </button>
-      <span className="ml-3 text-sm font-semibold text-tx-primary">{siteConfig.title}</span>
+      <span className="ml-3 min-w-0 flex-1 truncate text-sm font-semibold text-tx-primary">{siteConfig.title}</span>
+      <button onClick={openAICollaboration} aria-label={t("aiCollaboration.entry")} title={t("aiCollaboration.entry")} className="shrink-0 rounded-lg p-2 text-accent-primary hover:bg-app-hover"><Sparkles size={18} /></button>
     </header>
   );
 }
@@ -1067,6 +1075,7 @@ function AuthGate() {
   const isClientMode = isNativeClientRuntime();
 
   const checkAuth = useCallback(() => {
+    reportBootStage("authentication");
     const token = getAccessToken();
     if (isMobileLocalMode()) {
       setUser(getMobileLocalUser());
@@ -1359,7 +1368,7 @@ function AuthGate() {
 
   // 桌面端 / 移动端把每次已确认的登录态写入安全历史。仅保存 token，绝不保存密码。
   useEffect(() => {
-    if (!user?.id || !isAccountLoginHistorySupported()) return;
+    if (!user?.id || isMobileLocalMode() || !isAccountLoginHistorySupported()) return;
     const token = getAccessToken() || "";
     const refreshToken = getRefreshToken() || undefined;
     const serverUrl = getServerUrl()
@@ -1480,6 +1489,7 @@ function AuthGate() {
   // 已登录
   return (
     <AppProvider>
+      <AICollaborationCenter />
       <SidebarSearchExperienceBridge />
       {user && <WechatClipboardBridge key={`${getServerUrl() || "local"}:${user.id}`} />}
       <TooltipProvider>

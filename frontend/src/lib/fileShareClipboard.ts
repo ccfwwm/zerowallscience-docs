@@ -61,7 +61,8 @@ function inspectSignedAttachmentUrl(raw: string): SignedAttachmentCandidate | nu
 
   // 只有登录态 user scope 才是“文件管理里被误复制出去的运行时 URL”。
   // share/publication scope 属于公开页面自己的运行时授权，不能静默转换成另一个分享实体。
-  if (parseScopeKind(scope) !== "user") return null;
+  const kind = parseScopeKind(scope);
+  if (kind !== "user" && kind !== "file") return null;
   return { attachmentId, htmlEscaped };
 }
 

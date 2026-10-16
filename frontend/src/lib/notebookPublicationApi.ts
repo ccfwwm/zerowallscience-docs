@@ -288,8 +288,9 @@ export const notebookPublicationApi = {
     return { notebooks: tree.notebooks, notes: tree.notes.map((note) => ({ ...note, contentFormat: normalizeContentFormat(note.contentFormat) })) };
   },
   async getOfficialNote(noteId: string) {
-    const note = await request<PublicNoteContent>(`/docs/notes/${encodeURIComponent(noteId)}`);
-    registerAttachmentAccessUrls(note.attachmentUrls || {});
+    const path = `/docs/notes/${encodeURIComponent(noteId)}`;
+    const note = await request<PublicNoteContent>(path);
+    registerAttachmentAccessUrls(note.attachmentUrls || {}, `${apiBase()}${path}`);
     return { ...note, contentFormat: normalizeContentFormat(note.contentFormat) };
   },
 

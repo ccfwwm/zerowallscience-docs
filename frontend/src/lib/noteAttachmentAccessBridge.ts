@@ -90,7 +90,7 @@ function isLoopbackHostname(hostname: string): boolean {
 }
 
 function isKnownNowenApiUrl(url: URL): boolean {
-  return /\/(?:api|publicapi)\/(?:notes|attachments|files|shared)(?:\/|$)/.test(url.pathname);
+  return /\/(?:api|publicapi)\/(?:notes|attachments|files|shared|docs)(?:\/|$)/.test(url.pathname);
 }
 
 function currentWindowHttpOrigin(): string {
@@ -394,6 +394,15 @@ export function resolveAttachmentAccessUrl(raw: string): string {
     return moveUrlToOrigin(parsed, attachmentApiOrigin).toString();
   }
   return stableSource;
+}
+
+/** Avoid browser media fetching an attachment ID without verifiable access. */
+export function requiresVerifiedAttachmentAccess(value: string | null | undefined): boolean {
+  if (!value || !extractAttachmentId(value)) return false;
+  const parsed = asAbsoluteUrl(value);
+  if (!parsed) return true;
+  if (parsed.searchParams.has("share")) return false;
+  return !["exp", "sig", "scope"].every((key) => !!parsed.searchParams.get(key));
 }
 
 export interface AttachmentRenderSource {

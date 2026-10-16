@@ -4,7 +4,7 @@ import { stabilizeClipboardAttachmentLinks } from "@/lib/fileShareClipboard";
 const ATTACHMENT_ID = "11111111-2222-4333-8444-555555555555";
 const STABLE_URL = `https://notes.example/api/attachments/${ATTACHMENT_ID}?share=stable-token`;
 
-function encodeScope(kind: "user" | "share" | "publication"): string {
+function encodeScope(kind: "user" | "file" | "share" | "publication"): string {
   const payload = JSON.stringify({
     version: 2,
     kind,
@@ -18,11 +18,18 @@ function encodeScope(kind: "user" | "share" | "publication"): string {
   return `v2.${btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "")}`;
 }
 
-function signedUrl(kind: "user" | "share" | "publication" = "user"): string {
+function signedUrl(kind: "user" | "file" | "share" | "publication" = "user"): string {
   return `https://notes.example/api/attachments/${ATTACHMENT_ID}?exp=4102444800&sig=deadbeef&scope=${encodeURIComponent(encodeScope(kind))}`;
 }
 
 describe("stabilizeClipboardAttachmentLinks", () => {
+  it("exchanges manual-upload file scopes for revocable links and propagates privacy denial", async () => {
+    const createShare = vi.fn(async () => STABLE_URL);
+    await expect(stabilizeClipboardAttachmentLinks(signedUrl("file"), createShare)).resolves.toBe(STABLE_URL);
+    await expect(stabilizeClipboardAttachmentLinks(signedUrl("file"), async () => {
+      throw new Error("FILE_EXTERNAL_ACCESS_DISABLED");
+    })).rejects.toThrow("FILE_EXTERNAL_ACCESS_DISABLED");
+  });
   it("keeps ordinary clipboard content unchanged without creating a share", async () => {
     const createShare = vi.fn(async () => STABLE_URL);
     const input = "hello https://example.com/image.png";

@@ -19,6 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import PublicKnowledgeResourceRenderer from "@/components/PublicKnowledgeResourceRenderer";
+import { AttachmentAccessRefreshContext, AttachmentNoteContext } from "@/hooks/useAttachmentImageRenderSource";
 import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { navigateToAppPath } from "@/lib/appPathNavigation";
@@ -171,6 +172,27 @@ function PublicNotebookReader({ token, official = false, initialNoteId }: { toke
   const [commenting, setCommenting] = useState(false);
   const [joining, setJoining] = useState(false);
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const activeNodeRef = useRef(activeNodeId);
+  activeNodeRef.current = activeNodeId;
+  const refreshAttachments = useMemo(() => {
+    let pending: Promise<number> | null = null;
+    return () => {
+      if (pending) return pending;
+      pending = (async () => {
+        const resource = official
+          ? await notebookPublicationApi.getOfficialNote(activeNodeId.replace(/^note:/, ""))
+          : await notebookPublicationApi.getPublicResource(token, activeNodeId, accessToken || undefined);
+        if (activeNodeRef.current !== activeNodeId) return 0;
+        setActiveResource((current) => current?.nodeId === activeNodeId ? {
+          ...current, ...resource,
+          contentText: resource.contentText || "",
+          contentFormat: resource.contentFormat || null,
+        } : current);
+        return Object.keys(resource.attachmentUrls || {}).length;
+      })().finally(() => { pending = null; });
+      return pending;
+    };
+  }, [official, token, activeNodeId, accessToken]);
 
   const loadTree = useCallback(async (nextInfo: PublicNotebookInfo, nextAccessToken: string) => {
     try {
@@ -496,7 +518,11 @@ function PublicNotebookReader({ token, official = false, initialNoteId }: { toke
                   <h1 className="text-3xl font-bold leading-tight">{activeResource.title || "无标题内容"}</h1>
                 </div>
                 <div ref={contentRef} className="public-notebook-content min-h-[240px]">
-                  <PublicKnowledgeResourceRenderer resource={activeResource} />
+                  <AttachmentNoteContext.Provider value={activeResource.resourceId}>
+                    <AttachmentAccessRefreshContext.Provider value={refreshAttachments}>
+                      <PublicKnowledgeResourceRenderer resource={activeResource} />
+                    </AttachmentAccessRefreshContext.Provider>
+                  </AttachmentNoteContext.Provider>
                 </div>
 
                 {activeResource.resourceType !== "mindmap" && (activeResource.allowComment || info.permission !== "read") && (

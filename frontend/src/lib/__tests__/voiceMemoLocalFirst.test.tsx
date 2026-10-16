@@ -1,13 +1,13 @@
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { NativeDatabase } from "../nativeDatabase";
 import type { NativeAttachmentStore } from "../nativeAttachmentStore";
 
 // 只隔离无关业务门面；笔记写入、Outbox 序列化、同步请求和音频渲染使用真实实现。
 vi.mock("@/lib/api", async () => {
   const bridge = await import("@/lib/noteAttachmentAccessBridge");
-  return { api: { attachments: {}, attachmentFolders: {} }, resolveAttachmentUrl: bridge.resolveAttachmentAccessUrl };
+  return { api: { attachments: {}, attachmentFolders: {}, files: {} }, getBaseUrl: () => "https://server.example", resolveAttachmentUrl: bridge.resolveAttachmentAccessUrl };
 });
 vi.mock("../mobileLocalMode", () => ({ isMobileLocalMode: () => false }));
 vi.mock("../mobileLocalKnowledgeTreeBridge", () => ({ installMobileLocalKnowledgeTreeBridge: () => () => undefined }));
@@ -44,13 +44,26 @@ function createDatabase() {
       } else if (/INSERT INTO sync_outbox/.test(sql)) {
         outbox.push({ mutationId: values[1], entityType: values[5], entityId: values[6], operation: values[7], baseVersion: values[8], payload: values[9] });
       } else if (/DELETE FROM sync_outbox WHERE mutationId/.test(sql)) {
-        outbox.splice(outbox.findIndex((row) => row.mutationId === values[0]), 1);
+        const index = outbox.findIndex((row) => row.mutationId === values[0]);
+        if (index !== -1) outbox.splice(index, 1);
+      } else if (/UPDATE sync_outbox SET baseVersion/.test(sql)) {
+        const descendants = outbox.filter((row) => row.entityType === "note" && row.entityId === values[3]);
+        for (const row of descendants) row.baseVersion = values[0];
+        return { changes: descendants.length };
+      } else if (/INSERT INTO native_runtime_meta/.test(sql) || /DELETE FROM native_runtime_meta/.test(sql)) {
+        // Unsynced-note marker: the fake DB has no persistent native metadata table.
       } else throw new Error(`未覆盖的 SQL: ${sql}`);
       return { changes: 1 };
     },
     async query<T>(sql: string, values: unknown[] = []): Promise<T[]> {
       if (sql.includes("FROM sync_profiles p")) return [{ profileId: "profile", deviceId: "device" }] as T[];
       if (sql.includes("FROM sync_outbox")) return [...outbox] as T[];
+      // Sync V2 reads scoped notes directly, while the local editor fetches by ID.
+      // Both must resolve against the same in-memory rows.
+      if (sql.includes("FROM notes WHERE scopeKey=? AND id=?")) {
+        const row = notes.get(String(values[1]));
+        return (row?.scopeKey === values[0] ? [row] : []) as T[];
+      }
       if (sql.includes("FROM notes WHERE id")) return (notes.has(String(values[0])) ? [notes.get(String(values[0]))!] : []) as T[];
       if (sql.includes("FROM tags")) return [];
       throw new Error(`未覆盖的查询: ${sql}`);
@@ -61,6 +74,7 @@ function createDatabase() {
   return { db, notes, outbox };
 }
 let restore: (() => void) | undefined;
+beforeEach(() => localStorage.clear());
 afterEach(() => { restore?.(); restore = undefined; resetAttachmentAccessStateForTests(); vi.unstubAllGlobals(); });
 
 describe("Android Local-first voice memo sync", () => {
@@ -87,7 +101,9 @@ describe("Android Local-first voice memo sync", () => {
     const requests: Array<{ mutations: Array<{ mutationId: string; payload: { content: string } }> }> = [];
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)); requests.push(body);
-      return { ok: true, json: async () => ({ serverSequence: 2, results: body.mutations.map((mutation: { mutationId: string }) => ({ mutationId: mutation.mutationId, status: "applied" })) }) };
+      return { ok: true, json: async () => ({ serverSequence: 2, results: body.mutations.map((mutation: { mutationId: string; baseVersion?: number; payload: {version:number} }) => ({
+        mutationId: mutation.mutationId, status: "applied", version: mutation.baseVersion == null ? mutation.payload.version : mutation.baseVersion + 1,
+      })) }) };
     }));
     const engine = new MobileSyncEngine({ db, attachments, serverUrl: "https://server.example", token: "test", userId: "user", profileId: "profile", deviceId: "device" });
     await (engine as unknown as { push: (value: typeof scope) => Promise<void> }).push(scope);
