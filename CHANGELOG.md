@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **daily records / date picker**：修复点击“选择日期”文字仅聚焦而不弹出日历的问题；显式触发原生选择器，并扩大原生日历图标点击区域。Open the native date picker when clicking anywhere on the daily-records date shortcut, with full native-indicator hit coverage.
+
 - **editor / files AI**：修复富文本编辑器延迟初始化后首个保存确认可能覆盖较新输入的问题；加密浏览器夹具对齐正式保存确认逻辑，并验证延迟回包、服务端持久化和重载解锁。文件 AI 弹窗复用公共 ID 生成函数，减少对启动补丁的依赖。Initialize rich-text synchronization when the deferred editor becomes ready, preserve newer input across the first save ACK, strengthen encrypted persistence tests, and use the shared ID fallback in file AI dialogs.
 
 - **files / Phase E**：新增可编辑的 AI 分类、标签和文件描述预览，用户确认后整批原子执行并支持持久化幂等重试；复用已有 Embedding 配置进行分批文本元数据语义检索，普通搜索增加标签和描述匹配。Add explicitly confirmed AI organization and on-demand metadata semantic search without sending file contents. SQLite v130 与 PostgreSQL 存储迁移；Native 与启用桌面同步的整理写入明确拒绝，可选图片语义未启用。已通过 #856 合并到 release/v1.5.2，尚未发布，见 [使用说明](./docs/user/file-ai-organization.md) 与 [验收记录](./docs/qa/files-assets-center-v2/phase-e.md)。

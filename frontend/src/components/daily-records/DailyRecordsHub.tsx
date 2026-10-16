@@ -161,6 +161,10 @@ export default function DailyRecordsHub() {
                 type="date"
                 aria-label={t("diary.selectJournalDate")}
                 value={selectedDate}
+                onClick={(event) => {
+                  try { event.currentTarget.showPicker?.(); }
+                  catch { /* Keep the native indicator usable when the picker API is unavailable. */ }
+                }}
                 onChange={(event) => event.target.value && selectJournalDate(event.target.value)}
                 // Keep the native focus target inside the visible shortcut so
                 // touch focus cannot scroll the entire hub to an offscreen input.

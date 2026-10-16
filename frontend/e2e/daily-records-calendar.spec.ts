@@ -67,6 +67,15 @@ for (const width of [320, 360, 393, 430, 1440]) {
     await hub.locator("[data-daily-records-views]").getByRole("button", { name: "日记", exact: true }).click();
     const header = hub.locator("[data-daily-records-header]");
     const originalX = (await header.boundingBox())!.x;
+    await page.evaluate(() => {
+      const nativeShowPicker = HTMLInputElement.prototype.showPicker;
+      (window as Window & { datePickerRequests: number }).datePickerRequests = 0;
+      HTMLInputElement.prototype.showPicker = function () {
+        const result = nativeShowPicker.call(this);
+        (window as Window & { datePickerRequests: number }).datePickerRequests++;
+        return result;
+      };
+    });
     const dateInput = hub.locator('input[type="date"]');
     // The date control must be usable without first scrolling the shortcut strip.
     const picker = dateInput.locator("..");
@@ -98,6 +107,18 @@ for (const width of [320, 360, 393, 430, 1440]) {
 
     // Touch focus, not just shrinking a desktop viewport, triggers the regression.
     await hub.getByText("选择日期", { exact: true }).tap();
+    await expect.poll(() => page.evaluate(() => (window as Window & { datePickerRequests: number }).datePickerRequests)).toBe(1);
+    await page.screenshot({ path: test.info().outputPath(`date-picker-open-${width}.png`) });
+    if (width === 1440) {
+      const beforeSelection = await dateInput.inputValue();
+      // Commit a choice through the real native calendar, rather than only using fill().
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("Enter");
+      await expect(dateInput).not.toHaveValue(beforeSelection);
+      const [year, month, day] = (await dateInput.inputValue()).split("-");
+      await expect(hub.getByRole("heading", { level: 2 }).first()).toContainText(`${year}年${Number(month)}月${Number(day)}日`);
+    }
+    await dateInput.press("Escape");
     await expect.poll(() => hub.evaluate(element => element.scrollLeft)).toBe(0);
     await dateInput.fill("2026-10-02");
     await dateInput.blur();
@@ -105,6 +126,7 @@ for (const width of [320, 360, 393, 430, 1440]) {
     await expect.poll(async () => (await header.boundingBox())!.x).toBe(originalX);
     await expect.poll(() => hub.evaluate(element => element.scrollLeft)).toBe(0);
     await hub.getByText("选择日期", { exact: true }).tap();
+    await expect.poll(() => page.evaluate(() => (window as Window & { datePickerRequests: number }).datePickerRequests)).toBe(2);
     await dateInput.press("Escape");
     await expect(dateInput).toHaveValue("2026-10-02");
     await expect.poll(() => hub.evaluate(element => element.scrollLeft)).toBe(0);
