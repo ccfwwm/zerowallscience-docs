@@ -896,8 +896,12 @@ async function handleTokenTasks(c: Context, next: Next, ctx: TokenAccessContext)
       throw new ApiTokenAccessError("必须选择目标笔记本", "MCP_PREVIEW_REQUIRED", 409);
     }
     assertNotebook(ctx, body.notebookId, true);
-    if (!body.expectedTaskUpdatedAt || body.expectedTaskUpdatedAt !== task.updatedAt) {
-      throw new ApiTokenAccessError("任务已变化，请重新预览详情", "MCP_TASK_VERSION_CONFLICT", 409);
+    const source = getDb().prepare("SELECT title,description FROM tasks WHERE id=?")
+      .get(decodeURIComponent(saveNoteMatch[1])) as { title: string; description: string | null };
+    if (!body.expectedTaskUpdatedAt || body.expectedTaskUpdatedAt !== task.updatedAt
+      || body.expectedTaskTitle !== source.title
+      || body.expectedTaskDescription !== (source.description || "")) {
+      throw new ApiTokenAccessError("任务内容已变化，请重新预览详情", "MCP_TASK_VERSION_CONFLICT", 409);
     }
     await next();
     return;
