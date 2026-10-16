@@ -35,7 +35,7 @@ function parseScopes(value: string | undefined): Set<string> {
   return new Set((value || "").split(",").map((item) => item.trim()).filter(Boolean));
 }
 
-function loadNotebookGrants(tokenId: string): Map<string, number> {
+function loadNotebookGrants(tokenId: string, includeDeleted = false): Map<string, number> {
   const db = getDb();
   const rows = db.prepare(`
     WITH RECURSIVE scoped(id, level, recurse) AS (
@@ -52,12 +52,12 @@ function loadNotebookGrants(tokenId: string): Map<string, number> {
         scoped.recurse
       FROM notebooks n
       JOIN scoped ON n.parentId = scoped.id
-      WHERE scoped.recurse = 1 AND n.isDeleted = 0
+      WHERE scoped.recurse = 1 AND (? = 1 OR n.isDeleted = 0)
     )
     SELECT id AS notebookId, MAX(level) AS level
     FROM scoped
     GROUP BY id
-  `).all(tokenId) as NotebookGrant[];
+  `).all(tokenId, includeDeleted ? 1 : 0) as NotebookGrant[];
 
   return new Map(rows.map((row) => [row.notebookId, Number(row.level) || 1]));
 }
@@ -482,7 +482,7 @@ function treeDescendants(id: string): string[] {
   return rows.map((row) => row.id);
 }
 
-function assertTreeNodeForToken(ctx: TokenAccessContext, nodeId: string, write = false): void {
+function assertTreeNodeForToken(ctx: TokenAccessContext, nodeId: string, write = false, recoveryGrants?: Map<string, number>): void {
   const node = treeNodeRow(nodeId);
   if (!node || node.workspaceId !== null || node.userId !== ctx.userId) {
     throw new ApiTokenAccessError("目录节点不属于当前用户个人空间", "API_TOKEN_RESOURCE_DENIED");
@@ -511,11 +511,17 @@ function assertTreeNodeForToken(ctx: TokenAccessContext, nodeId: string, write =
   if (!notebookId && ctx.resourceMode === "restricted") {
     throw new ApiTokenAccessError("restricted Token 不允许操作无笔记本归属的根节点", "API_TOKEN_RESOURCE_DENIED");
   }
-  if (notebookId) assertNotebook(ctx, notebookId, write);
+  if (notebookId) {
+    if (recoveryGrants && ctx.resourceMode === "restricted") {
+      if ((recoveryGrants.get(notebookId) || 0) < (write ? 2 : 1)) {
+        throw new ApiTokenAccessError("回收站目录超出 Token 原始笔记本授权", "API_TOKEN_RESOURCE_DENIED");
+      }
+    } else assertNotebook(ctx, notebookId, write);
+  }
 }
 
-function assertTreeSubtreeForToken(ctx: TokenAccessContext, nodeId: string): void {
-  for (const id of treeDescendants(nodeId)) assertTreeNodeForToken(ctx, id, true);
+function assertTreeSubtreeForToken(ctx: TokenAccessContext, nodeId: string, recoveryGrants?: Map<string, number>): void {
+  for (const id of treeDescendants(nodeId)) assertTreeNodeForToken(ctx, id, true, recoveryGrants);
 }
 
 function calculateTreeRevision(
@@ -578,12 +584,17 @@ async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccess
     await replaceFilteredResponse(c, (body) => {
       if (!body || !Array.isArray(body.nodes)) return body;
       const byId = new Map<string, any>(body.nodes.map((item: any) => [item.id, item]));
+      // Tombstones are visible only for explicit recycle-bin queries and only
+      // within original descendant grants; normal token read grants are unchanged.
+      const availableGrants = c.req.query("includeDeleted") === "1"
+        ? loadNotebookGrants(ctx.tokenId, true) : ctx.notebooks;
       const allowed = (node: any): boolean => {
         let current = node;
         const seen = new Set<string>();
         while (current && !seen.has(current.id)) {
           seen.add(current.id);
-          if (current.resourceType === "notebook") return canRead(ctx, current.resourceId);
+          if (current.resourceType === "notebook") return ctx.resourceMode !== "restricted"
+            || (availableGrants.get(current.resourceId) || 0) >= 1;
           current = current.parentId ? byId.get(current.parentId) : undefined;
         }
         return false;
@@ -659,7 +670,9 @@ async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccess
   if (method === "DELETE" && c.req.query("mode") === "promote") {
     throw new ApiTokenAccessError("MCP 禁止提升子节点的删除模式", "API_TOKEN_ENDPOINT_DENIED");
   }
-  assertTreeNodeForToken(ctx, nodeId, true);
+  const recoveryGrants = operation === "restore" && ctx.resourceMode === "restricted"
+    ? loadNotebookGrants(ctx.tokenId, true) : undefined;
+  assertTreeNodeForToken(ctx, nodeId, true, recoveryGrants);
   assertTreeMutationPrecondition(ctx, nodeId, body, method === "PUT" || method === "DELETE" || method === "POST");
   if (method === "PUT") {
     if (!("parentId" in body) || (body.parentId !== null && typeof body.parentId !== "string")) {
@@ -677,7 +690,7 @@ async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccess
     }
   }
   if (method === "PUT" || method === "DELETE" || method === "POST") {
-    assertTreeSubtreeForToken(ctx, nodeId);
+    assertTreeSubtreeForToken(ctx, nodeId, recoveryGrants);
   }
   await next();
 }
