@@ -117,6 +117,7 @@ export function createMcpHttpGateway(env: NodeJS.ProcessEnv = process.env) {
 
 export async function startMcpHttpGateway(): Promise<void> {
   const { server, host, port } = createMcpHttpGateway();
+  process.env.NOWEN_MCP_TRANSPORT = "streamable-http";
   server.listen(port, host);
   await new Promise<void>((resolve, reject) => {
     server.once("listening", resolve);
