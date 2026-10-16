@@ -323,3 +323,29 @@ test("PAT filtered knowledge tree does not leak unauthorized notebook descendant
     method: "PUT",
   })).status, 403);
 });
+
+test("PAT may create only personal subtasks; foreign and team parents are denied", async () => {
+  db.exec(`
+    INSERT OR IGNORE INTO tasks (id, userId, title, workspaceId) VALUES
+      ('mcp-own-parent', 'user-1', 'Own parent', NULL),
+      ('mcp-foreign-parent', 'user-2', 'Other parent', NULL),
+      ('mcp-team-parent', 'user-2', 'Team parent', 'ws-1');
+  `);
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.req.raw.headers.set("X-Auth-Mode", "api-token");
+    c.req.raw.headers.set("X-Api-Token-Id", "token-1");
+    c.req.raw.headers.set("X-Api-Resource-Mode", "restricted");
+    c.req.raw.headers.set("X-Api-Scopes", "tasks:write");
+    c.req.raw.headers.set("X-User-Id", "user-1");
+    return enforceApiTokenAccess(c, next);
+  });
+  app.post("/api/tasks", (c) => c.json({ created: true }, 201));
+  const create = (parentId: string) => app.request("/api/tasks?workspaceId=personal", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ title: "Child", parentId }),
+  });
+  assert.equal((await create("mcp-own-parent")).status, 201);
+  assert.equal((await create("mcp-foreign-parent")).status, 403);
+  assert.equal((await create("mcp-team-parent")).status, 403);
+});
