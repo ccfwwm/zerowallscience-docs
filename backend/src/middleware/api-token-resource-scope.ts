@@ -391,22 +391,6 @@ async function handlePersonalFileManagement(c: Context, next: Next, ctx: TokenAc
     await next();
     return;
   }
-  const file = /^\/api\/files\/([^/]+)$/.exec(path);
-  if (file) {
-    const id = decodeURIComponent(file[1]);
-    if (method === "GET") { assertPersonalManagedFile(ctx, id); await next(); return; }
-    if (!["PATCH", "DELETE"].includes(method)) throw new ApiTokenAccessError("不允许此文件操作", "API_TOKEN_ENDPOINT_DENIED");
-    assertPersonalManagedFile(ctx, id);
-    if (method === "DELETE") {
-      throw new ApiTokenAccessError("P1 禁止通过 MCP 删除网盘文件；只允许管理回收站恢复", "API_TOKEN_ENDPOINT_DENIED");
-    }
-    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
-    if (typeof body.expectedFilename !== "string" || typeof body.filename !== "string") {
-      throw new ApiTokenAccessError("重命名必须提交原文件名与新文件名", "MCP_PREVIEW_REQUIRED", 409);
-    }
-    await next();
-    return;
-  }
   if (path === "/api/files/trash" || path === "/api/files/trash/") {
     if (method !== "GET") throw new ApiTokenAccessError("回收站列表仅可读取", "API_TOKEN_ENDPOINT_DENIED");
     await next();
@@ -430,6 +414,22 @@ async function handlePersonalFileManagement(c: Context, next: Next, ctx: TokenAc
     for (const id of body.ids) {
       if (typeof id !== "string") throw new ApiTokenAccessError("文件 ID 无效", "API_TOKEN_ENDPOINT_DENIED");
       assertPersonalManagedFile(ctx, id);
+    }
+    await next();
+    return;
+  }
+  const file = /^\/api\/files\/([^/]+)$/.exec(path);
+  if (file) {
+    const id = decodeURIComponent(file[1]);
+    if (method === "GET") { assertPersonalManagedFile(ctx, id); await next(); return; }
+    if (!["PATCH", "DELETE"].includes(method)) throw new ApiTokenAccessError("不允许此文件操作", "API_TOKEN_ENDPOINT_DENIED");
+    assertPersonalManagedFile(ctx, id);
+    if (method === "DELETE") {
+      throw new ApiTokenAccessError("P1 禁止通过 MCP 删除网盘文件；只允许管理回收站恢复", "API_TOKEN_ENDPOINT_DENIED");
+    }
+    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+    if (typeof body.expectedFilename !== "string" || typeof body.filename !== "string") {
+      throw new ApiTokenAccessError("重命名必须提交原文件名与新文件名", "MCP_PREVIEW_REQUIRED", 409);
     }
     await next();
     return;
