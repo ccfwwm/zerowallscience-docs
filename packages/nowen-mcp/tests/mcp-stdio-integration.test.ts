@@ -98,6 +98,13 @@ test("real stdio MCP client previews changes, enforces confirmation and blocks p
     assert.ok(tools.tools.some((tool) => tool.name === "nowen_preview_knowledge_tree_change"));
     assert.ok(tools.tools.some((tool) => tool.name === "nowen_apply_knowledge_tree_change"));
 
+    const pluginBlocked = await writer.callTool({
+      name: "nowen_execute_plugin_action",
+      arguments: { pluginId: "test", actionId: "unsafe", input: {} },
+    }) as TextResult;
+    assert.equal(pluginBlocked.isError, true);
+    assert.match(resultText(pluginBlocked), /默认关闭/);
+
     const denyPermanent = await writer.callTool({
       name: "nowen_delete_note",
       arguments: { noteId: "n-1", permanent: true },
