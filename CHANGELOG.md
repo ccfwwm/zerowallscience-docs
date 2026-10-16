@@ -12,6 +12,70 @@
 
 <!-- ADD_NEW_HERE -->
 
+## 未发布 / Unreleased
+
+- **maintenance / Release Center Phase 3**：新增 Store、Docker Hub 与 NAS 渠道观察、历史记录、固定 Commit 的分发交接计划/JSON 导出和未核实的人工回执；修复 Store 已发布记录被待审修订遮蔽、提交 ID 校验和窄屏输入布局。完成隔离夹具的单元/API、浏览器与构建回归，修复 RC1 CI 测试入口的数据库隔离预加载；保持实际分发禁用，等待 Phase 2 正式审批与内容校验，未进行真实平台联调。Add channel observations, immutable handoff plans and unverified manual receipts; fix published Store status precedence, submission ID validation, narrow layout and RC1 test DB setup. Local unit/API, browser and build checks passed with isolated fixtures; actual distribution stays disabled and live provider integration remains pending. [实现与验证记录](./docs/qa/v1.5.2/release-center-phase3.md)。
+
+- **maintenance / Release Center**：新增独立本机发布控制台的预检、Dry Run、调试任务和产物下载复核；校验 archive、逐文件摘要与更新元数据，持久化仅调试验收记录；修复 macOS 发布版本同步及版本标签不一致。已通过真实 Windows/macOS/Linux 调试构建与 16 个文件下载校验，新增独立控制台 CI 和有界慢速下载支持。Add an isolated local release console with preflight, dry runs, debug tasks, artifact/hash/updater validation and debug-only acceptance; repair macOS version synchronization and align lockfile version labels. Real desktop debug builds and all 16 files passed verification; add console CI and bounded slow downloads. Draft 与正式发布尚未实现，设备安装和人工验收未完成；drafts, formal publishing, device installation and human acceptance remain pending. [验证记录 / Validation](./docs/qa/v1.5.2/release-center-remote-debug.md)。
+
+- **Markdown / #853**：修复斜杠菜单在编辑器更新阶段读取布局而失效的问题，支持 `/H1`、`/code`、`/tab` 等筛选、键盘和触控选择；补齐视口避让、代码与只读保护、取消及撤销，修复标题后继续输入位置错误和代码块插入吞掉邻近文字的问题。Repair Markdown slash commands with safe cursor measurement, searchable keyboard/touch actions, viewport placement, code/read-only guards and undo; preserve the typing position and surrounding text. [使用说明 / Usage](./docs/user/markdown-slash-commands.md) · [验证记录 / Validation](./docs/qa/v1.5.2/markdown-slash-menu.md)。尚未发布。Unreleased.
+
+- **daily records / date picker**：修复点击“选择日期”文字仅聚焦而不弹出日历的问题；显式触发原生选择器，并扩大原生日历图标点击区域。Open the native date picker when clicking anywhere on the daily-records date shortcut, with full native-indicator hit coverage.
+
+- **editor / files AI**：修复富文本编辑器延迟初始化后首个保存确认可能覆盖较新输入的问题；加密浏览器夹具对齐正式保存确认逻辑，并验证延迟回包、服务端持久化和重载解锁。文件 AI 弹窗复用公共 ID 生成函数，减少对启动补丁的依赖。Initialize rich-text synchronization when the deferred editor becomes ready, preserve newer input across the first save ACK, strengthen encrypted persistence tests, and use the shared ID fallback in file AI dialogs.
+
+- **files / Phase E**：新增可编辑的 AI 分类、标签和文件描述预览，用户确认后整批原子执行并支持持久化幂等重试；复用已有 Embedding 配置进行分批文本元数据语义检索，普通搜索增加标签和描述匹配。Add explicitly confirmed AI organization and on-demand metadata semantic search without sending file contents. SQLite v130 与 PostgreSQL 存储迁移；Native 与启用桌面同步的整理写入明确拒绝，可选图片语义未启用。已通过 #856 合并到 release/v1.5.2，尚未发布，见 [使用说明](./docs/user/file-ai-organization.md) 与 [验收记录](./docs/qa/files-assets-center-v2/phase-e.md)。
+
+- **files / Phase D4**：新增当前权限范围内的分批相似图片搜索，以及预览确认、原名称冲突校验和整批事务回滚的编号重命名；保留附件身份、下载地址、字节和引用。Add local visual comparison and transactional numbered batch rename with explicit scan coverage and stale-name protection. Native 两项操作暂不支持；无迁移或 Sync V2 协议变化，独立分支待验收，尚未合并或发布，见 [使用说明](./docs/user/file-visual-organization.md) 和 [实际验收](./docs/qa/files-assets-center-v2/phase-d-visual-tools.md)。
+- **AI 快记 / AI capture**：新增“写想法 → 帮我整理 → 保存笔记”的默认流程，支持直接保存原文、草稿保留和失败重试；项目资料、自动匹配的文件夹 Skill、个人指令及插件提示词收进可选设置。Add a simple idea-to-note flow with editable drafts, original capture, retained retries and optional project sources / reusable writing templates. 保存复用现有笔记 API 与离线适配；生成遵循空间、权限、密码和加密边界。Reuse existing note persistence and offline adapters, with scoped and protected-source checks. [使用说明 / Usage](./docs/user/ai-capture-collaboration.md)。尚未发布。Unreleased.
+
+- **mobile / H5**：针对 #834 的移动端反馈，优化文件中心、AI 问答和用户管理的窄屏布局：双列紧凑文件卡片、可滚动面包屑、覆盖式会话抽屉、独立模型选择行、用户操作换行及短屏弹窗滚动，保留触控下限与桌面布局；每日记录的日期选择固定于快捷栏右侧，避免横向挤出与焦点边框裁切，并压缩手机端标题和留白。Improve compact file grids, scrollable breadcrumbs, overlay conversation navigation, model selection, user actions and short-screen dialogs while preserving touch targets and desktop layout; keep the daily-records date picker visible beside independently scrolling shortcuts and compact its mobile header. [验证与边界 / Validation and scope](./docs/qa/v1.5.2/mobile-h5-layout.md)。尚未发布；真机和软键盘验收待完成。Unreleased; device and software-keyboard acceptance remains pending.
+
+- **calendar / mobile**：修复移动端选择日记日期后内容横向偏移；区分按修改日期筛选的笔记日历与按发布时间浏览的瞬间日历，统一本地日期、月份边界和瞬间时间显示，避免凌晨记录的徽章与筛选结果不一致。Fix touch date-picker layout shifts, distinguish note modified dates from moment published dates, and align local-day filtering, month bounds and displayed times. 不重写导入历史时间；手机重复登录的现场原因仍待核查，见 [验证记录](./docs/qa/v1.5.2/calendar-mobile-recovery.md)。Imported timestamps are preserved; repeated sign-in in the reported phone environment remains unconfirmed.
+
+- **files / Phase D3**：新增个人附件目录和文件位置的协商同步；离线操作原子入队、独立版本冲突、ACK 重试与删除墓碑保护。Add negotiated personal folder/location sync across desktop SQLite, Native SQLite and the server, preserving attachment identities and conflict history. SQLite v129 / Native schema v12；独立分支待验收，尚未合并或发布，见 [说明](./docs/user/file-folder-sync.md) 与 [验收](./docs/qa/files-assets-center-v2/phase-d-folder-sync.md)。
+- **files / Phase D1–D2**：已有文件插入增加空间与权限预检，并修复协同保存时漏更新附件反向引用；新增服务端文件回收站、原位置恢复及显式永久删除。Add authorized existing-file reuse, transactional collaborative reference indexing and a server recycle bin with recoverable IDs and explicit purge. SQLite v128 / PostgreSQL migration included; Native recycle-bin operations are explicitly unsupported. 已合并到 `release/v1.5.2`，尚未发布，见 [使用说明](./docs/user/file-recycle-bin.md) 与 [实际验收](./docs/qa/files-assets-center-v2/phase-d-trash.md)。目录多端同步由独立 D3 模块验收；相似图片与进一步整理体验仍属后续 D 模块。
+
+- **files / Phase C**：独立功能分支新增附件标签、批量添加 / 移除标签、标签搜索与组合筛选、保存为智能文件夹，以及可访问范围内的相同内容文件展示；不移动或复制原文件。SQLite v127 增量迁移保留附件身份与引用，提供 PostgreSQL 存储迁移；Native 元数据同步尚未支持并明确拒绝。Add scoped asset tags, additive batch tagging, saved smart folders, attribute filters and accessible identical-file discovery without changing attachment identity, location or bytes. SQLite schema v127 and PostgreSQL storage migration included; Native metadata synchronization is unavailable. 尚未合并或发布，见 [使用说明 / Usage](./docs/user/file-asset-organization.md) 与 [验收 / Acceptance](./docs/qa/files-assets-center-v2/phase-c.md)。
+
+- **startup / NAS**：改善 FN ID 等慢速远程入口的启动体验：12 秒后提示继续加载，60 秒后才报告超时，资源就绪后自动进入；登录续期与响应读取增加 8 秒超时，超时保留凭据并丢弃迟到响应；诊断补充启动阶段和脱敏资源耗时。Improve slow NAS gateway startup with a loading notice at 12s, a 60s timeout and automatic recovery; bound token refresh/body reads to 8s without clearing credentials on timeout or persisting late responses, and add sanitized startup diagnostics. FN ID 真机验收仍待完成，见 [验证说明](./docs/fn-connect-startup-compatibility.md)。FN ID device acceptance is still pending.
+
+- **sdk**：修复浏览器默认 fetch 绑定，开放登录、两步验证和 Token 管理；普通请求与附件共用认证状态，阻止切账号、迟到登录响应和 401 重试使用错误身份；对齐日记时间线与 Token 验证的真实接口类型（#803）。Bind browser fetch, expose login/2FA/token management, share authentication across REST and attachments, prevent stale responses or retries from crossing accounts, and align diary/verification contracts. SDK 调用方需调整旧接口类型，新包尚未发布；SDK consumers must update the affected types; no new package has been published.
+
+- **tasks**：循环任务明确区分仅删除本次、终止后续循环和删除整个系列，展示包含历史、归档及子任务的影响范围；持久化删除与终止意图，补齐 Web 离线队列、Native 原子写入、旧服务端协商和多设备同步回归，防止迟到更新复活已删除任务；规范化 SQLite 日期时间并阻止 NaN 日期生成，旧异常日期不再使任务中心白屏。Distinguish occurrence deletion, recurrence termination and whole-series deletion, with affected-range confirmation, durable lifecycle intents, offline/Native atomic writes, server capability checks and multi-device regressions; normalize SQLite timestamps and prevent invalid recurrence dates from blanking the task center. 安装包与真实设备验收待完成，见 `docs/qa/v1.5.2/task-recurrence-deletion.md`。
+
+- **files**：文件管理支持单个 / 批量移动到文件夹或未归档，保留附件身份与笔记引用；增强中文上传文件名兼容，新增当前服务实例的逐文件公开外链开关，关闭时撤销旧文件分享并拒绝分享 / 发布页的公开读取，本人预览与下载继续按权限工作（#837）。Add single/batch folder moves, Unicode upload-name compatibility and per-file public-link controls on the serving instance, while preserving attachment identity, note references and authorized owner access. [边界与验证 / Scope and validation](./docs/file-management-837.md).
+
+- **tasks**：任务中心新增导出入口，支持 Excel `.xlsx` 和 Markdown 报告，保留当前空间任务的状态、描述、层级和递归进度（#836）；任务及子任务右键菜单支持仅导出所选子树，包含已完成与已归档任务，超长 Excel 单元格明确提示改用 Markdown，避免静默截断。Export a space or selected task subtree with status, descriptions, hierarchy and recursive progress to Excel or Markdown, including completed and archived tasks, with explicit handling of Excel cell limits.
+
+- **editor**：新增独立 TXT 纯文本笔记（#835），提供目录树、列表和标签栏创建入口，按原文保存 Markdown/HTML/JSON 和空白，支持纯文本编辑、UTF-8 `.txt` 导出及 Nowen 备份恢复，复用现有权限与离线同步。Add plain text notes with literal editing, UTF-8 TXT export, backup round trips and existing permission/offline-sync workflows.
+
+- **editor**：修复网页图文粘贴时 `srcset`、协议相对地址和懒加载图片地址在清洗前丢失的问题；恢复的图片进入远程本地化流程，本地附件地址保持稳定，并保留 Word/WPS 的 RTF 图片占位。无法恢复的图片提示改为“未能粘贴”，不再断言原网页未加载完成。Recover webpage image sources before sanitization and remote localization, preserve local attachment URLs and Word/WPS RTF placeholders, and report unavailable images without assuming the source page was still loading.
+
+- **tasks**：新增按设备时区统计的今日完成清单、已完成任务树的归档与恢复，以及将最新任务详情和独立附件保存为笔记；补齐离线队列、Native 原子写入、同步字段和任务备份兼容回归。Add a local-day completion list, reversible completed-task-tree archiving, and independent note snapshots of task drafts and attachments, with offline, Native transaction, sync and backup regressions.
+
+- **deployment**：新增可选 Caddy HTTPS Compose 模板，自动配置公开地址、持久化证书并取消主应用端口映射；补齐 Nginx / NAS 反代指引和部署验收步骤。Add an optional Caddy HTTPS Compose overlay with a public origin, persistent certificates, no direct application port mapping, and deployment/acceptance documentation.
+- **tasks / AI**：任务中心新增 AI 智能待办助手，支持自然语言生成、可编辑预览、多选和事务批量确认；服务端校验日期、项目权限和重复规则，以持久化幂等记录防止重试重复创建，复用用户 AI 设置和现有同步触发器。AI Task Composer adds editable drafts and atomic, idempotent batch confirmation with scoped duplicate checks, date/recurrence validation, existing AI settings and task sync.
+
+- **data safety**：HTTP 永久删除笔记必须先进入回收站且具备管理权限；旧 DELETE 入口保留但拒绝活动笔记，SDK/MCP/CLI 使用显式永久端点，Android Native 也拒绝活动/锁定笔记，失败导入清理先软删。HTTP permanent deletion requires trash membership and management permission; Native deletion rejects active/locked notes. SDK/MCP/CLI use the explicit endpoint; failed Android import cleanup trashes first. Sync V2 独立删除协议仍有发版门禁，见 `docs/qa/v1.5.2/stage3/`；the separate Sync V2 delete protocol remains a release blocker.
+- **sync / acl**：永久删除成功 ACK 才清理冲突队列，拒绝和断网保留草稿；修复权限表初始化在事务回滚后仍被缓存的问题。Reconcile deletion queues only after successful ACKs and retry lazy ACL initialization after rollback.
+- **plugins**：Plugin Studio 拒绝硬链接，并以校验过身份的文件句柄读取/导出，阻止检查与打开之间的链接替换读取。Reject Studio hard links and read/export through verified file handles; deployment directory permissions remain part of the trust boundary.
+- **fixes**：修复登录地址自动聚焦后恢复显示为空、创建笔记约束错误被误报 ID 冲突，以及过时的测试初始化/Mock/源码契约。Fix restored login addresses under autofocus and misleading note-creation constraint errors; update test initialization, mocks and contracts without removing behavior checks.
+
+- **sync**：普通个人文件夹支持 Native 离线移入回收站和按删除批次恢复，保留子文档正文、原有队列与稳定 mutationId；并发子树变化进入冲突处理，旧设备正文不能隐式复活仍在回收站的目录。恢复上传前，无密码 owner 父链中的正文可立即打开，并继续执行真实 ACL/密码校验。Persist native personal folder trash/restore atomically with deletion cohorts, durable bodies, stable intents and lifecycle-aware receipts; protect against concurrent subtree changes and stale-device resurrection. Retained ordinary owned bodies reopen before restore ACK without bypassing live ACL or folder-password checks.
+- **sync**：普通个人文件夹支持 Native 离线新建、嵌套创建和已有文档下创建，业务/结构 Outbox 同事务落库并依赖有序重放；新文件夹内可继续创建文档，重启与丢失 ACK 保留资源身份，快照重建期间新建目录不会误记为远端删除。Persist native personal folder creation/nesting and document parents atomically, replay ordered business/structure intents across restarts and lost ACKs, and preserve creations made during Snapshot rebuilding. 验收见 `docs/sync-v2-native-folder-create-validation.md`。
+- **sync**：个人普通文件夹的移动、批量移动与排序可先事务保存到 Native SQLite/Outbox，支持重启后上传和结构冲突选择；schema 7 无损升级队列，远端目录墓碑先保留本机位置与子正文。Persist ordinary personal folder moves and sorting atomically, replay after restart, and recover structural conflicts without cascading over retained child bodies. Document/mindmap/file moves and folder trash/restore retain their existing online paths. 验收见 `docs/sync-v2-native-tree-writes-validation.md`。
+- **sync**：Native 个人空间协商接收完整知识树结构，事务保存跨文档父子关系、移动与删除；升级重建订阅、首次 ACK 丢失保留基线。REST 树修改提交后唤醒 Pull，并修复移入根文档时隐藏容器校验失败。Receive negotiated personal tree structure on native clients, retain subscription intent across lost ACKs, notify after REST commits, and preserve hidden containers during root-document moves.
+- **android**：个人知识树根级和普通文件夹内的 Markdown/富文本可先保存到本机并进入现有 Sync V2；将已授权的个人远端正文持久化，保护重启和后续离线编辑。Persist personal native tree documents and authorized missing bodies before subsequent offline edits; full shared/protected tree synchronization remains incomplete.
+- **sync**：保护 Native 离线编辑、删除冲突和迟到 ACK；重试保留 mutationId，避免旧更新复活已删除笔记。Protect durable native edits, deletion conflicts and late ACKs without changing mutation identity.
+- **android**：复用 WebSocket 唤醒 Sync V2 Pull，提交后刷新界面，并通过前台周期 Pull 补偿丢失通知。Wake native Pull on notices/reconnect and refresh UI after committed Apply.
+- **sync**：修复同页创建后删除、工作区 Snapshot 清理和冲突后继续编辑的数据保护问题。Protect pending descendants, attachment bytes and newer local edits during recovery.
+- 验收范围与未完成平台见 `docs/sync-v2-reliability-validation.md`；这些改动尚未正式发布。See the validation record for evidence and remaining acceptance gaps; these changes are not released.
+
+- **appearance / sharing**：知识树新增本设备文字与图标大小档位，分享页新增管理员控制的标准、宽屏和全宽设置；笔记图标复用完整离线 emoji 库并支持具体名称搜索（#739）。Add local knowledge tree display sizes, administrator-controlled shared page widths, and offline emoji name search.
+
+- **sharing**：新增管理员统一设置的分享页顶部横幅，支持图片裁切、预览、关闭和删除，默认关闭并适配窄屏（#739）。Add an optional site-wide shared page banner with image cropping, preview, removal and responsive display.
+
 ## v1.5.1 - 2026-10-08
 
 ### ✨ 新增

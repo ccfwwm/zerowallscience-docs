@@ -83,7 +83,7 @@ The currently supported distribution is a source build: install Node.js 20+, bui
 | **Collaboration, permissions, and sharing** | Yjs + WebSocket collaboration, workspaces and roles, directory ACLs, Restricted access, explicit allow/deny policies, ownership transfer, centralized share management, passwords and expiration, guest comments, public knowledge spaces, and rich-text/Markdown inline comments. |
 | **Sync and edit protection** | Incremental sync, persistence acknowledgements, draft recovery, and version checks. Offline attachment validation, quarantine, and recovery signaling keep broken cached blobs away from online rendering while serial saves and Yjs state protection guard Markdown/rich-text transitions. |
 | **Import, export, and migration** | Import Markdown, Word/DOCX, web URLs, WeChat articles, SingleFile HTML, SiYuan ZIP archives, Obsidian, Xiaomi Notes, and other supported sources. Export Markdown, PDF, Word, images, or full ZIP packages with permission mapping, conflict preview, reports, controlled rollback, image access preparation, and footnote handling. Team single-note ZIP export resolves the note's real workspace scope. |
-| **Attachments and storage** | Local attachments organized under `YYYY/MM`; reusable attachment-library insertion, thumbnails, note ownership, reference checks, orphan rescans and cleanup, protected manual uploads, local disk or S3/R2/MinIO storage, plus hardened mobile image/video file identity and multipart uploads. |
+| **Attachments and storage** | Local attachments organized under `YYYY/MM`, thumbnails, reference checks, reusable attachments, protected manual uploads, and local disk or S3/R2/MinIO storage. The `1.5.2` development branch includes file-center navigation, tags, smart folders, existing-file insertion and a recycle bin, not yet released ([organization](./docs/user/file-asset-organization.md), [recycle bin](./docs/user/file-recycle-bin.md)). [Personal attachment directory synchronization](./docs/user/file-folder-sync.md) is under acceptance on a separate branch. [AI organization and metadata semantic search](./docs/user/file-ai-organization.md) are under acceptance on a separate branch, with editable previews and explicit confirmation, without sending file contents. Native and organization writes on desktop sync instances are unavailable. |
 | **Accounts and security** | Multiple-account history, remembered accounts, auto-login, remote server connections, session validation and revocation, 2FA, scoped Personal API Tokens, audit logs, protected attachment access, and concealment of restricted-resource existence. |
 | **Backups, automation, and developer APIs** | Local backups, background full-ZIP jobs, streamed archive/hash processing, native browser downloads, email backup, encrypted WebDAV backup credentials, managed Docker updates and rollback checks, webhooks, plugins, OpenAPI, TypeScript SDK, CLI, [MCP Server](./docs/tutorials/mcp.en.md), and a browser clipper. |
 | **Cross-platform access** | Web, Electron for Windows/macOS/Linux, Android, iOS project, HarmonyOS project, and Docker/NAS deployment. UGREEN UGOS and Feiniu fnOS are supported, and clients can connect through IPv4, IPv6, or a domain name. Android includes in-app gesture image preview and native task notifications. |
@@ -140,6 +140,21 @@ Password: admin123
 ```
 
 > Change the default password immediately. Public deployments should also use HTTPS, backups, a correct public origin, and restricted CORS settings.
+
+### HTTPS deployment (optional)
+
+Reuse an existing Nginx, Lucky, or NAS reverse proxy if available. For a new deployment, the companion Caddy template automatically obtains and renews certificates. It requires Docker Compose **2.24.4+**, a correctly resolved public domain, and reachable ports 80/443.
+
+Set `NOWEN_DOMAIN=note.example.com` in `.env`, then run:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+```
+
+Open `https://note.example.com`. The template removes the application's host port 3001 mapping, sets the public share origin, and persists Caddy certificates. Keep specifying both files for subsequent management commands.
+
+For an existing instance, retain its Compose project name and data mounts, back up before switching, and reconnect clients using the domain once HTTPS is ready. See [HTTPS deployment and acceptance](./docs/https-deployment.md) for prerequisites, existing-proxy examples, and verification steps.
 
 ### UGREEN NAS / Feiniu NAS remote connection and sign-in
 
@@ -236,6 +251,7 @@ See [`.env.example`](./.env.example) for the complete template.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `NOWEN_PORT` | `3001` | Exposed Compose port |
+| `NOWEN_DOMAIN` | empty | Public hostname used by the optional Caddy HTTPS template |
 | `TZ` | `Asia/Shanghai` | Container timezone |
 | `PUBLIC_WEB_ORIGIN` | empty | Public or reverse-proxy origin used to generate share links |
 | `FILE_PUBLIC_ORIGIN` | inherits `PUBLIC_WEB_ORIGIN` | Optional public origin used when copying File Manager / image-host direct links; uploads, previews, and owner downloads keep using the current server connection |

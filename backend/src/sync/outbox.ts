@@ -174,12 +174,17 @@ export function listPendingMutationBatch(
   profileId: string,
   scopeKey: string,
   includeKnowledgeTree: boolean,
+  includeAssets = false,
 ): SyncOutboxRow[] {
-  const treeFilter = includeKnowledgeTree ? "" : "AND entityType <> 'knowledge_tree_node'";
+  const treeFilter = (includeKnowledgeTree ? "" : "AND entityType <> 'knowledge_tree_node'")
+    + (includeAssets ? "" : " AND entityType <> 'attachment_organization'");
   return db.prepare(`
     WITH entities AS (
       SELECT entityType, entityId FROM sync_outbox
       WHERE profileId = ? AND scopeKey = ? AND status IN ('pending', 'failed')
+        AND (entityType <> 'attachment_organization' OR NOT EXISTS (SELECT 1 FROM sync_conflicts c
+          WHERE c.profileId=sync_outbox.profileId AND c.scopeKey=sync_outbox.scopeKey AND c.entityType=sync_outbox.entityType
+            AND c.entityId=sync_outbox.entityId AND c.status='unresolved'))
         ${treeFilter}
       GROUP BY entityType, entityId
       ORDER BY MIN(createdAt), MIN(rowid) LIMIT ?

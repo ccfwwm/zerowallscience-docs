@@ -176,6 +176,7 @@ import {
   insertLink,
   insertImage,
   replaceSelection,
+  applyMarkdownCjkTypography,
 } from "@/lib/markdownCommands";
 import {
   MarkdownSlashMenu,
@@ -871,10 +872,8 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     // ���꣺����ѡ����㣬�䵽��Ļ��
     const coords = view.coordsAtPos(sel.from);
     if (coords) {
-      setAiPosition({
-        top: Math.min(coords.top + 24, window.innerHeight - 500),
-        left: Math.min(coords.left, window.innerWidth - 420),
-      });
+      // Shared assistant owns viewport clamping (including mobile keyboards).
+      setAiPosition({ top: coords.top + 24, left: coords.left });
     }
     setAiOpen(true);
   }, [isGuest, onAIAssistant]);
@@ -935,6 +934,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
 
   const closeAttachmentLibrary = useCallback(() => {
     setAttachmentLibraryOpen(false);
+    if (attachmentLibrarySelectionRef.current) asyncPasteAnchorsRef.current.delete(attachmentLibrarySelectionRef.current);
     attachmentLibrarySelectionRef.current = null;
   }, []);
 
@@ -946,10 +946,14 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
       from: selection.from,
       to: selection.to,
     };
+    asyncPasteAnchorsRef.current.add(attachmentLibrarySelectionRef.current);
     setAttachmentLibraryOpen(true);
   }, [editable]);
 
+  useEffect(() => { closeAttachmentLibrary(); }, [note.id, closeAttachmentLibrary]);
+
   const insertExistingAttachment = useCallback((item: FileItem) => {
+    if (!editable || noteRef.current.isTrashed) return;
     const view = viewRef.current;
     const selection = attachmentLibrarySelectionRef.current;
     if (!view || !selection || selection.to > view.state.doc.length) {
@@ -969,7 +973,7 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
     closeAttachmentLibrary();
     queueMicrotask(() => view.focus());
     toast.success(tr("tiptap.attachmentLinkInserted", { defaultValue: "附件链接已插入" }));
-  }, [closeAttachmentLibrary, tr]);
+  }, [closeAttachmentLibrary, editable, tr]);
 
   // slash 菜单项：基础 Markdown、附件、AI 与日期日记命令共享同一个 CodeMirror 菜单。
   const openVoiceRecorder = useCallback(() => {
@@ -1308,6 +1312,11 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
         };
       },
       isReady: () => !!viewRef.current,
+      applyCjkTypography: (action) => {
+        const view = viewRef.current;
+        if (!view || !editable || !view.state.facet(EditorView.editable)) return false;
+        return applyMarkdownCjkTypography(view, action);
+      },
       insertMarkdownAtCursor: (md: string) => {
         const view = viewRef.current;
         if (!view) return false;
@@ -2649,6 +2658,9 @@ export default forwardRef<NoteEditorHandle, MarkdownEditorProps>(function Markdo
       />
 
       <AttachmentLibraryPicker
+        key={note.id}
+        noteId={note.id}
+        workspaceId={note.workspaceId}
         open={attachmentLibraryOpen}
         onClose={closeAttachmentLibrary}
         onSelect={insertExistingAttachment}

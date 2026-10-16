@@ -1302,7 +1302,7 @@ sync_root_pkg_version() {
     if sed --version >/dev/null 2>&1; then
         sed -i -E "0,/\"version\"\s*:\s*\"[^\"]+\"/s//\"version\": \"${target_version}\"/" "$pkg_file"
     else
-        sed -i '' -E "1,/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/s//\"version\": \"${target_version}\"/" "$pkg_file"
+        sed -i '' -E "1,/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/s/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"version\": \"${target_version}\"/" "$pkg_file"
     fi
 }
 
@@ -1337,7 +1337,7 @@ sync_backend_pkg_version() {
     if sed --version >/dev/null 2>&1; then
         sed -i -E "0,/\"version\"\s*:\s*\"[^\"]+\"/s//\"version\": \"${target_version}\"/" "$pkg_file"
     else
-        sed -i '' -E "1,/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/s//\"version\": \"${target_version}\"/" "$pkg_file"
+        sed -i '' -E "1,/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/s/\"version\"[[:space:]]*:[[:space:]]*\"[^\"]+\"/\"version\": \"${target_version}\"/" "$pkg_file"
     fi
 }
 

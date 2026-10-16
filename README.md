@@ -71,7 +71,7 @@
 | **任务与习惯** | 树形任务、列表、看板、日历、甘特图 / 时间轴、依赖关系、重复规则、提醒和模板；支持 My Day、标签、保存视图、预估时长、时间块、Inbox、快速捕获、离线任务 / 习惯，以及 Android 原生任务提醒调度，并补齐创建端时区、全天截止与服务端解析一致性；新增到期排序、任务到期提醒和早晚任务摘要 Webhook 推送。 |
 | **协作、权限与分享** | Yjs + WebSocket 实时协作、工作区角色、目录级 ACL、Restricted 受限模式、显式允许 / 拒绝规则、权限继承、所有权转移、分享密码与有效期、访客评论、公开知识空间，以及富文本 / Markdown 划词批注。 |
 | **导入、导出与迁移** | 支持 Markdown、Word / DOCX、网页 URL、微信公众号、SingleFile HTML、思源、Obsidian、小米笔记等；支持选择导入为 Markdown 或富文本，并提供后台任务、进度、重试、远程图片本地化和 Markdown 图片 / 脚注导出；团队空间单篇 ZIP 会按笔记真实工作区执行权限校验。 |
-| **附件与存储** | 本地附件按 `YYYY/MM` 归档；支持缩略图、引用检查、孤儿扫描 / 清理、已有附件复用、手动上传文件保护，以及本地磁盘、S3、R2、MinIO，并强化移动端图片 / 视频文件身份与 multipart 上传稳定性。 |
+| **附件与存储** | 本地附件按 `YYYY/MM` 归档；支持缩略图、引用检查、已有附件复用、手动上传文件保护，以及本地磁盘、S3、R2、MinIO。`1.5.2` 开发分支已集成文件中心导航、标签、智能文件夹、已有文件插入和文件回收站，尚未发布（[整理说明](./docs/user/file-asset-organization.md)、[回收站说明](./docs/user/file-recycle-bin.md)）。[个人附件目录多端同步](./docs/user/file-folder-sync.md) 正在独立分支验收。 [AI 辅助整理与文本元数据语义检索](./docs/user/file-ai-organization.md) 正在独立分支验收；预览后确认执行，不发送文件内容，Native 和启用桌面同步的整理写入暂不支持。 |
 | **备份与恢复** | 本地自动备份、后台完整 ZIP 任务、流式归档与校验、浏览器原生下载、邮件备份、凭据加密的 WebDAV 远程备份、Docker 在线升级前备份与失败回滚检查。 |
 | **多端访问** | Web、Electron（Windows / macOS / Linux）、Android、iOS 工程、HarmonyOS 工程，以及 Docker / NAS 部署；支持绿联 UGOS、飞牛 fnOS，客户端可通过 IPv4、IPv6 或域名远程连接并登录 NAS 服务；Android 支持应用内图片手势预览。 |
 | **开放能力** | OpenAPI 3.0、TypeScript SDK、CLI、Webhook、插件系统、Personal API Token、MCP Server 和浏览器剪藏扩展。 |
@@ -149,6 +149,21 @@ docker compose up -d
 ```
 
 > 首次登录后请立即修改默认密码。公网部署还应配置 HTTPS、备份、正确的公开访问地址，并按需收紧 CORS。
+
+### HTTPS 部署（可选）
+
+已有 Nginx、Lucky 或 NAS 反代的用户可继续复用现有入口。新部署可使用配套的 Caddy 模板自动申请和续期证书，需要 Docker Compose **2.24.4+**、正确解析的公网域名及可达的 80/443 端口。
+
+在 `.env` 中设置 `NOWEN_DOMAIN=note.example.com`，然后执行：
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.https.yml config --quiet
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+```
+
+访问 `https://note.example.com`。此模板取消主应用的 3001 宿主机映射，自动设置公开分享地址，并持久化 Caddy 证书。后续管理命令也需同时指定这两个文件。
+
+已有实例请保持原 Compose 项目名和数据挂载，先备份再切换；HTTPS 就绪后，客户端改用域名地址。详见 [HTTPS 部署与验收](./docs/https-deployment.md)。
 
 ### 绿联 NAS / 飞牛 NAS 远程连接登录
 
@@ -242,6 +257,7 @@ docker run -d \
 | 变量 | 默认值 | 用途 |
 | --- | --- | --- |
 | `NOWEN_PORT` | `3001` | Compose 对外暴露端口 |
+| `NOWEN_DOMAIN` | 空 | 可选 Caddy HTTPS 模板的公网域名，仅填写主机名 |
 | `TZ` | `Asia/Shanghai` | 容器时区，会影响任务日期与日记自然日期判断 |
 | `PUBLIC_WEB_ORIGIN` | 空 | 反向代理或公网域名，用于生成正确的分享链接 |
 | `FILE_PUBLIC_ORIGIN` | 继承 `PUBLIC_WEB_ORIGIN` | 文件管理 / 图床复制直链使用的独立公网域名；上传、预览和本人下载仍走当前连接地址 |

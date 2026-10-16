@@ -1,3 +1,5 @@
+import { TASK_SYNC_FIELDS, taskSyncValues } from "./taskFields.js";
+import { removeTaskOccurrences } from "../lib/taskRecurrenceDeletion.js";
 import { withEncryptedBlockWrite } from "../lib/encryptedBlockWrites.js";
 import type Database from "better-sqlite3";
 import { runWithOutboxSuppressed } from "./context";
@@ -312,11 +314,22 @@ function applyAttachmentLocal(db: Database.Database, item: RemoteEntityPayload, 
 function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, options: ApplyLocalOptions): void {
   const { userId, workspaceId = null } = options;
   if (item.operation === "delete") {
+    const task = db.prepare("SELECT * FROM tasks WHERE id=? AND workspaceId IS ?").get(item.entityId,workspaceId) as any;
+    if (task) removeTaskOccurrences(db,task,"single",false);
+    else db.prepare("INSERT OR IGNORE INTO task_deletion_tombstones(id,userId,workspaceId,deletedAt) VALUES(?,?,?,?)").run(item.entityId,userId,workspaceId,new Date().toISOString());
     db.prepare("DELETE FROM tasks WHERE id = ? AND workspaceId IS ? AND (? IS NOT NULL OR userId = ?)")
       .run(item.entityId,workspaceId,workspaceId,userId);
     return;
   }
   const p = item.payload || {};
+  if (db.prepare("SELECT 1 FROM task_deletion_tombstones WHERE id=?").get(item.entityId)) return;
+  const groupId = typeof p.repeatGroupId === "string" ? p.repeatGroupId : item.entityId;
+  const scopeKey = workspaceId ? `workspace:${workspaceId}` : `personal:${userId}`;
+  if (p.recurrenceAction === "stop") db.prepare(`INSERT INTO task_recurrence_state(groupId,scopeKey,action,updatedAt) VALUES(?,?,'stop',?)
+    ON CONFLICT(groupId,scopeKey) DO UPDATE SET action=CASE WHEN action='series' THEN action ELSE excluded.action END,updatedAt=excluded.updatedAt`).run(groupId,scopeKey,new Date().toISOString());
+  const lifecycle = db.prepare("SELECT action FROM task_recurrence_state WHERE groupId=? AND scopeKey=?").get(groupId,scopeKey) as {action:string} | undefined;
+  if (lifecycle?.action === "series") return;
+  if (lifecycle?.action === "stop") p.repeatRule = "none";
   // noteId / parentId 若指向本地尚不存在的实体则置 null：
   // 外键会拒绝写入，导致整条任务永远同步不下来。
   const noteId = typeof p.noteId === "string"
@@ -324,28 +337,33 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
   const parentId = typeof p.parentId === "string"
     && db.prepare("SELECT 1 FROM tasks WHERE id = ? AND workspaceId IS ?").get(p.parentId,workspaceId) ? p.parentId : null;
 
+  const current = db.prepare("SELECT * FROM tasks WHERE id=? AND workspaceId IS ?").get(item.entityId, workspaceId) as Record<string, unknown> | undefined;
+  const archivedAt = Object.prototype.hasOwnProperty.call(p,"archivedAt") ? (typeof p.archivedAt === "string" ? p.archivedAt : null) : (current?.archivedAt ?? null);
   db.prepare(`
     INSERT INTO tasks (
-      id, userId, title, isCompleted, completedAt, priority, dueDate,
-      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-              COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), ?)
+      id, userId, title, isCompleted, completedAt, archivedAt, priority, dueDate,
+      noteId, parentId, sortOrder, createdAt, updatedAt, workspaceId, ${TASK_SYNC_FIELDS.join(",")}
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+              COALESCE(?, datetime('now')), COALESCE(?, datetime('now')), ?, ${TASK_SYNC_FIELDS.map(() => "?").join(",")})
     ON CONFLICT(id) DO UPDATE SET
       title = excluded.title,
       isCompleted = excluded.isCompleted,
       completedAt = excluded.completedAt,
+      archivedAt = excluded.archivedAt,
       priority = excluded.priority,
       dueDate = excluded.dueDate,
       noteId = excluded.noteId,
       parentId = excluded.parentId,
       sortOrder = excluded.sortOrder,
-      updatedAt = excluded.updatedAt
+      updatedAt = excluded.updatedAt,
+      ${TASK_SYNC_FIELDS.map(field => `${field}=excluded.${field}`).join(",")}
   `).run(
     item.entityId,
     userId,
     str(p.title, ""),
     p.isCompleted ? 1 : 0,
     p.completedAt ?? null,
+    archivedAt,
     num(p.priority) || 2,
     p.dueDate ?? null,
     noteId,
@@ -356,6 +374,7 @@ function applyTaskLocal(db: Database.Database, item: RemoteEntityPayload, option
     // 它是下一次 Push 的 baseUpdatedAt 依据，改写会导致误判冲突。
     p.updatedAt ?? null,
     workspaceId,
+    ...taskSyncValues(p, current),
   );
 }
 

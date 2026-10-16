@@ -55,6 +55,7 @@ import journalsRouter from "./routes/journals";
 import urlImportRouter from "./routes/url-import";
 
 import aiRouter from "./routes/ai";
+import aiTaskPlanRouter from "./routes/ai-task-plan";
 import voiceRouter from "./routes/voice";
 import pluginsRouter from "./routes/plugins";
 import pluginStudioRouter from "./routes/plugin-studio";
@@ -367,6 +368,9 @@ app.get("/api/settings", (c) => {
     site_title: "nowen-note",
     site_favicon: "",
     site_share_footer_text: "",
+    site_share_page_width: "standard",
+    site_share_banner_enabled: "false",
+    site_share_banner_image: "",
     site_icp_beian: "",
     site_public_web_origin: "",
     site_public_web_origin_source: "current",
@@ -624,6 +628,7 @@ app.route("/api/diary", diaryRouter);
 app.route("/api/journals", journalsRouter);
 app.route("/api/url-import", urlImportRouter);
 app.route("/api/ai", aiRouter);
+app.route("/api/ai/task-plan", aiTaskPlanRouter);
 app.route("/api/voice", voiceRouter);
 app.route("/api/plugins/studio", pluginStudioRouter);
 app.route("/api/plugins", pluginsRouter);

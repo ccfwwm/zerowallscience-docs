@@ -65,6 +65,9 @@ export function coalesceMutations(rows: SyncOutboxRow[]): CoalescedMutation[] {
       continue;
     }
 
+    // A terminal note deletion must not erase the explicitly queued trash stage.
+    if (row.entityType === "note" && (row.operation === "delete" || existing.operation === "delete")) continue;
+
     // 被合并的一方要记账：推送成功后这些条目也必须出队，
     // 否则它们会永远留在 Outbox 里反复重试。
     existing.supersededIds.push(existing.mutationId);
@@ -72,9 +75,8 @@ export function coalesceMutations(rows: SyncOutboxRow[]): CoalescedMutation[] {
     existing.operation = row.operation;
     existing.payload = parsePayload(row.payload);
     // baseVersion 保持最早那条：它才代表"这串修改的共同祖先"。
-    if (existing.baseVersion === undefined && row.baseVersion !== null) {
-      existing.baseVersion = row.baseVersion;
-    }
+    // An absent first base means creation. Later local revisions must not turn
+    // that creation into an update of a server entity that does not exist yet.
   }
 
   return order.map((key) => byEntity.get(key) as CoalescedMutation);

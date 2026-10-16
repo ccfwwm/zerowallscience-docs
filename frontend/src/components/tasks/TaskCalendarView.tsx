@@ -218,6 +218,8 @@ export function TaskCalendarView({
                       return (
                         <div
                           key={task.id}
+                          data-task-context-id={task.id}
+                          tabIndex={0}
                           onClick={(e) => { e.stopPropagation(); onSelect(task); }}
                           draggable={!isMobile}
                           onDragStart={isMobile ? undefined : (e) => handleDragStart(e, task.id)}
@@ -267,6 +269,8 @@ export function TaskCalendarView({
                 return (
                   <div
                     key={task.id}
+                    data-task-context-id={task.id}
+                    tabIndex={0}
                     onClick={() => onSelect(task)}
                     draggable={!isMobile}
                     onDragStart={isMobile ? undefined : (e) => handleDragStart(e, task.id)}
@@ -317,6 +321,8 @@ export function TaskCalendarView({
               return (
                 <div
                   key={task.id}
+                  data-task-context-id={task.id}
+                  tabIndex={0}
                   onClick={() => onSelect(task)}
                   className={cn(
                     "flex items-center gap-2 px-3 py-1.5 rounded-lg cursor-pointer",
