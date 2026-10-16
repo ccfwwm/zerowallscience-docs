@@ -775,6 +775,32 @@ export class NowenApiClient {
 
   // ==================== 自动化 ====================
 
+  async getWorkflow(workflowId: string): Promise<any> {
+    return this.request(`/api/automations/${encodeURIComponent(workflowId)}`);
+  }
+
+  async createWorkflow(body: Record<string, unknown>): Promise<any> {
+    return this.request("/api/automations", { method: "POST", body });
+  }
+
+  async updateWorkflow(workflowId: string, body: Record<string, unknown>): Promise<any> {
+    return this.request(`/api/automations/${encodeURIComponent(workflowId)}`, { method: "PUT", body });
+  }
+
+  async setWorkflowEnabled(workflowId: string, enabled: boolean, expectedRevision: string): Promise<any> {
+    return this.request(`/api/automations/${encodeURIComponent(workflowId)}/${enabled ? "enable" : "disable"}`,
+      { method: "POST", body: { expectedRevision } });
+  }
+
+  async deleteWorkflow(workflowId: string, expectedRevision: string): Promise<any> {
+    return this.request(`/api/automations/${encodeURIComponent(workflowId)}`,
+      { method: "DELETE", body: { expectedRevision, confirmation: "DELETE_WORKFLOW" } });
+  }
+
+  async listWorkflowRuns(workflowId: string): Promise<any> {
+    return this.request(`/api/automations/${encodeURIComponent(workflowId)}/runs`);
+  }
+
   async listWorkflows(): Promise<any[]> {
     return this.request("/api/automations");
   }
