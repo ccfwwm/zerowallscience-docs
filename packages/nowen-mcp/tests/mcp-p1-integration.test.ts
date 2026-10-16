@@ -76,6 +76,8 @@ test("P1 personal file and task tools enforce preview, token and optimistic posi
     } else if (pathname === "/api/tasks/task-1/note" && req.method === "POST") {
       assert.equal(body.description, "Detailed work");
       assert.equal(body.expectedTaskUpdatedAt, "2026-10-16T09:00:00Z");
+      assert.equal(body.expectedTaskTitle, "Build release");
+      assert.equal(body.expectedTaskDescription, "Detailed work");
       assert.match(body.requestId, /^[a-f0-9-]{36}$/);
       snapshots++;
       done(201, { id: "saved-note", title: body.title });
