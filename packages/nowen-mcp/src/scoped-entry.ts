@@ -585,9 +585,10 @@ async function scopedFetch(input: string | URL | Request, init?: RequestInit): P
 
   try {
     // Local read-only applies even when ALLOWED_NOTEBOOK_IDS is unset.
-    // /api/ai/ask and /api/ai/chat are inference-only endpoints.
+    // Only the knowledge-base answer endpoint is treated as read-only.
+    // /api/ai/chat may trigger tasks or plugins and MUST be blocked in read-only mode.
     const inferenceOnly = request.method.toUpperCase() === "POST"
-      && ["/api/ai/ask", "/api/ai/chat"].includes(url.pathname);
+      && url.pathname === "/api/ai/ask";
     const authentication = request.method.toUpperCase() === "POST"
       && url.pathname === "/api/auth/login";
     if (isWriteMethod(request.method) && !inferenceOnly && !authentication) {
