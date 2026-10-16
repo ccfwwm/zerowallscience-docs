@@ -533,7 +533,7 @@ export class NowenApiClient {
   }
 
   async saveTaskAsNote(taskId: string, body: {
-    requestId: string; notebookId: string; title: string; description: string; expectedTaskUpdatedAt: string;
+    requestId: string; notebookId: string; title: string; description: string; expectedTaskUpdatedAt: string; expectedTaskTitle: string; expectedTaskDescription: string;
   }): Promise<any> {
     return this.request(`/api/tasks/${encodeURIComponent(taskId)}/note`, {
       method: "POST", query: { workspaceId: "personal" }, body,
