@@ -464,7 +464,7 @@ async function handleKnowledgeTreeRequest(request: Request, url: URL): Promise<R
     if (!response.ok) return response;
     const body = await readJsonResponse(response);
     if (!body || !Array.isArray(body.nodes)) return response;
-    const nodes = policy.filterKnowledgeTree(body.nodes);
+    const nodes = policy.filterKnowledgeTree(body.nodes, url.searchParams.get("includeDeleted") === "1");
     const selectedIds = new Set(nodes.map((node: any) => node.id));
     const selectedNotes = new Set(nodes.filter((node: any) => node.resourceType === "note")
       .map((node: any) => node.resourceId));
@@ -498,7 +498,7 @@ async function handleKnowledgeTreeRequest(request: Request, url: URL): Promise<R
   const catalog = await readJsonResponse(catalogResponse);
   if (!catalog || !Array.isArray(catalog.nodes)) throw new ScopeDeniedError("无法校验知识树节点权限");
   const allNodes: any[] = catalog.nodes;
-  const permitted = policy.filterKnowledgeTree(allNodes);
+  const permitted = policy.filterKnowledgeTree(allNodes, true);
   const byId = new Map(allNodes.map((node: any) => [node.id, node]));
   const visibleIds = new Set(permitted.map((node: any) => node.id));
   const body = await readJson(request);
@@ -564,7 +564,12 @@ async function handleKnowledgeTreeRequest(request: Request, url: URL): Promise<R
   }
   if ((method === "PATCH" && !match[2]) || (method === "PUT" && match[2] === "move")
       || (method === "DELETE" && !match[2]) || (method === "POST" && match[2] === "restore")) {
-    return originalFetch(request);
+    const response = await originalFetch(request);
+    if (response.ok && method === "POST" && match[2] === "restore" && policy.includeDescendants) {
+      descendantsHydrated = false;
+      await ensureDescendantsHydrated(request);
+    }
+    return response;
   }
   throw new ScopeDeniedError("不允许此知识树操作");
 }
