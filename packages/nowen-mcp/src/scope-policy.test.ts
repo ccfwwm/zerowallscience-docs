@@ -41,6 +41,15 @@ test("read-only mode rejects mutations", () => {
   assert.throws(() => policy.assertWritable("更新笔记"), ScopeDeniedError);
 });
 
+test("read-only mode is enforced even without notebook whitelist", () => {
+  const policy = new NotebookScopePolicy(loadScopeConfiguration({
+    MCP_ACCESS_MODE: "read-only",
+  }));
+  assert.equal(policy.enabled, false);
+  assert.equal(policy.isNotebookAllowed("any-notebook"), true);
+  assert.throws(() => policy.assertWritable("创建笔记"), ScopeDeniedError);
+});
+
 test("note and file filtering cannot expand the whitelist", () => {
   const policy = new NotebookScopePolicy(loadScopeConfiguration({
     ALLOWED_NOTEBOOK_IDS: "allowed",
