@@ -28,8 +28,10 @@ export async function saveTaskNoteSnapshot(userId: string, taskId: string, body:
     // Optional MCP precondition; checked both before copying attachments and
     // inside the final transaction so a concurrent task edit cannot silently
     // create a stale note snapshot.
-    if (body.expectedTaskUpdatedAt !== undefined
-        && body.expectedTaskUpdatedAt !== task.updatedAt) {
+    if ((body.expectedTaskUpdatedAt !== undefined && body.expectedTaskUpdatedAt !== task.updatedAt)
+        || (body.expectedTaskTitle !== undefined && body.expectedTaskTitle !== task.title)
+        || (body.expectedTaskDescription !== undefined
+          && body.expectedTaskDescription !== (task.description || ""))) {
       throw new TaskSnapshotError("TASK_SNAPSHOT_STALE", 409, "任务详情已变化，请重新预览");
     }
     if (task.workspaceId ? !getUserWorkspaceRole(task.workspaceId, userId) : task.userId !== userId) {
