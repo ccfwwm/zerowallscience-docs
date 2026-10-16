@@ -121,6 +121,23 @@ export class NotebookScopePolicy {
     return items.filter((item) => this.isNotebookAllowed(item.id));
   }
 
+  /** Enforce nearest-notebook scope for mixed knowledge-tree nodes. */
+  filterKnowledgeTree<T extends { id: string; parentId?: string | null; resourceType: string; resourceId: string }>(nodes: T[]): T[] {
+    if (!this.enabled) return nodes;
+    const byId = new Map(nodes.map((node) => [node.id, node]));
+    const allowed = (node: T): boolean => {
+      let current: T | undefined = node;
+      const seen = new Set<string>();
+      while (current && !seen.has(current.id)) {
+        seen.add(current.id);
+        if (current.resourceType === "notebook") return this.isNotebookAllowed(current.resourceId);
+        current = current.parentId ? byId.get(current.parentId) : undefined;
+      }
+      return false;
+    };
+    return nodes.filter(allowed);
+  }
+
   filterNotes<T extends { notebookId?: string | null }>(items: T[]): T[] {
     if (!this.enabled) return items;
     return items.filter((item) => this.isNotebookAllowed(item.notebookId));
