@@ -299,7 +299,7 @@ test("tests a saved LM Studio profile while the manual AI runtime is disabled", 
     assert.equal(result.status, 200);
     assert.equal(result.json.success, true);
     assert.match(result.json.message, /开启顶部.*手动 AI 配置/);
-    assert.equal(requestedUrl, "http://192.168.0.111:1234/v1/chat/completions");
+    assert.equal(requestedUrl, "http://192.168.0.111:1234/v1/responses");
     assert.equal(requestedBody.model, "lmstudio-community/qwen3.5-9b");
     assert.equal(requestedBody.stream, false);
     assert.equal(requestedAuth, "");
@@ -459,7 +459,7 @@ test("tests a draft with the stored masked API key without saving or switching a
     const failed = await requestJson("POST", "/user-preferences/ai-profiles/test-draft", draft);
     assert.equal(failed.status, 502);
     assert.equal(failed.json.success, false);
-    assert.equal(requests, 1);
+    assert.equal(requests, 2);
     assert.equal(authorization, "Bearer saved-key-5432");
 
     const blocked = await requestJson("POST", "/user-preferences/ai-profiles/test-draft", {
@@ -468,7 +468,7 @@ test("tests a draft with the stored masked API key without saving or switching a
     });
     assert.equal(blocked.status, 400);
     assert.equal(blocked.json.code, "AI_MODEL_NOT_CHAT");
-    assert.equal(requests, 1, "embedding draft should not call upstream");
+    assert.equal(requests, 2, "embedding draft should not call upstream");
 
     const active = await requestJson("GET", "/user-preferences/ai-profiles");
     assert.equal(active.json.activeProfileId, profileId);

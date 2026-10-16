@@ -21,6 +21,7 @@ process.env.DB_PATH = path.join(tmpDir, "server.db");
 process.env.ELECTRON_USER_DATA = tmpDir;
 process.env.NOWEN_LOCAL_FIRST_SYNC_V2 = "1";
 const browser = new EventTarget();
+Object.assign(browser, { location: { origin: "http://localhost", pathname: "/" } });
 Object.assign(globalThis, { window: browser });
 const scope = { scopeKey: "personal", workspaceId: null, workspaceName: null, role: "owner", canWrite: true, accessFingerprint: "personal:owner" };
 const USER = "multidevice-user";
