@@ -456,36 +456,117 @@ async function handlePersonalProjectRequest(request: Request, url: URL): Promise
 }
 
 async function handleKnowledgeTreeRequest(request: Request, url: URL): Promise<Response> {
-  if (!["/api/knowledge-tree", "/api/knowledge-tree/"].includes(url.pathname)
-      || request.method.toUpperCase() !== "GET") {
-    throw new ScopeDeniedError("scoped MCP 仅允许读取知识树");
-  }
   await ensureDescendantsHydrated(request);
-  const response = await originalFetch(request);
-  if (!response.ok) return response;
-  const body = await readJsonResponse(response);
-  if (!body || !Array.isArray(body.nodes)) return response;
-  const nodes = policy.filterKnowledgeTree(body.nodes);
-  const selectedIds = new Set(nodes.map((node: any) => node.id));
-  const selectedNotes = new Set(nodes.filter((node: any) => node.resourceType === "note")
-    .map((node: any) => node.resourceId));
-  const counts = new Map<string, number>();
-  for (const node of nodes) {
-    if (node.parentId && selectedIds.has(node.parentId)) {
-      counts.set(node.parentId, (counts.get(node.parentId) || 0) + 1);
+  const method = request.method.toUpperCase();
+  const pathname = url.pathname.replace(/\/$/, "");
+  if (pathname === "/api/knowledge-tree" && method === "GET") {
+    const response = await originalFetch(request);
+    if (!response.ok) return response;
+    const body = await readJsonResponse(response);
+    if (!body || !Array.isArray(body.nodes)) return response;
+    const nodes = policy.filterKnowledgeTree(body.nodes);
+    const selectedIds = new Set(nodes.map((node: any) => node.id));
+    const selectedNotes = new Set(nodes.filter((node: any) => node.resourceType === "note")
+      .map((node: any) => node.resourceId));
+    const counts = new Map<string, number>();
+    for (const node of nodes) {
+      if (node.parentId && selectedIds.has(node.parentId)) {
+        counts.set(node.parentId, (counts.get(node.parentId) || 0) + 1);
+      }
     }
+    return replaceJsonResponse(response, {
+      ...body,
+      nodes: nodes.map((node: any) => ({
+        ...node,
+        parentId: node.parentId && selectedIds.has(node.parentId) ? node.parentId : null,
+        childCount: counts.get(node.id) || 0,
+      })),
+      passwordAuthorizedNotes: Array.isArray(body.passwordAuthorizedNotes)
+        ? body.passwordAuthorizedNotes.filter((entry: any) => selectedNotes.has(entry.noteId))
+        : [],
+    });
   }
-  return replaceJsonResponse(response, {
-    ...body,
-    nodes: nodes.map((node: any) => ({
-      ...node,
-      parentId: node.parentId && selectedIds.has(node.parentId) ? node.parentId : null,
-      childCount: counts.get(node.id) || 0,
-    })),
-    passwordAuthorizedNotes: Array.isArray(body.passwordAuthorizedNotes)
-      ? body.passwordAuthorizedNotes.filter((entry: any) => selectedNotes.has(entry.noteId))
-      : [],
-  });
+  policy.assertWritable("修改知识树");
+  if (url.searchParams.get("workspaceId") && url.searchParams.get("workspaceId") !== "personal") {
+    throw new ScopeDeniedError("MCP 只允许修改个人知识树");
+  }
+  const catalogResponse = await originalFetch(
+    `${baseUrl}/api/knowledge-tree/?workspaceId=personal&includeDeleted=1`,
+    { headers: requestAuthHeaders(request) },
+  );
+  if (!catalogResponse.ok) throw new ScopeDeniedError("知识树不可读取或 Token 缺少读取权限");
+  const catalog = await readJsonResponse(catalogResponse);
+  if (!catalog || !Array.isArray(catalog.nodes)) throw new ScopeDeniedError("无法校验知识树节点权限");
+  const allNodes: any[] = catalog.nodes;
+  const permitted = policy.filterKnowledgeTree(allNodes);
+  const byId = new Map(allNodes.map((node: any) => [node.id, node]));
+  const visibleIds = new Set(permitted.map((node: any) => node.id));
+  const body = await readJson(request);
+  const assertNode = (id: string): any => {
+    const node = byId.get(id);
+    if (!node || !visibleIds.has(id) || node.workspaceId != null
+      || !["note", "notebook"].includes(node.resourceType)) {
+      throw new ScopeDeniedError("节点不存在、不属于个人空间或未获授权");
+    }
+    return node;
+  };
+  const assertSubtree = (id: string): void => {
+    const descendants = new Set([id]);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const node of allNodes) {
+        if (node.parentId && descendants.has(node.parentId) && !descendants.has(node.id)) {
+          descendants.add(node.id);
+          changed = true;
+        }
+      }
+    }
+    if (descendants.size > 10000) throw new ScopeDeniedError("目录操作涉及节点过多");
+    for (const descendantId of descendants) assertNode(descendantId);
+  };
+  if (pathname === "/api/knowledge-tree/nodes" && method === "POST") {
+    if (body.nodeType !== "folder" && body.nodeType !== "markdown") {
+      throw new ScopeDeniedError("MCP 只允许创建普通文件夹和 Markdown 笔记");
+    }
+    if (body.parentId === undefined || body.parentId === null) {
+      throw new ScopeDeniedError("scoped MCP 只能在授权文件夹内新建节点");
+    }
+    if (typeof body.parentId !== "string") throw new ScopeDeniedError("parentId 必须是文件夹节点 ID");
+    const parent = assertNode(body.parentId);
+    if (parent.isDeleted || parent.resourceType !== "notebook") throw new ScopeDeniedError("目标文件夹不可用");
+    if (body.nodeType === "folder" && !policy.includeDescendants) {
+      throw new ScopeDeniedError("创建子文件夹需要启用 MCP_INCLUDE_DESCENDANTS");
+    }
+    const response = await originalFetch(request);
+    if (response.ok && body.nodeType === "folder") {
+      const created = await readJsonResponse(response);
+      if (typeof created?.resourceId === "string") {
+        policy.registerCreatedNotebook(created.resourceId, parent.resourceId);
+      }
+    }
+    return response;
+  }
+  const match = /^\/api\/knowledge-tree\/nodes\/([^/]+)(?:\/(move|restore))?$/.exec(pathname);
+  if (!match) throw new ScopeDeniedError("不允许此知识树操作");
+  const nodeId = decodeURIComponent(match[1]);
+  assertNode(nodeId);
+  if ((method === "PUT" && match[2] === "move") || method === "DELETE" || match[2] === "restore") {
+    assertSubtree(nodeId);
+  }
+  if (method === "PUT" && match[2] === "move" && body.parentId != null) {
+    if (typeof body.parentId !== "string") throw new ScopeDeniedError("非法目标目录");
+    const parent = assertNode(body.parentId);
+    if (parent.isDeleted || parent.resourceType !== "notebook") throw new ScopeDeniedError("目标必须是有效文件夹");
+  }
+  if (method === "PUT" && match[2] === "move" && body.parentId == null) {
+    throw new ScopeDeniedError("scoped MCP 禁止将节点移到根目录");
+  }
+  if ((method === "PATCH" && !match[2]) || (method === "PUT" && match[2] === "move")
+      || (method === "DELETE" && !match[2]) || (method === "POST" && match[2] === "restore")) {
+    return originalFetch(request);
+  }
+  throw new ScopeDeniedError("不允许此知识树操作");
 }
 
 async function scopedFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
