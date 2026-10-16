@@ -217,7 +217,7 @@ function requiredScope(pathname: string, method: string): string | null {
   if (pathname.startsWith("/api/notes")) return write ? "notes:write" : "notes:read";
   if (pathname.startsWith("/api/blocks")) return write ? "notes:write" : "notes:read";
   if (pathname.startsWith("/api/search")) return "notes:read";
-  if (pathname.startsWith("/api/attachment-folders") || pathname.startsWith("/api/attachment-trash")) {
+  if (pathname.startsWith("/api/attachment-folders") || pathname.startsWith("/api/files/trash")) {
     return write ? "attachments:write" : "notes:read";
   }
   if (pathname.startsWith("/api/files") || pathname.startsWith("/api/attachments")) {
@@ -407,7 +407,7 @@ async function handlePersonalFileManagement(c: Context, next: Next, ctx: TokenAc
     await next();
     return;
   }
-  if (path === "/api/attachment-trash" || path === "/api/attachment-trash/") {
+  if (path === "/api/files/trash" || path === "/api/files/trash/") {
     if (method !== "GET") throw new ApiTokenAccessError("回收站列表仅可读取", "API_TOKEN_ENDPOINT_DENIED");
     await next();
     if (c.res.status >= 200 && c.res.status < 300) {
@@ -421,7 +421,7 @@ async function handlePersonalFileManagement(c: Context, next: Next, ctx: TokenAc
     }
     return;
   }
-  if (path === "/api/attachment-trash/restore" && method === "POST") {
+  if (path === "/api/files/trash/restore" && method === "POST") {
     const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
     if (!Array.isArray(body.ids) || body.ids.length < 1 || body.ids.length > 50
         || !body.expectedTrashedAt || typeof body.expectedTrashedAt !== "object" || Array.isArray(body.expectedTrashedAt)) {
@@ -971,7 +971,7 @@ export async function enforceApiTokenAccess(c: Context, next: Next): Promise<Res
       return;
     }
     if (c.req.path.startsWith("/api/attachment-folders")
-      || c.req.path.startsWith("/api/attachment-trash")
+      || c.req.path.startsWith("/api/files/trash")
       || c.req.path === "/api/files/batch-move"
       || (c.req.path.startsWith("/api/files/") && ["PATCH", "DELETE"].includes(c.req.method.toUpperCase()))) {
       await handlePersonalFileManagement(c, next, ctx);
