@@ -1,15 +1,21 @@
 import React, { useCallback, useRef, useState, useEffect, useMemo } from "react";
 import EncryptedConversionEditorGuard from "./EncryptedConversionEditorGuard";
 import EncryptedNotePane from "./EncryptedNotePane";
-import { isEncryptedNoteFormat } from "@/lib/encryptedNotes/noteDocument";
+import EncryptedNoteConversionDialog from "./EncryptedNoteConversionDialog";
+import { firstPendingConversion, CONVERSION_PENDING_EVENT } from "@/lib/encryptedNotes/conversionPending";
+import { getOfflineQueueStorageKey } from "@/lib/offlineScope";
+import { Capacitor } from "@capacitor/core";
+import { isEncryptedNoteFormat, sameConversionContent } from "@/lib/encryptedNotes/noteDocument";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { Star, Pin, Trash2, Cloud, RefreshCw, Check, Loader2, ChevronLeft, FolderInput, ChevronRight, ChevronDown, X, ListTree, Lock, Unlock, Tag as TagIcon, Type, MoreHorizontal, Share2, History, MessageCircle, FileCode, FileText, Eye, Pencil, Paperclip, Search, Sparkles, Network, Minimize2, Image, Link2, Printer, Scissors } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { confirm } from "@/components/ui/confirm";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import TiptapEditor from "@/components/TiptapEditor";
+import NoteReadingPositionBridge from "@/components/NoteReadingPositionBridge";
 import { PhaseAPerfProfiler } from "@/components/PhaseAPerfProfiler";
 import type { NoteEditorHeading, NoteEditorUpdatePayload } from "@/components/editors/types";
+import PlainTextEditor from "@/components/PlainTextEditor";
 import MarkdownEditor from "@/components/MarkdownEditor";
 import HtmlPreviewPane, { isFullHtmlDocument } from "@/components/HtmlPreviewPane";
 import type { NoteEditorHandle } from "@/components/editors/types";
@@ -19,6 +25,8 @@ import { confirmMediaNotePersistence } from "@/lib/mediaInsertionCommit";
 import { parseMermaidMindmap, normalizeMindMapData } from "@/lib/mindmapTransform";
 import { cn } from "@/lib/utils";
 import SyncStatusBadge from "@/components/SyncStatusBadge";
+import { isAndroidNativeRuntime } from "@/lib/mobileLocalMode";
+import { MOBILE_SYNC_APPLIED_EVENT, type MobileSyncAppliedDetail } from "@/lib/mobileSyncStatus";
 import {
   applyEditorUpdateToNote,
   PREPARE_EDITOR_SPLIT_CLOSE_EVENT,
@@ -107,6 +115,8 @@ import {
   type NoteFormatConversionRequest,
 } from "@/lib/noteFormatConversion";
 import NoteThemeMenuSelect from "@/components/NoteThemeMenuSelect";
+import CjkTypographyMenuActions from "@/components/CjkTypographyMenuActions";
+import type { CjkTypographyAction } from "@/lib/cjkTypography";
 import NoteColorMarkPicker from "@/components/NoteColorMarkPicker";
 import type { NoteColorMark } from "@/types";
 import MindMapEmbedInsertDialog from "@/components/MindMapEmbedInsertDialog";
@@ -135,16 +145,36 @@ interface EditorPaneProps {
 }
 
 export default function EditorPane(props: EditorPaneProps) {
+  return <ConversionAwareEditorPane key={getOfflineQueueStorageKey()} {...props} />;
+}
+
+function ConversionAwareEditorPane(props: EditorPaneProps) {
   const { state } = useApp();
+  const { t } = useTranslation();
+  const [conversion, setConversion] = useState<{ id: string; note?: Note; storageFailed?: boolean } | null>(() => {
+    try { const pending = firstPendingConversion(); return pending ? { id: pending.noteId } : null; }
+    catch { return { id: "", storageFailed: true }; }
+  });
+  useEffect(() => {
+    const resume = () => {
+      try { const pending = firstPendingConversion(); if (pending) setConversion((current) => current?.id === pending.noteId ? { id: pending.noteId } : current ?? { id: pending.noteId }); }
+      catch { setConversion({ id: "", storageFailed: true }); }
+    };
+    window.addEventListener(CONVERSION_PENDING_EVENT, resume);
+    return () => window.removeEventListener(CONVERSION_PENDING_EVENT, resume);
+  }, []);
+  if (conversion?.storageFailed) return <p role="alert" className="p-6 text-sm text-red-500">{t("encryptedConversion.errors.storage_failed")}</p>;
+  if (conversion) return <EncryptedNoteConversionDialog key={conversion.id} noteId={conversion.id} note={conversion.note} onClose={() => setConversion(null)} />;
   return state.activeNote && isEncryptedNoteFormat(state.activeNote.contentFormat)
     ? <EncryptedNotePane key={state.activeNote.id} note={state.activeNote} />
-    : <EncryptedConversionEditorGuard noteId={state.activeNote?.id ?? null}><OrdinaryEditorPane {...props} /></EncryptedConversionEditorGuard>;
+    : <EncryptedConversionEditorGuard key={state.activeNote ? `${state.activeNote.id}:${state.activeNote.contentFormat}` : "empty"} noteId={state.activeNote?.id ?? null}><OrdinaryEditorPane {...props} onEncryptNote={(note) => setConversion({ id: note.id, note })} /></EncryptedConversionEditorGuard>;
 }
 
 function OrdinaryEditorPane({
   canSplitDocument = false,
   onSplitDocument,
-}: EditorPaneProps) {
+  onEncryptNote,
+}: EditorPaneProps & { onEncryptNote: (note: Note) => void }) {
   const { state } = useApp();
   const actions = useAppActions();
   useEffect(() => {
@@ -296,7 +326,16 @@ function OrdinaryEditorPane({
   // 纯 HTML 预览模式：当
   // 笔记内容被保存为 HTML 格式（如 clipper 导入）时自动进入只读预览，
   // 用户需要手动切换到 Tiptap 编辑器（会有格式丢失风险）。
-  const [htmlPreviewMode, setHtmlPreviewMode] = useState(false);
+  // Import HTML must be routed to the preview *during the first render*.
+  // Waiting for a useEffect causes one Tiptap mount (and unauthorized <img> requests)
+  // before the preview takes over.
+  const [htmlPreviewMode, setHtmlPreviewMode] = useState(
+    () => !!activeNote && activeNote.contentFormat !== "plaintext" && detectFormat(activeNote.content) === "html",
+  );
+  const previewInitializedNoteIdRef = useRef(activeNote?.id);
+  const isPendingHtmlNoteSwitch = previewInitializedNoteIdRef.current !== activeNote?.id
+    && !!activeNote && activeNote.contentFormat !== "plaintext" && detectFormat(activeNote.content) === "html";
+  const shouldRenderHtmlPreview = activeNote?.contentFormat !== "plaintext" && (htmlPreviewMode || isPendingHtmlNoteSwitch);
   const [showHtmlEditWarning, setShowHtmlEditWarning] = useState(false);
   // 记住当前笔记的原始格式是否为 HTML。
   // 切换到编辑模式后，内容会被 normalize 为 Markdown，此时 detectFormat 返回 "md"。
@@ -678,6 +717,7 @@ function OrdinaryEditorPane({
         saveDraft({
           noteId: note.id,
           editorMode: editorModeRef.current,
+          ...(note.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
           content: snap.content,
           contentText: snap.contentText || "",
           title: note.title,
@@ -735,9 +775,9 @@ function OrdinaryEditorPane({
     targetFormat,
   }: NoteFormatConversionRequest) => {
     const initialNote = activeNoteRef.current;
-    if (!initialNote || initialNote.id !== noteId || modeSwitchInflightRef.current) return;
+    if (!initialNote || initialNote.id !== noteId || initialNote.contentFormat === "plaintext" || modeSwitchInflightRef.current) return;
     if (initialNote.isLocked || viewLockedIdsRef.current.has(noteId)) {
-      toast.warning("请先解锁笔记再转换格式");
+      toast.warning(t("editorOps.convertLocked"));
       return;
     }
 
@@ -803,7 +843,7 @@ function OrdinaryEditorPane({
       window.dispatchEvent(new CustomEvent("nowen:knowledge-tree-changed", {
         detail: { reason: "note-format-converted", noteId },
       }));
-      toast.success(targetFormat === "markdown" ? "已转换为 Markdown" : "已转换为富文本");
+      toast.success(targetFormat === "markdown" ? t("editorOps.convertedMarkdown") : t("editorOps.convertedRichText"));
     } catch (error) {
       console.error("[EditorPane] convert note format failed:", error);
       const current = activeNoteRef.current;
@@ -828,12 +868,12 @@ function OrdinaryEditorPane({
         } catch { /* ignore */ }
       }
       actions.setSyncStatus("error");
-      toast.error("格式转换失败，当前内容已保留");
+      toast.error(t("editorOps.convertFailed"));
     } finally {
       modeSwitchInflightRef.current = false;
       setModeSwitching(false);
     }
-  }, [actions]);
+  }, [actions, t]);
 
   useEffect(() => {
     const handleRequest = (event: Event) => {
@@ -1089,6 +1129,7 @@ function OrdinaryEditorPane({
       saveDraft({
         noteId: current.id,
         editorMode: editorModeRef.current,
+        ...(current.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
         content: snapshot.content,
         contentText: snapshot.contentText,
         title,
@@ -1246,6 +1287,20 @@ function OrdinaryEditorPane({
     }
   }
 
+  useEffect(() => {
+    const applied = (event: Event) => {
+      const cur = activeNoteRef.current;
+      const detail = (event as CustomEvent<MobileSyncAppliedDetail>).detail;
+      if (!cur || !detail) return;
+      if (detail.deletedNoteIds.includes(cur.id)) setRemoteDelete({ trashed: false });
+      else if (detail.noteIds.includes(cur.id)) void checkActiveNoteRemoteVersion("native-sync");
+    };
+    window.addEventListener(MOBILE_SYNC_APPLIED_EVENT, applied);
+    return () => window.removeEventListener(MOBILE_SYNC_APPLIED_EVENT, applied);
+    // The handler reads current note/editor state through existing refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const { presenceUsers, isConnected, setEditing: rtSetEditing } = useRealtimeNote({
     noteId: activeNote?.id ?? null,
     // ��ʽ���� selfUserId��EditorPane ������ selfUser��localStorage ���� + /api/me����
@@ -1344,6 +1399,8 @@ function OrdinaryEditorPane({
    * ����������־û��������������Զ��ϲ���
    */
   const collabReady = !!(activeNote && !activeNote.isLocked && selfUser && editorMode === "md"
+    && activeNote.contentFormat !== "plaintext"
+    && !isAndroidNativeRuntime()
     && !/nowen-encrypted/i.test(activeNote.content || ""));
   const { doc: collabYDoc, provider: collabProvider, synced: collabSynced } = useYDoc({
     noteId: collabReady ? (activeNote?.id ?? null) : null,
@@ -1399,8 +1456,9 @@ function OrdinaryEditorPane({
   // ����ʼ����ݸ�ʽΪ "html"���Զ����� HTML Ԥ����������˵�����༭����
   useEffect(() => {
     if (!activeNote) return;
+    previewInitializedNoteIdRef.current = activeNote.id;
     const fmt = detectFormat(activeNote.content);
-    const isHtml = fmt === "html";
+    const isHtml = activeNote.contentFormat !== "plaintext" && fmt === "html";
     const isFullDoc = isHtml && isFullHtmlDocument(activeNote.content);
     setHtmlPreviewMode(isHtml);
     setNoteIsHtml(isHtml);
@@ -1512,7 +1570,7 @@ function OrdinaryEditorPane({
           && !viewLockedIdsRef.current.has(activeNote.id)) {
         // ��齹���Ƿ��ڱ༭���ڲ�������ڱ༭���ڣ�Delete ��Ӧ������ɾ�����֣�
         const activeEl = document.activeElement;
-        const isInEditor = activeEl?.closest(".ProseMirror") || activeEl?.tagName === "INPUT" || activeEl?.tagName === "TEXTAREA";
+        const isInEditor = activeEl?.closest(".ProseMirror, .cm-editor") || activeEl?.tagName === "INPUT" || activeEl?.tagName === "TEXTAREA";
         if (!isInEditor) {
           e.preventDefault();
           setShowDeleteConfirm(true);
@@ -1582,6 +1640,16 @@ function OrdinaryEditorPane({
     };
   }, [showDesktopMoreMenu]);
 
+  const applyCjkTypography = (action: CjkTypographyAction) => {
+    setShowMobileMenu(false);
+    setShowDesktopMoreMenu(false);
+    // The underlying editor checks read-only again, guarding stale menu state.
+    if (!activeNote || !canEditActiveNote || effectiveLocked || isTrashed ||
+        modeSwitching || noteIsFullHtmlDoc) return;
+    const applied = editorHandleRef.current?.applyCjkTypography?.(action) === true;
+    if (!applied) toast.info(t("cjkTypography.noChanges"));
+  };
+
   const handleUpdate = useCallback(async (data: NoteEditorUpdatePayload) => {
     const currentNote = activeNoteRef.current;
     if (!currentNote || currentNote.isLocked || viewLockedIdsRef.current.has(currentNote.id)) return;
@@ -1632,6 +1700,7 @@ function OrdinaryEditorPane({
         saveDraft({
           noteId: currentNote.id,
           editorMode: editorModeRef.current,
+          ...(currentNote.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
           content: data.content,
           contentText: data.contentText || "",
           title: data.title,
@@ -1739,6 +1808,7 @@ function OrdinaryEditorPane({
               saveDraft({
                 noteId: currentNote.id,
                 editorMode: editorModeRef.current,
+                ...(currentNote.contentFormat === "plaintext" ? { contentFormat: "plaintext" as const } : {}),
                 content: snap.content,
                 contentText: snap.contentText,
                 title: data.title,
@@ -1973,6 +2043,18 @@ function OrdinaryEditorPane({
     actions.setActiveNote(updated);
     actions.updateNoteInList({ id: updated.id, isFavorite: updated.isFavorite });
   }, [activeNote, actions]);
+
+  const beginEncryption = () => {
+    const currentNote = activeNoteRef.current;
+    if (!currentNote || effectiveLocked || !canEditActiveNote || Capacitor.isNativePlatform() || saveInflightRef.current) return;
+    const snapshot = editorHandleRef.current?.getSnapshot?.();
+    const source = { ...currentNote, content: snapshot?.content ?? currentNote.content, contentText: snapshot?.contentText ?? currentNote.contentText, title: snapshot?.title ?? currentNote.title };
+    if (!sameConversionContent(source.content, currentNote.content, currentNote.contentFormat) || source.title !== currentNote.title) {
+      saveDraft({ noteId: source.id, editorMode: editorModeRef.current, content: source.content, contentText: source.contentText, title: source.title, baseVersion: source.version, savedAt: Date.now() });
+    }
+    setShowMobileMenu(false); setShowDesktopMoreMenu(false);
+    onEncryptNote(source);
+  };
 
   const togglePin = useCallback(async () => {
     if (!activeNote || activeNote.isTrashed) return;
@@ -2276,7 +2358,7 @@ const moveToTrash = useCallback(async () => {
       setAiSummaryResult(result.trim());
     } catch (e: any) {
       console.error("AI summary error:", e);
-      toast.error(e?.message || "AI 总结失败");
+      toast.error(e?.message || t("editorOps.summaryFailed"));
       setShowSummaryDialog(false);
     } finally {
       setAiSummaryLoading(false);
@@ -2289,7 +2371,7 @@ const moveToTrash = useCallback(async () => {
       await navigator.clipboard.writeText(aiSummaryResult);
       toast.success(t("editor.aiSummaryCopied") || "已复制");
     } catch {
-      toast.error("复制失败");
+      toast.error(t("common.copyFailed"));
     }
   }, [aiSummaryResult, t]);
 
@@ -2303,7 +2385,7 @@ const moveToTrash = useCallback(async () => {
         await navigator.clipboard.writeText(aiSummaryResult);
       toast.success(t("editor.aiSummaryCopied") || "已复制到剪贴板，请手动粘贴");
       } catch {
-      toast.error("追加失败，请手动插入");
+      toast.error(t("editorOps.appendFailed"));
       }
       return;
     }
@@ -2365,7 +2447,7 @@ const moveToTrash = useCallback(async () => {
       setAiMermaidResult(result);
     } catch (e: any) {
       console.error("AI mermaid error:", e);
-      toast.error(e?.message || "AI 生成失败");
+      toast.error(e?.message || t("editorOps.generateFailed"));
       setShowMermaidDialog(false);
     } finally {
       setAiMermaidLoading(false);
@@ -2380,11 +2462,11 @@ const moveToTrash = useCallback(async () => {
       try {
         navigator.clipboard.writeText("```mermaid\n" + aiMermaidResult + "\n```");
       toast.success(t("editor.aiSummaryCopied") || "已复制到剪贴板，请手动粘贴");
-    } catch { toast.error("复制失败"); }
+    } catch { toast.error(t("common.copyFailed")); }
       return;
     }
     try { editorHandleRef.current?.flushSave(); } catch {}
-      toast.success("已插入笔记");
+      toast.success(t("editorOps.inserted"));
     setShowMermaidDialog(false);
   }, [activeNote, aiMermaidResult, t]);
   /** 将 Mermaid mindmap 源码解析为 MindMapData */
@@ -2402,14 +2484,14 @@ const moveToTrash = useCallback(async () => {
     if (!aiMermaidResult) return;
     const data = parseMermaidToMindMap(aiMermaidResult);
     if (!data) {
-      toast.error("无法将当前 Mermaid 转换为思维导图");
+      toast.error(t("editorOps.mindmapConversionFailed"));
       return;
     }
     setMermaidSavingMindMap(true);
     try {
-      const title = data.root.text.slice(0, 50) || "AI 生成思维导图";
+      const title = data.root.text.slice(0, 50) || t("editorOps.mindmapDefaultTitle");
       const created = await api.createMindMap({ title, data: JSON.stringify(data) });
-      toast.success("已保存为思维导图");
+      toast.success(t("editorOps.mindmapSaved"));
       setShowMermaidDialog(false);
       // 通知 MindMapEditor 打开新图
       // 切换到思维导图视图
@@ -2418,7 +2500,7 @@ const moveToTrash = useCallback(async () => {
       actions.setViewMode("mindmaps");
     } catch (e: any) {
       console.error("Save mindmap error:", e);
-      toast.error(e?.message || "保存失败");
+      toast.error(e?.message || t("editorOps.saveFailed"));
     } finally {
       setMermaidSavingMindMap(false);
     }
@@ -2438,9 +2520,9 @@ const moveToTrash = useCallback(async () => {
     } catch (e: any) {
       const msg = String(e?.message || "");
       if (/CROSS_WORKSPACE_MOVE_FORBIDDEN/.test(msg)) {
-      toast.error("无法在不同工作空间的笔记本之间移动");
+      toast.error(t("editorOps.crossSpaceMove"));
       } else {
-      toast.error(msg || "移动失败");
+      toast.error(msg || t("editorOps.moveFailed"));
       }
       setShowMoveDropdown(false);
     }
@@ -2592,21 +2674,24 @@ const moveToTrash = useCallback(async () => {
       </MobileEditorToolbarPortal>
       <MobileEditorToolbarPortal location="trailing">
         {compactMobileEditing ? (
-          <Button
-            data-mobile-note-menu-trigger
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0"
-            onClick={() => {
-              const nextOpen = !showMobileMenu;
-              if (nextOpen) window.dispatchEvent(new CustomEvent('nowen:close-search'));
-              setShowMobileMenu(nextOpen);
-              setShowMobileMoveMenu(false);
-            }}
-            aria-label={t('common.more')}
-          >
-            <MoreHorizontal size={17} />
-          </Button>
+          <div className="flex items-center gap-1">
+            <SyncStatusBadge noteId={activeNote.id} saving={syncStatus === "saving"} />
+            <Button
+              data-mobile-note-menu-trigger
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              onClick={() => {
+                const nextOpen = !showMobileMenu;
+                if (nextOpen) window.dispatchEvent(new CustomEvent('nowen:close-search'));
+                setShowMobileMenu(nextOpen);
+                setShowMobileMoveMenu(false);
+              }}
+              aria-label={t('common.more')}
+            >
+              <MoreHorizontal size={17} />
+            </Button>
+          </div>
         ) : null}
       </MobileEditorToolbarPortal>
     <motion.div
@@ -2699,8 +2784,8 @@ const moveToTrash = useCallback(async () => {
           {/* 多设备同步状态：与上面的"保存状态"分开显示。
               本地写入成功就是"已保存"，同步失败只叫"等待同步"，
               绝不能让一次网络抖动显示成"保存失败"。
-              一切正常或未开启同步时该组件不渲染，不占空间。 */}
-          <SyncStatusBadge />
+              Android 保留轻量文字，未开启同步时不渲染。 */}
+          {!compactMobileEditing && <SyncStatusBadge noteId={activeNote.id} saving={syncStatus === "saving"} />}
           <span className="flex shrink-0 items-center gap-0.5" aria-hidden="true">
             {activeNote.isLocked || isViewLocked ? <Lock size={12} className={activeNote.isLocked ? "text-orange-500" : "text-tx-tertiary"} /> : null}
             {activeNote.isPinned ? <Pin size={12} className="text-accent-primary fill-accent-primary" /> : null}
@@ -2755,6 +2840,10 @@ const moveToTrash = useCallback(async () => {
                   }}
                 >
                   {/* �ö� / ȡ���ö� */}
+                  {!Capacitor.isNativePlatform() && activeNote.contentFormat !== "plaintext" && <button onClick={beginEncryption} disabled={effectiveLocked || !canEditActiveNote || syncStatus === "saving"}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-tx-secondary active:bg-app-hover transition-colors disabled:opacity-40">
+                    <Lock size={15} className="text-tx-tertiary" /><span>{t("encryptedConversion.title")}</span>
+                  </button>}
                   <button
                     onClick={() => {
                       window.dispatchEvent(new CustomEvent('nowen:open-search'));
@@ -2843,6 +2932,11 @@ const moveToTrash = useCallback(async () => {
                     <span>{t('editor.showOutline')}</span>
                   </button>
                   <NoteThemeMenuSelect noteId={activeNote.id} disabled={!canWriteNote(activeNote)} />
+                  <CjkTypographyMenuActions
+                    mobile
+                    disabled={!canEditActiveNote || effectiveLocked || isTrashed || modeSwitching || noteIsFullHtmlDoc}
+                    onAction={applyCjkTypography}
+                  />
                   <div className="h-px bg-app-border mx-2 my-0.5" />
                   {/* AI ���ɱ��� */}
                   <button
@@ -3200,7 +3294,7 @@ const moveToTrash = useCallback(async () => {
             disabled={effectiveLocked || activeNote.isTrashed === 1 || !canWriteNote(activeNote)}
             onChange={setNoteColorMark}
           />
-          <button
+          {activeNote.contentFormat === "plaintext" ? <span className="text-xs text-tx-secondary">TXT</span> : <button
             type="button"
             data-note-format-switch=""
             disabled={modeSwitching || effectiveLocked || noteIsHtml || !canWriteNote(activeNote)}
@@ -3227,7 +3321,7 @@ const moveToTrash = useCallback(async () => {
           >
             {activeNote.contentFormat === "markdown" ? <FileCode size={11} /> : <FileText size={11} />}
             {activeNote.contentFormat === "markdown" ? t("note.format.markdownShort") : t("note.format.richTextShort")}
-          </button>
+          </button>}
         </div>
 
         {/* Sync Indicator + Grouped Actions */}
@@ -3357,7 +3451,7 @@ const moveToTrash = useCallback(async () => {
               ��ť���ֿɵ������ CRDT ��δ sync ֻ�� toast ��ִ���л���sync ��ɺ�
               �ٵ㼴��˳���л�����Զ��������"��ť����"����״̬��
           */}
-          {SHOW_EDITOR_MODE_TOGGLE && (
+          {SHOW_EDITOR_MODE_TOGGLE && activeNote.contentFormat !== "plaintext" && (
             <button
               onClick={toggleEditorMode}
               disabled={modeSwitching}
@@ -3425,7 +3519,7 @@ const moveToTrash = useCallback(async () => {
                 >
                   <div className="px-3 py-2 border-b border-app-border">
                     <div className="flex items-center justify-between gap-2 text-[11px] text-tx-tertiary">
-                      <span>{activeNote.contentFormat === "markdown" ? t('note.format.markdown') : t('note.format.richText')}</span>
+                      <span>{activeNote.contentFormat === "plaintext" ? t("note.format.plainText") : activeNote.contentFormat === "markdown" ? t('note.format.markdown') : t('note.format.richText')}</span>
                       {noteIsHtml && <span className="rounded bg-blue-500/10 px-1.5 py-0.5 text-blue-500">HTML</span>}
                     </div>
                     <div className="mt-1">
@@ -3441,6 +3535,10 @@ const moveToTrash = useCallback(async () => {
                     <FolderInput size={15} className="text-tx-tertiary" />
                     <span>{t('editor.moveToNotebook')}</span>
                   </button>
+                  {!Capacitor.isNativePlatform() && activeNote.contentFormat !== "plaintext" && <button onClick={beginEncryption} disabled={effectiveLocked || !canEditActiveNote || syncStatus === "saving"}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-tx-secondary hover:bg-app-hover transition-colors disabled:opacity-40">
+                    <Lock size={15} className="text-tx-tertiary" /><span>{t("encryptedConversion.title")}</span>
+                  </button>}
                   <button
                     onClick={() => { setShowAttachmentsPanel(true); setShowDesktopMoreMenu(false); }}
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-sm text-tx-secondary hover:bg-app-hover transition-colors"
@@ -3449,6 +3547,10 @@ const moveToTrash = useCallback(async () => {
                     <span>{t('editor.attachments')}</span>
                   </button>
                   <NoteThemeMenuSelect noteId={activeNote.id} disabled={!canWriteNote(activeNote)} />
+                  <CjkTypographyMenuActions
+                    disabled={!canEditActiveNote || effectiveLocked || isTrashed || modeSwitching || noteIsFullHtmlDoc}
+                    onAction={applyCjkTypography}
+                  />
                   {canSplitDocument && onSplitDocument && (
                     <button
                       onClick={() => { onSplitDocument(); setShowDesktopMoreMenu(false); }}
@@ -3590,7 +3692,9 @@ const moveToTrash = useCallback(async () => {
               �ײ㻹�ܴ� console �� [EditorErrorBoundary] ��־�� window.__lastDirtyDoc */}
           <EditorErrorBoundary resetKey={`${activeNote.id}:${editorResetToken}`}>
           {/* 文件夹同步的 PDF / DOCX 笔记默认直接显示原文件，并隐藏内部同步元数据。 */}
-          {isFolderSyncAttachmentNote(activeNote.content) ? (
+          {activeNote.contentFormat === "plaintext" ? (
+            <PlainTextEditor key={`txt-${activeNote.id}`} ref={editorHandleRef} note={activeNote} onUpdate={handleUpdate} onLocalUpdate={handleLocalMirrorUpdate} onHeadingsChange={setHeadings} editable={canEditActiveNote && !effectiveLocked && !modeSwitching} />
+          ) : isFolderSyncAttachmentNote(activeNote.content) ? (
             <FolderSyncAttachmentPreviewPane
               key={`folder-sync-attachment-${activeNote.id}-${activeNote.version}`}
               noteId={activeNote.id}
@@ -3614,7 +3718,7 @@ const moveToTrash = useCallback(async () => {
               yDoc={collabYDoc}
               awareness={collabProvider?.awareness ?? null}
             />
-          ) : htmlPreviewMode ? (
+          ) : shouldRenderHtmlPreview ? (
             <HtmlPreviewPane
               key={`html-${activeNote.id}-${editorResetToken}`}
               ref={editorHandleRef}
@@ -3660,6 +3764,12 @@ const moveToTrash = useCallback(async () => {
             </PhaseAPerfProfiler>
           )}
           </EditorErrorBoundary>
+          <NoteReadingPositionBridge
+            noteId={activeNote.id}
+            userId={selfUser?.userId || "local"}
+            mode={activeNote.contentFormat === "markdown" || (!shouldRenderHtmlPreview && editorMode === "md") ? "markdown" : shouldRenderHtmlPreview ? "html" : "richtext"}
+            paused={noteLoading || modeSwitching}
+          />
           {/*
             UX1/UX2���༭���л��� overlay��
             - ���ڵ�ǰ�༭���Ϸ����赲���� / �Ӿ���ʾ"�л���"��
@@ -4226,6 +4336,7 @@ function SyncIndicator({
   onManualSync: () => void;
 }) {
   const { t } = useTranslation();
+  const android = isAndroidNativeRuntime();
   // 失败、排队和离线状态继续保留在同步状态机中，但不再主动展示为失败提示。
   // 手动同步入口仍保持可见，真正冲突继续走独立的冲突处理流程。
   const displayStatus: SyncStatus =
@@ -4299,7 +4410,7 @@ function SyncIndicator({
       </AnimatePresence>
 
       <span className={cn(
-        "hidden whitespace-nowrap sm:inline transition-colors",
+        android ? "whitespace-nowrap transition-colors" : "hidden whitespace-nowrap sm:inline transition-colors",
         displayStatus === "saving" && "text-accent-primary",
         displayStatus === "saved" && "text-green-500",
         displayStatus === "idle" && "text-tx-tertiary group-hover:text-tx-secondary",
@@ -4307,8 +4418,8 @@ function SyncIndicator({
         {displayStatus === "saving" && t('editor.savingStatus')}
         {displayStatus === "saved" && (
           <>
-            {t('editor.savedStatus')}
-            {lastSyncedAt && (
+            {android ? "已保存到本机" : t('editor.savedStatus')}
+            {!android && lastSyncedAt && (
               <span className="ml-1 opacity-70">
                 · {new Date(lastSyncedAt).toLocaleTimeString()}
               </span>

@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import { getGfmTaskChecked, wrapGfmTaskInlineContent } from "@/lib/gfmTaskChecked";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
@@ -24,14 +25,8 @@ import { BlockEmbedCard } from "@/components/BlockEmbedExtension";
 import MindMapEmbedCard, { parseMindMapEmbedHref } from "@/components/MindMapEmbedCard";
 import { preprocessInternalNoteLinks } from "@/lib/noteLinkSyntax";
 import { projectMarkdownForUser } from "@/lib/markdownUserContent";
-import { resolveAttachmentUrl } from "@/lib/api";
-import {
-  acquireAttachmentRenderUrl,
-  getAttachmentRenderSource,
-  getAttachmentAccessSnapshot,
-  invalidateOfflineAttachmentRenderUrl,
-  subscribeAttachmentAccess,
-} from "@/lib/noteAttachmentAccessBridge";
+import { AttachmentNoteContext, useAttachmentImageRenderSource } from "@/hooks/useAttachmentImageRenderSource";
+import { useAttachmentVideoRenderSource } from "@/hooks/useAttachmentVideoRenderSource";
 import {
   MARKDOWN_SEGMENTED_PREVIEW_THRESHOLD,
   splitMarkdownPreview,
@@ -43,6 +38,7 @@ import VoiceTranscription from "@/components/VoiceTranscription";
 
 interface MarkdownPreviewProps {
   markdown: string;
+  noteId?: string;
   onInsertVoiceTranscript?: (text: string) => void;
   className?: string;
   compact?: boolean;
@@ -201,24 +197,11 @@ function PreviewIframe({ src, title }: { src?: string; title?: string }) {
 
 function PreviewImage({ src, alt }: { src?: string; alt?: string }) {
   const { t } = useTranslation();
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [viewer, setViewer] = useState<{ images: FullscreenImageItem[]; initialIndex: number } | null>(null);
-  useSyncExternalStore(
-    subscribeAttachmentAccess,
-    getAttachmentAccessSnapshot,
-    getAttachmentAccessSnapshot,
-  );
-  const renderSource = getAttachmentRenderSource(src);
-  const resolvedSrc = !src
-    ? ""
-    : src.startsWith("//")
-      ? src
-      : resolveAttachmentUrl(renderSource.persistentSrc);
-
-  useEffect(() => acquireAttachmentRenderUrl(resolvedSrc), [resolvedSrc]);
+  const imageRender = useAttachmentImageRenderSource(src);
+  const resolvedSrc = imageRender.renderSrc;
 
   useEffect(() => {
-    setFailedSrc(null);
     setViewer(null);
   }, [resolvedSrc]);
 
@@ -238,29 +221,23 @@ function PreviewImage({ src, alt }: { src?: string; alt?: string }) {
   };
 
   if (!src) return null;
-  if (failedSrc === resolvedSrc) {
+  if (imageRender.error) {
     return <span className="inline-flex items-center gap-2 rounded-lg bg-app-hover px-3 py-2 text-xs text-tx-tertiary">⚠ {t("markdown.preview.imageLoadFailed")} <button type="button" className="underline" onClick={() => { void downloadAttachment(src, alt || "photo"); }}>下载原件</button></span>;
   }
   return (
     <>
       <span className="relative my-4 inline-block max-w-full">
       <img
-        key={resolvedSrc}
-        src={resolvedSrc}
+        key={imageRender.renderKey}
+        src={resolvedSrc || undefined}
         alt={alt || ""}
         loading="lazy"
         className="block max-h-[520px] max-w-full cursor-pointer rounded-xl border border-app-border object-contain shadow-sm transition-opacity hover:opacity-90"
         onClick={(event) => openViewer(event.currentTarget)}
-        onLoad={() => setFailedSrc((current) => current === resolvedSrc ? null : current)}
-        onError={() => {
-          if (invalidateOfflineAttachmentRenderUrl(resolvedSrc)) {
-            setFailedSrc(null);
-            return;
-          }
-          setFailedSrc(resolvedSrc);
-        }}
+        onLoad={imageRender.onLoad}
+        onError={imageRender.onError}
       />
-      <MotionPhotoOverlay source={src} />
+      {!!resolvedSrc && <MotionPhotoOverlay source={src} />}
       </span>
       <FullscreenImageViewer
         open={!!viewer}
@@ -270,6 +247,14 @@ function PreviewImage({ src, alt }: { src?: string; alt?: string }) {
       />
     </>
   );
+}
+
+function PreviewRawVideo({ src, poster }: { src?: string; poster?: string }) {
+  const media = useAttachmentVideoRenderSource(src);
+  const cover = useAttachmentImageRenderSource(poster, { enabled: !!poster });
+  return <video key={media.renderKey} src={media.renderSrc || undefined}
+    poster={cover.renderSrc || undefined} controls playsInline preload="metadata"
+    className="my-4 max-h-[520px] w-full rounded-xl border border-app-border bg-black" />;
 }
 
 function PreviewMediaImage({ src, alt }: { src?: string; alt?: string }) {
@@ -352,7 +337,16 @@ function createComponents(
     h4: ({ node, children }) => <h4 {...headingAttrs(node)} className="mb-2 mt-4 text-lg font-semibold text-tx-primary">{children}</h4>,
     h5: ({ node, children }) => <h5 {...headingAttrs(node)} className="mb-1.5 mt-3 text-base font-semibold text-tx-primary">{children}</h5>,
     h6: ({ node, children }) => <h6 {...headingAttrs(node)} className="mb-1.5 mt-3 text-sm font-semibold text-tx-secondary">{children}</h6>,
-    p: ({ node, children }) => <p {...attrs(node)} className="my-3 leading-7 text-tx-primary">{children}</p>,
+    p: ({ node, children }) => {
+      const checked = getGfmTaskChecked(node);
+      const parts = checked === null ? null : React.Children.toArray(children);
+      // Isolate task text from the checkbox, including when the paragraph is flex.
+      return (
+        <p {...attrs(node)} className="my-3 leading-7 text-tx-primary">
+          {parts ? <>{parts[0]}<span className="nowen-task-item-text min-w-0 flex-1">{parts.slice(1)}</span></> : children}
+        </p>
+      );
+    },
     ul: ({ node, children, className }) => {
       const isTaskList = /(?:^|\s)contains-task-list(?:\s|$)/.test(className || "");
       return (
@@ -368,12 +362,17 @@ function createComponents(
         </ul>
       );
     },
-    ol: ({ node, children, className }) => <ol {...attrs(node)} className={cn("my-3 list-decimal space-y-1 pl-6 text-tx-primary", className)}>{children}</ol>,
+    // Markdown can contain independent ordered lists separated by attachments or paragraphs.
+    // react-markdown supplies the HTML start attribute for each list (e.g. 7. / 8. / 9.).
+    // Preserve it so the browser does not restart every list at 1.
+    ol: ({ node, children, className, start }) => <ol {...attrs(node)} start={start} className={cn("my-3 list-decimal space-y-1 pl-6 text-tx-primary", className)}>{children}</ol>,
     li: ({ node, children, className }) => {
       const isTask = /(?:^|\s)task-list-item(?:\s|$)/.test(className || "");
+      const checked = isTask ? getGfmTaskChecked(node) : null;
       return (
         <li
           {...attrs(node)}
+          data-checked={checked === null ? undefined : String(checked)}
           className={cn(
             "leading-7",
             isTask
@@ -382,7 +381,7 @@ function createComponents(
             className,
           )}
         >
-          {children}
+          {isTask ? wrapGfmTaskInlineContent(children) : children}
         </li>
       );
     },
@@ -391,7 +390,11 @@ function createComponents(
     a: (props) => <PreviewLink {...props} onInternalAnchorClick={onInternalAnchorClick} />,
     img: PreviewMediaImage,
     iframe: PreviewIframe,
-    video: ({ src, children, ...props }) => <video src={src} controls preload="metadata" className="my-4 max-h-[520px] w-full rounded-xl border border-app-border bg-black" {...props}>{children}</video>,
+    video: ({ src, poster, node }) => {
+      const sourceNode = node?.children?.find((child: import("hast").ElementContent) => child.type === "element" && child.tagName === "source");
+      const source = String(src || (sourceNode?.type === "element" ? sourceNode.properties?.src : "") || "");
+      return <PreviewRawVideo src={source} poster={typeof poster === "string" ? poster : undefined} />;
+    },
     audio: ({ src, node }) => {
       const sourceNode = node?.children?.find((child: import("hast").ElementContent) => child.type === "element" && child.tagName === "source");
       const source = String(src || (sourceNode?.type === "element" ? sourceNode.properties?.src : "") || "");
@@ -510,7 +513,7 @@ function MarkdownSegment({ segment, onTaskCheckboxChange, headingIds, headingPos
   );
 }
 
-export function MarkdownPreview({ markdown, className, compact, containerRef, onTaskCheckboxChange, onFormatCodeBlock, onInsertVoiceTranscript, onEditEncryptedBlock }: MarkdownPreviewProps) {
+export function MarkdownPreview({ markdown, noteId, className, compact, containerRef, onTaskCheckboxChange, onFormatCodeBlock, onInsertVoiceTranscript, onEditEncryptedBlock }: MarkdownPreviewProps) {
   const { t } = useTranslation();
   const rootRef = useRef<HTMLDivElement | null>(null);
   const renderedMarkdown = useMemo(() => preprocessInternalNoteLinks(preprocessMarkdownMath(preprocessMarkdownVideos(projectMarkdownForUser(markdown || "")
@@ -574,6 +577,7 @@ export function MarkdownPreview({ markdown, className, compact, containerRef, on
   }
 
   return (
+    <AttachmentNoteContext.Provider value={noteId || null}>
     <div
       ref={setContainerRef}
       className={cn(
@@ -604,5 +608,6 @@ export function MarkdownPreview({ markdown, className, compact, containerRef, on
         </ReactMarkdown>
       )}
     </div>
+    </AttachmentNoteContext.Provider>
   );
 }

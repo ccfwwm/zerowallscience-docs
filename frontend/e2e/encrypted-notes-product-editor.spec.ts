@@ -40,7 +40,7 @@ for (const format of ["Markdown", "富文本", "Markdown 协作"]) {
     expect(saved.content).toContain(before.trim()); expect(saved.content).toContain(after.trim());
     await page.getByRole("button", { name: "重新载入实际笔记", exact: true }).click();
     await expect(page.getByRole("status")).toHaveText("实际笔记已重载");
-    if (format.startsWith("Markdown")) await page.locator('[title="markdown.view.preview"]').filter({ visible: true }).first().click();
+    if (format.startsWith("Markdown")) await page.getByRole("button", { name: "预览", exact: true }).filter({ visible: true }).first().click();
     await page.getByRole("button", { name: "解锁加密内容", exact: true }).first().click();
     await dialog.getByLabel("密码", { exact: true }).fill(password);
     await dialog.getByLabel("密码", { exact: true }).press("Enter");
@@ -73,7 +73,7 @@ for (const format of ["Markdown", "富文本"]) {
     await expect(page.getByRole("status")).toHaveText("实际编辑器保存已确认");
     if (format === "Markdown") {
       // Edit from preview without switching to source or locating a ciphertext fence.
-      await page.locator('[title="markdown.view.preview"]').filter({ visible: true }).first().click();
+      await page.getByRole("button", { name: "预览", exact: true }).filter({ visible: true }).first().click();
       await expect(main).not.toBeVisible();
       await page.getByLabel("已锁定加密区域", { exact: true }).getByRole("button", { name: "解锁加密内容", exact: true }).click();
       const dialog = page.getByRole("dialog", { name: "局部加密区域", exact: true });
@@ -112,13 +112,47 @@ for (const format of ["Markdown", "富文本"]) {
     await page.getByRole("dialog", { name: "局部加密区域", exact: true }).getByRole("button", { name: "解锁", exact: true }).click();
     await expect(page.getByLabel("区域临时正文", { exact: true })).toHaveValue(plaintext);
     expect(await page.evaluate(() => window.productEditorDocument())).not.toContain(plaintext);
-    const edited = `${plaintext} edited`;
+    let edited = `${plaintext} edited`;
+    let releaseSave: (() => void) | undefined;
+    let delayedVersion: Promise<number> | undefined;
+    if (format === "富文本") {
+      // Hold an older successful ACK while another encrypted edit is made locally.
+      // The fixture must honor the same save-generation contract as EditorPane.
+      const held = new Promise<void>(resolve => { releaseSave = resolve; });
+      let resolveVersion!: (version: number) => void;
+      delayedVersion = new Promise<number>(resolve => { resolveVersion = resolve; });
+      await page.route("**/api/notes/*", async route => {
+        if (route.request().method() !== "PUT") return route.continue();
+        const response = await route.fetch();
+        resolveVersion((await response.json()).version);
+        await held;
+        await route.fulfill({response});
+      }, {times:1});
+    }
     await page.getByLabel("区域临时正文", { exact: true }).fill(edited);
     expect(await page.evaluate(() => window.productEditorDocument())).not.toContain(plaintext);
     await page.getByRole("button", { name: "保存", exact: true }).click();
     await expect(page.getByRole("dialog")).toHaveCount(0);
+    if (delayedVersion) {
+      const version = await delayedVersion;
+      await page.getByRole("button", { name: "解锁加密内容", exact: true }).first().click();
+      await page.getByLabel("密码", { exact: true }).fill(password);
+      await page.getByRole("dialog", { name: "局部加密区域", exact: true }).getByRole("button", { name: "解锁", exact: true }).click();
+      await expect(page.getByLabel("区域临时正文", { exact: true })).toHaveValue(edited);
+      edited += " while ACK pending";
+      await page.getByLabel("区域临时正文", { exact: true }).fill(edited);
+      await page.getByRole("button", { name: "保存", exact: true }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      releaseSave!();
+      await expect.poll(() => page.evaluate(() => window.productEditorNoteVersion())).toBeGreaterThanOrEqual(version);
+    }
+    const expectedContent = await page.evaluate(() => window.productEditorDocument());
     await page.getByRole("button", { name: "手动保存编辑器", exact: true }).click();
     await expect(page.getByRole("status")).toHaveText("实际编辑器保存已确认");
+    const id = await page.evaluate(() => window.productEditorNoteId());
+    await expect.poll(async () => (await (await page.request.get(`http://127.0.0.1:5177/api/notes/${id}`)).json()).content).toBe(expectedContent);
+    await page.getByRole("button", { name: "重新载入实际笔记", exact: true }).click();
+    await expect(page.getByRole("status")).toHaveText("实际笔记已重载");
     await page.getByRole("button", { name: "解锁加密内容", exact: true }).first().click();
     await page.getByLabel("密码", { exact: true }).fill(password);
     await page.getByRole("dialog", { name: "局部加密区域", exact: true }).getByRole("button", { name: "解锁", exact: true }).click();

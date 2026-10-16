@@ -13,6 +13,7 @@ import {
   createPublicationAttachmentScope,
 } from "../lib/attachment-signed-url.js";
 import { resolvePublicOrigin } from "../lib/shareUrlRewrite.js";
+import { extractAttachmentIdsFromContent } from "../lib/attachmentRefs.js";
 import { logAudit } from "../services/audit.js";
 import { allowAnonymousAction, checkCredentialAttempt, getClientIp, hashClientIp, recordCredentialFailure, recordCredentialSuccess } from "../lib/share-credential-rate-limit.js";
 import {
@@ -170,16 +171,26 @@ function noteBelongsToPublication(publicationId: string, noteId: string): boolea
   return !!row;
 }
 
-function attachmentUrlsForNote(c: any, publication: PublicationRow, noteId: string): Record<string, string> {
+function attachmentUrlsForNote(c: any, publication: PublicationRow, noteId: string, content = ""): Record<string, string> {
   const rows = getDb()
     .prepare("SELECT id FROM attachments WHERE noteId = ? ORDER BY id ASC")
     .all(noteId) as Array<{ id: string }>;
   const origin = (resolvePublicOrigin((name) => c.req.header(name)) || "").replace(/\/+$/, "");
-  const scope = createPublicationAttachmentScope(publication.id, noteId, publication.allowDownload !== 0);
   const urls: Record<string, string> = {};
-  for (const row of rows) {
-    const path = `/api/attachments/${row.id}`;
-    urls[row.id] = createAttachmentSignedUrl(origin ? `${origin}${path}` : path, row.id, scope);
+  const sources = new Map(rows.map((row) => [row.id, noteId]));
+  // 正文可以复用同一发布目录内的图片；签名必须绑定附件真正所属的公开笔记。
+  for (const id of extractAttachmentIdsFromContent(content)) {
+    if (sources.has(id)) continue;
+    const attachment = getDb().prepare("SELECT noteId FROM attachments WHERE id = ?")
+      .get(id) as { noteId: string } | undefined;
+    if (attachment?.noteId && noteBelongsToPublication(publication.id, attachment.noteId)) {
+      sources.set(id, attachment.noteId);
+    }
+  }
+  for (const [id, sourceNoteId] of sources) {
+    const scope = createPublicationAttachmentScope(publication.id, sourceNoteId, publication.allowDownload !== 0);
+    const path = `/api/attachments/${id}`;
+    urls[id] = createAttachmentSignedUrl(origin ? `${origin}${path}` : path, id, scope);
   }
   return urls;
 }
@@ -188,7 +199,18 @@ function rewriteAttachmentUrls(content: string, urls: Record<string, string>): s
   if (!content) return content;
   return content.replace(
     /(?:https?:\/\/[^\s"'<>]+)?\/api\/attachments\/([0-9a-fA-F-]{36})(?:\?[^\s"'<>)]*)?/g,
-    (match, attachmentId: string) => urls[attachmentId] || match,
+    (match, attachmentId: string) => {
+      const signed = urls[attachmentId.toLowerCase()];
+      if (!signed) return match;
+      const original = new URL(match, "http://localhost");
+      const resolved = new URL(signed, "http://localhost");
+      original.searchParams.forEach((value, key) => {
+        if (!["exp", "sig", "scope"].includes(key) && !resolved.searchParams.has(key)) {
+          resolved.searchParams.append(key, value);
+        }
+      });
+      return /^https?:/i.test(signed) ? resolved.toString() : `${resolved.pathname}${resolved.search}`;
+    },
   );
 }
 
@@ -374,7 +396,7 @@ sharedRouter.get("/notebook-public/:token/resources/:nodeId", (c) => {
   }
 
   if (resource.resourceType === "note") {
-    const attachmentUrls = attachmentUrlsForNote(c, p, resource.resourceId);
+    const attachmentUrls = attachmentUrlsForNote(c, p, resource.resourceId, resource.content || "");
     return c.json({
       ...resource,
       content: rewriteAttachmentUrls(resource.content || "", attachmentUrls),
@@ -411,7 +433,7 @@ sharedRouter.get("/notebook-public/:token/notes/:noteId", (c) => {
     SELECT id, notebookId, title, content, contentText, contentFormat, updatedAt, version
     FROM notes WHERE id = ?
   `).get(noteId) as any;
-  const attachmentUrls = attachmentUrlsForNote(c, p, noteId);
+  const attachmentUrls = attachmentUrlsForNote(c, p, noteId, note.content || "");
   return c.json({
     ...note,
     content: rewriteAttachmentUrls(note.content || "", attachmentUrls),

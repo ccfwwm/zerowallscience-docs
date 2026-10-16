@@ -11,13 +11,15 @@ import { ENCRYPTED_NOTE_FORMAT } from "../src/lib/encryptedNotes.js";
 import { encryptedNotesMigration } from "../src/db/encryptedNotesMigration.js";
 import { encryptedBlocksMigration } from "../src/db/encryptedBlocksMigration.js";
 import { encryptedNoteConversionMigration } from "../src/db/encryptedNoteConversionMigration.js";
-import { convertEncryptedNoteStorage, type EncryptedNoteConversionInput } from "../src/services/encryptedNoteConversion.js";
+import { convertEncryptedNoteStorage, encryptedHistorySourceDigest, isTextOnlySource, type EncryptedNoteConversionInput } from "../src/services/encryptedNoteConversion.js";
+import { parseEncryptedContentV2, parseEncryptedHistoryV2 } from "../src/lib/encryptedContentV2.js";
 import { inspectEncryptedNoteConversion } from "../src/services/encryptedNoteConversionPreflight.js";
 import { yJoin, yLeave, yDestroyDoc, yFlush } from "../src/services/yjs.js";
 import { applyMutation } from "../src/sync/apply.js";
 import { applyRemoteChanges } from "../src/sync/applyLocal.js";
 
 const vector = JSON.parse(fs.readFileSync(new URL("../../frontend/src/lib/encryptedNotes/__tests__/fixtures/envelope-v1.json", import.meta.url), "utf8"));
+const vectorV2 = JSON.parse(fs.readFileSync(new URL("../../frontend/src/lib/encryptedNotes/__tests__/fixtures/envelope-v2.json", import.meta.url), "utf8"));
 const sentinel = "conversionprivatesentinel";
 const owner = "conversion-owner";
 let app: Hono;
@@ -30,6 +32,35 @@ test.before(async () => {
   const { default: router } = await import("../src/routes/notes.js"); app = new Hono(); app.route("/notes", router);
 });
 test.after(() => closeDb());
+function v2Aad(envelope: any, purpose: string, context: Array<string | number> = []) {
+  return Buffer.from(JSON.stringify(["nowen-encrypted-content", 2, "AES-256-GCM", purpose, envelope.objectId, envelope.kind,
+    envelope.originalFormat, envelope.parentObjectId, envelope.documentSchemaVersion, envelope.keyEpoch, envelope.encryptionEpoch, ...context]));
+}
+function v2Seal(key: Buffer, body: unknown, auth: Buffer) {
+  const iv = randomBytes(12); const cipher = createCipheriv("aes-256-gcm", key, iv); cipher.setAAD(auth);
+  const bytes = Buffer.isBuffer(body) ? body : Buffer.from(JSON.stringify(body));
+  return { iv: iv.toString("base64"), ciphertext: Buffer.concat([cipher.update(bytes), cipher.final(), cipher.getAuthTag()]).toString("base64") };
+}
+function v2Open(key: Buffer, sealed: any, auth: Buffer) {
+  const bytes = Buffer.from(sealed.ciphertext, "base64"); const cipher = createDecipheriv("aes-256-gcm", key, Buffer.from(sealed.iv, "base64"));
+  cipher.setAAD(auth); cipher.setAuthTag(bytes.subarray(-16));
+  return JSON.parse(Buffer.concat([cipher.update(bytes.subarray(0, -16)), cipher.final()]).toString("utf8"));
+}
+function prepareV2(note: any) {
+  const root = randomBytes(32); const envelope = { ...structuredClone(vectorV2.envelope), objectId: randomUUID(), originalFormat: note.contentFormat };
+  envelope.wrappedKey = v2Seal(Buffer.from(vector.derivedKeyHex, "hex"), root, v2Aad(envelope, "root-key"));
+  envelope.payload = v2Seal(root, { documentSchemaVersion: 1, content: note.content, attachments: [] }, v2Aad(envelope, "document"));
+  const history = getDb().prepare("SELECT * FROM note_versions WHERE noteId = ? ORDER BY id").all(note.id) as any[];
+  const encryptedHistory = history.map((row) => {
+    const context = { version: 1, objectId: envelope.objectId, keyEpoch: envelope.keyEpoch, encryptionEpoch: envelope.encryptionEpoch,
+      historyId: row.id, sourceVersion: row.version, originalFormat: row.contentFormat };
+    const content = JSON.stringify({ ...context, payload: v2Seal(root, { document: { documentSchemaVersion: 1, content: row.content, attachments: [] }, changeSummary: row.changeSummary },
+      v2Aad(envelope, "history", [1, row.id, row.version, row.contentFormat])) });
+    return { id: row.id, sourceDigest: encryptedHistorySourceDigest(row), content };
+  });
+  const input: EncryptedNoteConversionInput = { noteId: note.id, userId: owner, version: note.version, sourceDigest: digest(note.content), content: JSON.stringify(envelope), encryptedHistory };
+  return { input, root, envelope, history };
+}
 const digest = (content: string) => createHash("sha256").update(content).digest("hex");
 function encrypt(content: string, format: string) {
   const envelope = structuredClone(vector.envelope); envelope.objectId = randomUUID(); envelope.originalFormat = format;
@@ -65,6 +96,128 @@ async function create(format = "markdown") {
 }
 const retainedTables = ["note_versions", "note_blocks_index", "note_block_documents", "note_block_records", "note_block_operations", "block_operations", "note_yupdates", "note_ysnapshots", "note_y_subdocuments", "note_y_subdocument_updates", "note_y_subdocument_manifests", "yjs_operation_receipts", "embedding_queue", "note_embeddings", "note_import_origins", "sync_outbox_legacy_unbound"];
 
+test("conversion refuses rich-text attributes the encrypted editor would drop and indirect HTML resources", () => {
+  const doc = (attrs: object) => JSON.stringify({ type: "doc", content: [{ type: "paragraph", attrs, content: [{ type: "text", text: "Private" }] }] });
+  assert.equal(isTextOnlySource(doc({ blockId: "stable", textAlign: null }), "tiptap-json"), true);
+  assert.equal(isTextOnlySource(doc({ textAlign: "center" }), "tiptap-json"), false);
+  assert.equal(isTextOnlySource(doc({ customStyle: "special" }), "tiptap-json"), false);
+  for (const content of ['<svg><image href="image.png"/></svg>', '<picture><source srcset="image.png"/></picture>', '<style>body{background:url(image.png)}</style>']) assert.equal(isTextOnlySource(content, "markdown"), false);
+});
+
+const sourceRequest = (id: string, userId = owner, extra: Record<string, string> = {}) => app.request(`/notes/${id}/encryption/source`, { headers: { "X-User-Id": userId, ...extra } });
+const conversionRequest = (input: EncryptedNoteConversionInput, extra: Record<string, unknown> = {}) => app.request(`/notes/${input.noteId}/encryption`, {
+  method: "POST", headers: { "X-User-Id": owner, "Content-Type": "application/json" }, body: JSON.stringify({ ...input, confirmExternalCopies: true, ...extra }),
+});
+
+test("product source is read-only, uncached, owner-only and unavailable to API tokens", async () => {
+  const { note } = await create(); const db = getDb();
+  const before = db.prepare("SELECT total_changes() AS n").get();
+  const response = await sourceRequest(note.id); assert.equal(response.status, 200);
+  const source = await response.json() as any;
+  assert.equal(source.canConvert, true, JSON.stringify(source.blockers));
+  assert.equal(source.note.content, note.content); assert.ok(Array.isArray(source.history));
+  assert.equal(response.headers.get("Cache-Control"), "no-store");
+  assert.deepEqual(db.prepare("SELECT total_changes() AS n").get(), before);
+  assert.equal((await sourceRequest(note.id, "")).status, 403);
+  assert.equal((await sourceRequest(note.id, "not-owner")).status, 403);
+  assert.equal((await sourceRequest(note.id, owner, { "X-Auth-Mode": "api-token" })).status, 403);
+});
+
+for (const format of ["markdown", "tiptap-json"]) test(`conversion preserves automatic safety history IDs for ${format}`, async () => {
+  const { note } = await create(format); const db = getDb();
+  const next = format === "markdown" ? "Short replacement" : JSON.stringify({ type: "doc", content: [] });
+  // Exercise the real destructive-overwrite trigger, which generates hex IDs.
+  db.prepare("UPDATE notes SET content = ?,contentText = '',version = version + 1 WHERE id = ?").run(next, note.id);
+  const safety = db.prepare("SELECT * FROM note_versions WHERE noteId = ? AND length(id) = 32").get(note.id) as any;
+  assert.ok(safety); assert.equal(safety.content, note.content);
+  const source = await (await sourceRequest(note.id)).json() as any;
+  assert.equal(source.canConvert, true, JSON.stringify(source.blockers));
+  const prepared = prepareV2(source.note);
+  assert.equal((await conversionRequest(prepared.input)).status, 200);
+  const stored = db.prepare("SELECT * FROM note_versions WHERE id = ?").get(safety.id) as any;
+  assert.equal(stored.contentFormat, "encrypted-history-v2"); assert.equal(stored.createdAt, safety.createdAt);
+  const encrypted = JSON.parse(stored.content);
+  assert.equal(encrypted.historyId, safety.id);
+  const opened = v2Open(prepared.root, encrypted.payload, v2Aad(prepared.envelope, "history", [1, safety.id, safety.version, format]));
+  assert.equal(opened.document.content, safety.content); assert.equal(opened.changeSummary, safety.changeSummary);
+});
+
+test("conversion preserves legacy empty rich-text histories without changing their original bytes", async () => {
+  const { note } = await create("tiptap-json"); const db = getDb();
+  const ids = [randomUUID(), randomUUID()];
+  for (const [index, content] of ["{}", ""].entries()) db.prepare("INSERT INTO note_versions (id,noteId,userId,content,contentText,contentFormat,version) VALUES (?,?,?,?,'','tiptap-json',1)").run(ids[index], note.id, owner, content);
+  const source = await (await sourceRequest(note.id)).json() as any;
+  assert.equal(source.canConvert, true, JSON.stringify(source.blockers));
+  const prepared = prepareV2(source.note);
+  assert.equal((await conversionRequest(prepared.input)).status, 200);
+  for (const row of prepared.history) {
+    const stored = db.prepare("SELECT content FROM note_versions WHERE id = ?").get(row.id) as any;
+    const encrypted = JSON.parse(stored.content);
+    assert.equal(v2Open(prepared.root, encrypted.payload, v2Aad(prepared.envelope, "history", [1, row.id, row.version, row.contentFormat])).document.content, row.content);
+  }
+});
+
+for (const format of ["markdown", "tiptap-json"]) test(`product conversion preserves ${format} body/history and supports idempotent recovery and encrypted saves`, async () => {
+  const { note } = await create(format); const db = getDb();
+  const prepared = prepareV2(note);
+  const response = await conversionRequest(prepared.input);
+  assert.equal(response.status, 200, await response.clone().text());
+  const result = await response.json() as any; assert.equal(result.version, note.version + 1);
+  const readback = await (await sourceRequest(note.id)).json() as any;
+  assert.equal(readback.note.contentFormat, "encrypted-note-v2"); assert.equal(readback.note.contentText, "");
+  assert.equal(readback.history.length, prepared.history.length + 1);
+  assert.equal(v2Open(prepared.root, JSON.parse(readback.note.content).payload, v2Aad(prepared.envelope, "document")).content, note.content);
+  assert.equal(JSON.stringify(readback).includes(sentinel), false);
+  const again = await conversionRequest(prepared.input); assert.equal(again.status, 200);
+  assert.equal((await again.json() as any).version, result.version);
+  assert.equal((db.prepare("SELECT version FROM notes WHERE id = ?").get(note.id) as any).version, result.version);
+  const next = { ...prepared.envelope, payload: v2Seal(prepared.root, { documentSchemaVersion: 1, content: format === "markdown" ? "Changed privately" : note.content, attachments: [] }, v2Aad(prepared.envelope, "document")) };
+  const saved = await app.request(`/notes/${note.id}`, { method: "PUT", headers: { "X-User-Id": owner, "Content-Type": "application/json" },
+    body: JSON.stringify({ version: result.version, contentFormat: "encrypted-note-v2", content: JSON.stringify(next), contentText: "" }) });
+  assert.equal(saved.status, 200, await saved.clone().text());
+  assert.equal((await saved.json() as any).content, JSON.stringify(next));
+  const downgrade = await app.request(`/notes/${note.id}`, { method: "PUT", headers: { "X-User-Id": owner, "Content-Type": "application/json" }, body: JSON.stringify({ content: sentinel, contentFormat: "markdown", version: result.version + 1 }) });
+  assert.equal(downgrade.status, 400);
+  assert.ok(!(db.prepare("SELECT content FROM notes WHERE id = ?").get(note.id) as any).content.includes(sentinel));
+});
+
+test("product conversion requires consent and complete ciphertext history, rejects stale sources without writes", async () => {
+  const { note } = await create(); const db = getDb();
+  db.prepare("INSERT INTO note_versions (id,noteId,userId,content,contentText,contentFormat,version) VALUES (?,?,?,?,'','markdown',1)").run(randomUUID(), note.id, owner, note.content);
+  const prepared = prepareV2(note);
+  const before = db.prepare("SELECT * FROM notes WHERE id = ?").get(note.id);
+  assert.equal((await conversionRequest(prepared.input, { confirmExternalCopies: false })).status, 400);
+  assert.equal((await conversionRequest(prepared.input, { discardHistory: true })).status, 400);
+  assert.equal((await conversionRequest(prepared.input, { sourceDigest: "0".repeat(64) })).status, 409);
+  assert.equal((await conversionRequest(prepared.input, { encryptedHistory: [] })).status, 409);
+  assert.deepEqual(db.prepare("SELECT * FROM notes WHERE id = ?").get(note.id), before);
+});
+
+test("product conversion blocks unsupported resources and busy collaboration without returning the source", async () => {
+  const { note } = await create(); const db = getDb();
+  db.prepare("UPDATE notes SET content = ? WHERE id = ?").run("![private](https://example.com/image.png)", note.id);
+  const source = await (await sourceRequest(note.id)).json() as any;
+  assert.equal(source.canConvert, false); assert.ok(source.blockers.includes("unsupported_format")); assert.equal(source.note, undefined);
+  const { note: collaborative } = await create();
+  yJoin(collaborative.id, owner);
+  try {
+    const report = await (await sourceRequest(collaborative.id)).json() as any;
+    assert.equal(report.canConvert, false); assert.ok(report.blockers.includes("active_collaboration"));
+  } finally { yLeave(collaborative.id); yDestroyDoc(collaborative.id); }
+});
+
+test("cancellation preserves plaintext and invalidates delayed conversion; committed encryption cannot be cancelled", async () => {
+  const { note } = await create(); const prepared = prepareV2(note);
+  const cancel = (id: string, version: number) => app.request(`/notes/${id}/encryption/cancel`, { method: "POST", headers: { "X-User-Id": owner, "Content-Type": "application/json" }, body: JSON.stringify({ version }) });
+  assert.equal((await cancel(note.id, note.version)).status, 200);
+  assert.equal((getDb().prepare("SELECT content FROM notes WHERE id = ?").get(note.id) as any).content, note.content);
+  assert.equal((await conversionRequest(prepared.input)).status, 409);
+  const { note: other } = await create(); const target = prepareV2(other);
+  assert.equal((await conversionRequest(target.input)).status, 200);
+  assert.equal((await cancel(other.id, other.version)).status, 409);
+  assert.equal((getDb().prepare("SELECT content FROM notes WHERE id = ?").get(other.id) as any).content, target.input.content);
+});
+
 function seedCopies(noteId: string) {
   const db = getDb();
   const sql = (query: string, ...params: any[]) => db.prepare(query).run(...params);
@@ -87,6 +240,81 @@ function snapshot(db = getDb()) {
   const tables = (db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all() as Array<{ name: string }>);
   return tables.map(({ name }) => [name, db.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all().map((row) => JSON.stringify(row)).sort()]);
 }
+
+for (const format of ["markdown", "tiptap-json"]) test(`v2 conversion preserves every ${format} history and encrypts its private change summary`, async () => {
+  const { note } = await create(format); const db = getDb();
+  db.prepare("INSERT INTO note_versions(id,noteId,userId,title,content,contentText,contentFormat,version,changeType,changeSummary,createdAt) VALUES (?,?,?,'Old title',?,?,?,?, 'manual',?,'2020-01-02 03:04:05')")
+    .run(randomUUID(), note.id, owner, note.content, sentinel, format, 4, sentinel + " history summary");
+  const prepared = prepareV2(note);
+  try {
+    const result = convertEncryptedNoteStorage(db, prepared.input);
+    assert.equal(result.historyPreserved, prepared.history.length);
+    const stored = db.prepare("SELECT * FROM notes WHERE id = ?").get(note.id) as any;
+    assert.equal(stored.contentFormat, "encrypted-note-v2"); assert.equal(stored.contentText, "");
+    assert.equal(v2Open(prepared.root, prepared.envelope.payload, v2Aad(prepared.envelope, "document")).content, note.content);
+    const versions = db.prepare("SELECT * FROM note_versions WHERE noteId = ?").all(note.id) as any[];
+    assert.equal(versions.length, prepared.history.length + 1);
+    for (const original of prepared.history) {
+      const history = versions.find((row) => row.id === original.id)!;
+      assert.equal(history.version, original.version); assert.equal(history.title, original.title); assert.equal(history.createdAt, original.createdAt);
+      assert.equal(history.changeType, original.changeType); assert.equal(history.changeSummary, null); assert.equal(history.contentText, "");
+      assert.equal(history.contentFormat, "encrypted-history-v2"); assert.ok(!history.content.includes(sentinel));
+      const body = v2Open(prepared.root, JSON.parse(history.content).payload, v2Aad(prepared.envelope, "history", [1, original.id, original.version, original.contentFormat]));
+      assert.equal(body.document.content, original.content); assert.equal(body.changeSummary, original.changeSummary);
+    }
+    assert.equal((db.prepare("SELECT count(*) count FROM encrypted_note_conversion_permits").get() as any).count, 0);
+  } finally { prepared.root.fill(0); }
+});
+
+test("history preservation rejects a changed, incomplete, duplicated, rebound or unsupported source without deleting anything", async () => {
+  const { note } = await create(); seedCopies(note.id); const prepared = prepareV2(note); const db = getDb(); const original = prepared.input.encryptedHistory![0];
+  const broken = JSON.parse(original.content); broken.objectId = randomUUID();
+  const wrongVersion = JSON.parse(original.content); wrongVersion.sourceVersion += 1;
+  const scenarios = [
+    { encryptedHistory: [] }, { encryptedHistory: [original, original] },
+    { encryptedHistory: [{ ...original, sourceDigest: digest("changed") }] },
+    { encryptedHistory: [{ ...original, content: JSON.stringify(broken) }] },
+    { encryptedHistory: [{ ...original, content: JSON.stringify(wrongVersion) }] },
+    { discardHistory: true }, { encryptedHistory: undefined },
+  ];
+  try {
+    for (const patch of scenarios) {
+      const before = snapshot(); assert.throws(() => convertEncryptedNoteStorage(db, { ...prepared.input, ...patch } as any)); assert.deepEqual(snapshot(), before);
+    }
+    db.prepare("UPDATE note_versions SET changeSummary = ? WHERE id = ?").run("new summary", original.id);
+    const before = snapshot(); assert.throws(() => convertEncryptedNoteStorage(db, prepared.input), { code: "VERSION_CONFLICT" }); assert.deepEqual(snapshot(), before);
+  } finally { prepared.root.fill(0); }
+});
+
+test("a newly appended history or a failure while restoring ciphertext rolls back the entire transition", async () => {
+  const { note } = await create(); seedCopies(note.id); const db = getDb(); const prepared = prepareV2(note);
+  try {
+    const historyId = randomUUID();
+    db.prepare("INSERT INTO note_versions(id,noteId,userId,content,contentFormat,version) VALUES (?,?,?,?,'markdown',9)").run(historyId, note.id, owner, "another version");
+    const changed = snapshot(); assert.throws(() => convertEncryptedNoteStorage(db, prepared.input), { code: "VERSION_CONFLICT" }); assert.deepEqual(snapshot(), changed);
+    db.prepare("DELETE FROM note_versions WHERE id = ?").run(historyId);
+    db.exec(`CREATE TRIGGER conversion_failure BEFORE INSERT ON note_versions WHEN NEW.noteId = '${note.id}' AND NEW.contentFormat = 'encrypted-history-v2' BEGIN SELECT RAISE(ABORT,'conversion_failure'); END`);
+    try { const before = snapshot(); assert.throws(() => convertEncryptedNoteStorage(db, prepared.input), /conversion_failure/); assert.deepEqual(snapshot(), before); }
+    finally { db.exec("DROP TRIGGER conversion_failure"); }
+  } finally { prepared.root.fill(0); }
+});
+
+test("v2 structural and persistent SQLite guards reject future schema, root changes and forged history mapping", async () => {
+  const { note } = await create(); seedCopies(note.id); const prepared = prepareV2(note); const db = getDb();
+  try {
+    for (const patch of [{ documentSchemaVersion: 2 }, { keyEpoch: 0 }, { version: 3 }, { parentObjectId: randomUUID() }, { unknown: true }]) assert.throws(() => parseEncryptedContentV2(JSON.stringify({ ...prepared.envelope, ...patch })));
+    const wrong = JSON.parse(prepared.input.encryptedHistory![0].content); wrong.historyId = randomUUID();
+    assert.throws(() => parseEncryptedHistoryV2(JSON.stringify(wrong), prepared.envelope, prepared.history[0].id, prepared.history[0].version, prepared.history[0].contentFormat));
+    convertEncryptedNoteStorage(db, prepared.input);
+    for (const patch of [{ encryptionEpoch: 3 }, { keyEpoch: 2 }, { objectId: randomUUID() }, { originalFormat: "tiptap-json" }, { documentSchemaVersion: 2 }]) {
+      const before = snapshot(); assert.throws(() => db.prepare("UPDATE notes SET content = ? WHERE id = ?").run(JSON.stringify({ ...prepared.envelope, ...patch }), note.id), /INVALID_ENCRYPTED_NOTE/); assert.deepEqual(snapshot(), before);
+    }
+    const missing = { ...prepared.envelope } as any; delete missing.originalFormat; missing.unknown = "markdown";
+    assert.throws(() => db.prepare("UPDATE notes SET content = ? WHERE id = ?").run(JSON.stringify(missing), note.id), /INVALID_ENCRYPTED_NOTE/);
+    assert.throws(() => db.prepare("UPDATE note_versions SET content = ? WHERE id = ?").run(JSON.stringify(wrong), prepared.history[0].id), /INVALID_ENCRYPTED_NOTE_HISTORY/);
+    assert.throws(() => db.prepare("UPDATE notes SET content = 'plaintext',contentFormat = 'markdown' WHERE id = ?").run(note.id), /INVALID_ENCRYPTED_NOTE/);
+  } finally { prepared.root.fill(0); }
+});
 
 for (const format of ["markdown", "tiptap-json"]) test(`conversion preserves authenticated ${format}, removes related payloads and keeps other notes intact`, async () => {
   const { note, input } = await create(format); const { note: other } = await create(); seedCopies(note.id); seedCopies(other.id);

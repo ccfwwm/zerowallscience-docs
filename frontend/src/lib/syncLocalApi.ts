@@ -1,5 +1,6 @@
 import { getBaseUrl } from "@/lib/api";
 import { fetchWithAuthRefresh, getAccessToken } from "@/lib/authSession";
+import { createHttpRequestError } from "./httpError";
 
 /**
  * Sync V2 本地管理 API 客户端（Phase 7）。
@@ -24,6 +25,7 @@ export const SYNC_CONFLICT_ENTITY_TYPES = [
   "task_reminder",
   "diary",
   "mindmap",
+  "attachment_organization",
 ] as const;
 
 export interface SyncProfileSummary {
@@ -52,6 +54,7 @@ export interface SyncDiagnostics {
   lastSyncAt: string | null;
   lastError: string | null;
   pendingMutations: number;
+  pendingAttachments?: number;
   conflictCount: number;
   pendingSample: Array<{
     scopeKey?: string;
@@ -154,12 +157,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (code === "SYNC_V2_DISABLED") throw new SyncV2DisabledError();
   }
   if (!response.ok) {
-    let message = `HTTP ${response.status}`;
-    try {
-      const data = await response.json() as { error?: unknown };
-      if (data?.error) message = String(data.error);
-    } catch { /* 保留默认信息 */ }
-    throw new Error(message);
+    const payload: unknown = await response.json().catch(() => ({}));
+    throw createHttpRequestError(response, payload, `HTTP ${response.status}`);
   }
   return await response.json() as T;
 }
@@ -302,6 +301,11 @@ export function disableSync(): Promise<{
   message: string;
 }> {
   return request("/settings/disable", { method: "POST" });
+}
+
+/** Only the Android Native adapter handles this local SQLite endpoint. */
+export function fetchNoteSyncReceipt(noteId: string): Promise<import("./mobileNoteSyncReceipt").NativeNoteSyncReceipt> {
+  return request(`/receipts/${encodeURIComponent(noteId)}`);
 }
 
 export function fetchSyncDiagnostics(): Promise<SyncDiagnostics> {

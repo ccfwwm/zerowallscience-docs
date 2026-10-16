@@ -1,3 +1,4 @@
+import type { AssetFilters, AssetTag, AssetSmartFolder, AssetOrganization, SimilarImageResult, FileRenameItem } from "@/types";
 import { getOfflineQueueStorageKey } from "./offlineScope";
 import { withConversionRequestLease } from "./encryptedNotes/conversionBarrier";
 import { ConversionCleanupError } from "./encryptedNotes/conversionCoordination";
@@ -58,7 +59,10 @@ import {
 } from "@/lib/serverUrl";
 import { withShareSessionHeader } from "@/lib/shareSession";
 import { clearFolderUnlockTokens, folderUnlockRequestHeaders } from "@/lib/knowledgeTreePassword";
+import { getServerTransportUrl, rememberServerInstanceId } from "./serverEndpointState";
 import { isRootDocumentNotebookId } from "@/lib/rootDocumentCreatePolicy";
+import { resolveUploadFetch, isNativeCapacitorUploadRuntime } from "@/lib/uploadRequest";
+import { fileUploadProgressFetch } from "@/lib/fileUploadProgress";
 import {
   registerAttachmentAccessUrls,
   resolveAttachmentAccessUrl,
@@ -75,6 +79,7 @@ import {
   storeAuthTokens,
 } from "@/lib/authSession";
 import { isMobileLocalMode, MobileLocalModeRemoteRequestError } from "@/lib/mobileLocalMode";
+import { createHttpRequestError, safeDiagnosticRequestTarget } from "./httpError";
 
 // 本模块所有显式携带 Authorization 的请求共享同一套 401 刷新与单飞锁；
 // 公共请求不带 Authorization，authSession 会原样透传。
@@ -116,6 +121,11 @@ const WORKSPACE_KEY = "nowen-current-workspace";
  */
 export function getCurrentWorkspace(): string {
   return localStorage.getItem(WORKSPACE_KEY) || "personal";
+}
+
+function attachmentFolderScopeQuery(): string {
+  const workspace = getCurrentWorkspace();
+  return workspace === "personal" ? "" : `?workspaceId=${encodeURIComponent(workspace)}`;
 }
 
 export function setCurrentWorkspace(workspaceId: string) {
@@ -568,7 +578,7 @@ export function resolveAttachmentUrl(src: string | null | undefined): string {
     return resolveAttachmentAccessUrl(src);
   }
 
-  const server = getServerUrl() || (typeof window !== "undefined" ? window.location.origin : "");
+  const server = getServerTransportUrl(getServerUrl()) || (typeof window !== "undefined" ? window.location.origin : "");
   const base = server.replace(/\/+$/, "");
 
   // 归一化：确保以 / 开头
@@ -594,8 +604,8 @@ function registerAttachmentAccessResponse(payload: AttachmentAccessResponse | nu
  * Capacitor WebView 内嵌静态服务、反代把 /api 也 fallback 到 index.html）
  * 时会抛出非常不友好的 `Unexpected token '<'`，让人看不到是哪条请求出了问题。
  *
- * 这里统一读 text → 再判断 content-type / 体内容首字符，失败时抛出包含
- * URL、status、content-type、body 前 200 字符的错，方便一眼定位环境问题。
+ * 这里统一读 text → 再判断 content-type / 体内容首字符。解析失败只输出
+ * 脱敏请求目标、status、content-type，绝不复制响应体或带签名参数的 URL。
  */
 async function safeJson<T>(res: Response, fullUrl: string): Promise<T> {
   const ct = res.headers.get("content-type") || "";
@@ -603,18 +613,19 @@ async function safeJson<T>(res: Response, fullUrl: string): Promise<T> {
   // 优先按 content-type 判断；但部分后端会返回 text/plain 的 JSON，所以
   // content-type 不像 json 时也尝试 parse，parse 失败再报错。
   const looksJson = /json/i.test(ct) || /^\s*[[{]/.test(text);
+  // Never echo a response body or signed URL into logs/diagnostic bundles.
+  const safeTarget = safeDiagnosticRequestTarget(fullUrl);
+  const safeContentType = ct.slice(0, 80);
   if (!looksJson) {
-    const snippet = text.slice(0, 200).replace(/\s+/g, " ").trim();
     throw new Error(
-      `Expected JSON from ${fullUrl} but got ${ct || "unknown"} (status=${res.status}). Body[0..200]: ${snippet}`,
+      `Expected JSON from ${safeTarget} but got ${safeContentType || "unknown"} (status=${res.status})`,
     );
   }
   try {
     return JSON.parse(text) as T;
-  } catch (e) {
-    const snippet = text.slice(0, 200).replace(/\s+/g, " ").trim();
+  } catch {
     throw new Error(
-      `Invalid JSON from ${fullUrl} (status=${res.status}, ct=${ct}). Body[0..200]: ${snippet}`,
+      `Invalid JSON from ${safeTarget} (status=${res.status}, ct=${safeContentType || "unknown"})`,
     );
   }
 }
@@ -625,7 +636,7 @@ function reconcileAcknowledgedDeletion(
   requestBody: BodyInit | null | undefined,
   responseData: unknown,
 ): void {
-  const data = responseData as { noteIds?: unknown; trashedNoteIds?: unknown } | null;
+  const data = responseData as { success?: unknown; noteIds?: unknown; trashedNoteIds?: unknown } | null;
 
   if (method === "PUT" && /^\/notes\/[^/]+$/.test(url) && typeof requestBody === "string") {
     try {
@@ -644,7 +655,7 @@ function reconcileAcknowledgedDeletion(
 
   if (method !== "DELETE") return;
 
-  if (/^\/notes\/[^/]+$/.test(url)) {
+  if (/^\/notes\/[^/]+(?:\/permanent)?$/.test(url) && data?.success === true) {
     discardNoteQueueItems([_extractNoteId(url)]);
     return;
   }
@@ -815,7 +826,10 @@ async function requestInternal<T>(url: string, options?: RequestOptions): Promis
   }
   // Android 原生壳里错误地址/弱网下 GET 体感很像"永远加载"；Web 端保持较长读超时。
   const TIMEOUT_MS =
-    method === "GET" || method === "HEAD"
+    // Read-only model calls need time to finish their bounded upstream request.
+    /^\/files\/ai\/(?:preview|search)(?:\?|$)/.test(url)
+      ? 60000
+      : method === "GET" || method === "HEAD"
       ? isNativeCapacitor()
         ? 20000
         : 60000
@@ -974,27 +988,25 @@ async function requestInternal<T>(url: string, options?: RequestOptions): Promis
       // 桌面端必须等主进程清除本地认证缓存后再刷新，避免旧 token 被重新注入形成循环。
       await broadcastLogout("session_revoked");
       window.location.reload();
-      throw new Error(errBody?.error || "未授权");
+      throw createHttpRequestError(res, errBody, "未授权");
     }
     if (res.status === 401) {
-      throw new Error(errBody?.error || "未授权");
+      throw createHttpRequestError(res, errBody, "未授权");
     }
     // 403 非会话吊销 → 走下方通用错误路径
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    const error = new Error(err.error || `Request failed: ${res.status}`) as Error & {
+    const error = createHttpRequestError(
+      res, err, `Request failed: ${res.status}`,
+    ) as Error & {
       status?: number;
       code?: string;
+      requestId?: string;
+      retryable?: boolean;
       currentVersion?: number;
       manifest?: YjsSubdocumentManifest;
     };
-    error.status = res.status;
-    if (err && typeof err === "object") {
-      if (typeof err.code === "string") error.code = err.code;
-      if (typeof err.currentVersion === "number") error.currentVersion = err.currentVersion;
-      if (err.manifest && typeof err.manifest === "object") error.manifest = err.manifest;
-    }
 
     // ─── 弱网/服务端不稳定状态码入队离线重试 ──────────────
     // 覆盖：5xx（服务端故障）+ 408（请求超时）+ 425（Too Early）+ 429（限流）。
@@ -1263,6 +1275,16 @@ function mergeImportNoteResponses(results: ImportNotesResponse[]): ImportNotesRe
   };
 }
 
+async function requireTaskSeriesSupport(): Promise<void> {
+  let capabilities: {taskRecurrenceLifecycle?:string};
+  try { capabilities = await request("/tasks/recurrence/capabilities"); }
+  catch (error) {
+    if ((error as {status?:number})?.status !== 404) throw error;
+    throw Object.assign(new Error("TASK_RECURRENCE_UNSUPPORTED"),{code:"TASK_RECURRENCE_UNSUPPORTED"});
+  }
+  if (capabilities.taskRecurrenceLifecycle !== "v1") throw Object.assign(new Error("TASK_RECURRENCE_UNSUPPORTED"),{code:"TASK_RECURRENCE_UNSUPPORTED"});
+}
+
 export const api = {
   trash: {
     list: (workspaceId: string) => request<{ items: import("@/features/trash/trashTypes").TrashItem[] }>(`/trash?workspaceId=${encodeURIComponent(workspaceId)}`),
@@ -1274,6 +1296,10 @@ export const api = {
   getSiteSettingsPublic: async (): Promise<{
     site_title: string;
     site_favicon: string;
+    site_share_footer_text?: string;
+    site_share_page_width?: "standard" | "wide" | "full";
+    site_share_banner_enabled?: boolean | string;
+    site_share_banner_image?: string;
     site_icp_beian?: string;
     site_public_web_origin?: string;
     site_public_web_origin_source?: string;
@@ -1289,6 +1315,10 @@ export const api = {
       return {
         site_title: "ZeroWall Science",
         site_favicon: "",
+        site_share_footer_text: "",
+        site_share_page_width: "standard",
+        site_share_banner_enabled: "false",
+        site_share_banner_image: "",
         site_icp_beian: "",
         site_public_web_origin: "",
         site_public_web_origin_source: "current",
@@ -1330,10 +1360,17 @@ export const api = {
      * 不了原生 plugin 不兼容。Web / Electron 无视此字段（它们走各自的升级通道）。
      */
     minClientVersion?: string;
+    serverInstanceId?: string;
   }> => {
+    const serverUrl = getServerUrl();
+    const configuredEndpoint = getServerTransportUrl(serverUrl) === serverUrl;
     const res = await fetch(`${getBaseUrl()}/version`);
     if (!res.ok) throw new Error(`版本信息获取失败: ${res.status}`);
-    return res.json();
+    const version = await res.json();
+    if (configuredEndpoint && typeof version?.serverInstanceId === "string") {
+      rememberServerInstanceId(serverUrl, version.serverInstanceId);
+    }
+    return version;
   },
 
   // 取 GitHub 仓库最新 release（由后端做代理 + 60s 缓存，失败降级）。
@@ -1696,7 +1733,8 @@ export const api = {
     }).catch(() => { /* 失败不写入本地 */ });
     return p;
   },
-  deleteNote: (id: string) => request(`/notes/${id}`, { method: "DELETE" }),
+  // Permanent deletion requires an explicit prior move to trash.
+  deleteNote: (id: string) => request(`/notes/${id}/permanent`, { method: "DELETE" }),
 
   // BACKLINKS-02: 获取笔记的反向链接（哪些笔记引用了当前笔记）
   getBacklinks: (noteId: string, limit = 50) =>
@@ -1852,6 +1890,7 @@ export const api = {
   getTasks: (filter?: TaskFilter, noteId?: string, projectId?: string) => {
     const params = new URLSearchParams();
     if (filter && filter !== "all") params.set("filter", filter);
+    params.set("timezone", Intl.DateTimeFormat().resolvedOptions().timeZone);
     if (noteId) params.set("noteId", noteId);
     if (projectId) params.set("projectId", projectId);
     const ws = getCurrentWorkspace();
@@ -1859,6 +1898,8 @@ export const api = {
     const qs = params.toString() ? `?${params.toString()}` : "";
     return request<Task[]>(`/tasks${qs}`);
   },
+  archiveTask: (id: string, archived = true) => request<{ success: boolean; affected: number }>(`/tasks/${id}/archive`, { method: "PATCH", body: JSON.stringify({ archived }) }),
+  saveTaskAsNote: (id: string, data: { requestId: string; notebookId: string; title: string; description: string }) => request<Note>(`/tasks/${id}/note`, { method: "POST", body: JSON.stringify(data) }),
   getTask: (id: string) => request<Task>(`/tasks/${id}`),
   createTask: (data: Partial<Task>) => {
     const ws = getCurrentWorkspace();
@@ -1878,8 +1919,16 @@ export const api = {
     return result;
   },
   aiBreakdownTask: (id: string, lang?: string) => request<{ subtasks: { title: string; priority: number; dueDate: string | null; reason: string }[] }>(`/tasks/${id}/ai-breakdown`, { method: "POST", body: JSON.stringify({ lang }) }),
-  deleteTask: async (id: string) => {
-    const result = await request(`/tasks/${id}`, { method: "DELETE" });
+  stopTaskRecurrence: async (id: string) => {
+    const result = await request<{ success: boolean; affected: number }>(`/tasks/${id}/recurrence/stop`, { method: "PATCH" });
+    dispatchTaskReminderScheduleChanged();
+    return result;
+  },
+  deleteTask: async (id: string, mode: "single" | "series" = "single") => {
+    if (mode === "series") {
+      await requireTaskSeriesSupport();
+    }
+    const result = await request(`/tasks/${id}${mode === "series" ? "?mode=series" : ""}`, { method: "DELETE" });
     dispatchTaskReminderScheduleChanged();
     return result;
   },
@@ -1985,7 +2034,8 @@ export const api = {
   getTaskStats: () => {
     const ws = getCurrentWorkspace();
     const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
-    return request<TaskStats>(`/tasks/stats/summary${qs}`);
+    const timezone = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    return request<TaskStats>(`/tasks/stats/summary${qs}${qs ? "&" : "?"}timezone=${timezone}`);
   },
 
   // Habits
@@ -2142,19 +2192,23 @@ export const api = {
 
   // Attachment folders
   attachmentFolders: {
-    list: () => request<{ folders: Array<{ id: string; name: string; parentId: string | null; fileCount: number; createdAt: string }> }>(`/attachment-folders`),
+    list: () => request<{ supported?: boolean; code?: string; folders: Array<{ id: string; name: string; parentId: string | null; fileCount: number; createdAt: string }> }>(`/attachment-folders${attachmentFolderScopeQuery()}`),
     create: (name: string, parentId?: string) =>
-      request<{ id: string; name: string; parentId: string | null; fileCount: number }>(`/attachment-folders`, {
+      request<{ id: string; name: string; parentId: string | null; fileCount: number }>(`/attachment-folders${attachmentFolderScopeQuery()}`, {
         method: "POST",
         body: JSON.stringify({ name, parentId }),
       }),
     rename: (id: string, name: string) =>
-      request<{ id: string; name: string; parentId: string | null }>(`/attachment-folders/${id}`, {
+      request<{ id: string; name: string; parentId: string | null }>(`/attachment-folders/${id}${attachmentFolderScopeQuery()}`, {
         method: "PATCH",
         body: JSON.stringify({ name }),
       }),
+    move: (id: string, parentId: string | null) =>
+      request<{ id: string; name: string; parentId: string | null }>(`/attachment-folders/${id}${attachmentFolderScopeQuery()}`, {
+        method: "PATCH", body: JSON.stringify({ parentId }),
+      }),
     remove: (id: string) =>
-      request<{ success: boolean }>(`/attachment-folders/${id}`, { method: "DELETE" }),
+      request<{ success: boolean }>(`/attachment-folders/${id}${attachmentFolderScopeQuery()}`, { method: "DELETE" }),
   },
 
   // Security
@@ -2370,8 +2424,8 @@ export const api = {
     return res.json() as Promise<{ downloadToken: string; filename: string; size: number }>;
   },
   /** 导出 Nowen 数据包（.nowen.zip） */
-  downloadNowenPackage: async (opts?: { notebookId?: string; includeSubNotebooks?: boolean; includeTrashed?: boolean }) => {
-    const ws = getCurrentWorkspace();
+  downloadNowenPackage: async (opts?: { workspaceId?: string; notebookId?: string; includeSubNotebooks?: boolean; includeTrashed?: boolean }) => {
+    const ws = opts?.workspaceId ?? getCurrentWorkspace();
     const params = new URLSearchParams();
     if (ws && ws !== "personal") params.set("workspaceId", ws);
     if (opts?.notebookId) params.set("notebookId", opts.notebookId);
@@ -2661,11 +2715,13 @@ export const api = {
     }
   },
   /** Nowen 数据包 dry-run 预检 */
-  dryRunNowenPackage: async (file: File) => {
+  dryRunNowenPackage: async (file: File, opts?: { workspaceId?: string }) => {
     const token = getToken();
     const form = new FormData();
     form.append("file", file);
-    const res = await fetch(`${getBaseUrl()}/export/import/nowen-package?dryRun=1`, {
+    const params = new URLSearchParams({ dryRun: "1" });
+    if (opts?.workspaceId) params.set("workspaceId", opts.workspaceId);
+    const res = await fetch(`${getBaseUrl()}/export/import/nowen-package?${params}`, {
       method: "POST",
       credentials: "include",
       headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -2676,11 +2732,12 @@ export const api = {
     return data;
   },
   /** Nowen 数据包正式导入 */
-  importNowenPackage: async (file: File, opts?: { importMode?: "new-root" | "into-target"; targetNotebookId?: string }) => {
+  importNowenPackage: async (file: File, opts?: { workspaceId?: string; importMode?: "new-root" | "into-target"; targetNotebookId?: string }) => {
     const token = getToken();
     const form = new FormData();
     form.append("file", file);
     const params = new URLSearchParams();
+    if (opts?.workspaceId) params.set("workspaceId", opts.workspaceId);
     if (opts?.importMode) params.set("importMode", opts.importMode);
     if (opts?.targetNotebookId) params.set("targetNotebookId", opts.targetNotebookId);
     const qs = params.toString() ? `?${params.toString()}` : "";
@@ -2702,6 +2759,10 @@ export const api = {
       site_title: string;
       site_docs_notebook_id?: string;
       site_favicon: string;
+      site_share_footer_text?: string;
+      site_share_page_width?: "standard" | "wide" | "full";
+      site_share_banner_enabled?: boolean | string;
+      site_share_banner_image?: string;
       site_icp_beian?: string;
       site_public_web_origin?: string;
       site_public_web_origin_source?: string;
@@ -2718,6 +2779,10 @@ export const api = {
     site_title?: string;
     site_docs_notebook_id?: string;
     site_favicon?: string;
+    site_share_footer_text?: string;
+    site_share_page_width?: "standard" | "wide" | "full";
+    site_share_banner_enabled?: boolean | string;
+    site_share_banner_image?: string;
     site_icp_beian?: string;
     site_public_web_origin?: string;
     site_file_public_origin?: string;
@@ -2733,6 +2798,10 @@ export const api = {
       site_title: string;
       site_docs_notebook_id?: string;
       site_favicon: string;
+      site_share_footer_text?: string;
+      site_share_page_width?: "standard" | "wide" | "full";
+      site_share_banner_enabled?: boolean | string;
+      site_share_banner_image?: string;
       site_icp_beian?: string;
       site_public_web_origin?: string;
       site_public_web_origin_source?: string;
@@ -3314,6 +3383,43 @@ export const api = {
   // note 兜底外键约束，用户看到的只是"未归档文件"。
   //
   files: {
+    tools: {
+      similar: (id: string, after?: string, signal?: AbortSignal) => {
+        const qs = new URLSearchParams();
+        const workspace = getCurrentWorkspace();
+        if (workspace && workspace !== "personal") qs.set("workspaceId", workspace);
+        if (after) qs.set("after", after);
+        return request<SimilarImageResult>(`/files/tools/similar/${encodeURIComponent(id)}?${qs}`, { signal }).then((payload) => {
+          registerAttachmentAccessResponse(payload); return payload;
+        });
+      },
+      batchRename: (items: FileRenameItem[]) => {
+        const workspace = getCurrentWorkspace();
+        return request<{ success: boolean; renamed: number }>(`/files/tools/batch-rename${workspace && workspace !== "personal" ? `?workspaceId=${encodeURIComponent(workspace)}` : ""}`, { method: "POST", body: JSON.stringify({ items }) });
+      },
+    },
+    organization: {
+      aiPreview: (ids: string[], lang: "zh-CN" | "en", signal?: AbortSignal) => request<import("./assetAI").AssetAIPreview>(fileAIPath("/preview"), {method:"POST",body:JSON.stringify({ids,lang,consent:true}),signal}),
+      aiConfirm: (requestId: string, items: import("./assetAI").AssetAISuggestion[]) => request<{updated:number;ids:string[];replayed:boolean}>(fileAIPath("/confirm"), {method:"POST",body:JSON.stringify({confirmed:true,requestId,items:items.map(item => ({...item,filename:undefined}))})}),
+      aiSearch: (query: string, after?: string, signal?: AbortSignal) => request<import("./assetAI").AssetAISearch>(fileAIPath("/search"), {method:"POST",body:JSON.stringify({query,after,consent:true}),signal}),
+      description: (id: string) => request<{description:string}>(fileAIPath(`/metadata/${encodeURIComponent(id)}`)),
+      list: (params: { q?: string; tagPage?: number; smartPage?: number } = {}) => request<AssetOrganization>(fileOrganizationPath("", params)),
+      get: (id: string) => request<{ tags: AssetTag[]; duplicates: Array<{id: string; filename: string}>; canManage: boolean }>(fileOrganizationPath(`/assets/${encodeURIComponent(id)}`)),
+      createTag: (name: string, color?: string) => request<{tag: AssetTag}>(fileOrganizationPath("/tags"), {method: "POST", body: JSON.stringify({name, color})}),
+      renameTag: (id: string, name: string, color?: string) => request<{success: boolean}>(fileOrganizationPath(`/tags/${encodeURIComponent(id)}`), {method: "PATCH", body: JSON.stringify({name, color})}),
+      deleteTag: (id: string) => request<{success: boolean}>(fileOrganizationPath(`/tags/${encodeURIComponent(id)}`), {method: "DELETE"}),
+      tagFiles: (ids: string[], tagIds: string[], operation: "add" | "remove") => request<{success: boolean; updated: number}>(fileOrganizationPath("/tag-files"), {method: "POST", body: JSON.stringify({ids, tagIds, operation})}),
+      saveSmartFolder: (name: string, filters: AssetFilters, id?: string) => request<{smartFolder: AssetSmartFolder}>(fileOrganizationPath(`/smart-folders${id ? `/${encodeURIComponent(id)}` : ""}`), {method: id ? "PATCH" : "POST", body: JSON.stringify({name, filters})}),
+      deleteSmartFolder: (id: string) => request<{success: boolean}>(fileOrganizationPath(`/smart-folders/${encodeURIComponent(id)}`), {method: "DELETE"}),
+    },
+    move: (ids: string[], folderId: string | null, expectedFolderIds?: Record<string, string | null>) =>
+      request<{ success: boolean; moved: number; folderId: string | null; folderName: string | null }>(
+        "/files/batch-move", { method: "POST", body: JSON.stringify({ ids, folderId, expectedFolderIds }) },
+      ),
+    setExternalAccess: (id: string, enabled: boolean) =>
+      request<{ success: boolean; externalAccessEnabled: boolean }>(
+        `/files/${id}/external-access`, { method: "PATCH", body: JSON.stringify({ enabled }) },
+      ),
     /** 分类聚合统计。侧栏/顶栏展示"X 张图片 / Y 个文件"用。
      *  Y4: 自动注入当前工作区 scope；personal 不带、workspace 带 ?workspaceId=。
      */
@@ -3331,7 +3437,12 @@ export const api = {
      *    可叠加 myUploadsRef=referenced/unreferenced 进一步拆分"已被笔记引用 / 还没引用"。
      */
     list: (params: {
+      workspaceId?: string | null;
       category?: FileCategory;
+      fileKind?: "document" | "video" | "audio" | "archive";
+      createdAfter?: string;
+      createdBefore?: string; recentDays?: number; minSize?: number; maxSize?: number; tagIds?: string[];
+      referenceState?: AssetFilters["referenceState"]; duplicateOnly?: boolean;
       filter?: FileFilter;
       myUploadsRef?: FileMyUploadsRef;
       mime?: string;
@@ -3351,6 +3462,12 @@ export const api = {
       // 调用方（FileManager）自己维护 "all" | FileCategory 的 UI 过滤，
       // 在传进来之前就会把 "all" 映射成 undefined，这里只需非空判断。
       if (params.category) qs.set("category", params.category);
+      if (params.fileKind) qs.set("fileKind", params.fileKind);
+      if (params.createdAfter) qs.set("createdAfter", params.createdAfter);
+      for (const key of ["createdBefore", "recentDays", "minSize", "maxSize", "referenceState", "duplicateOnly"] as const) {
+        if (params[key] !== undefined && params[key] !== "") qs.set(key, String(params[key]));
+      }
+      if (params.tagIds?.length) qs.set("tagIds", params.tagIds.join(","));
       if (params.filter) qs.set("filter", params.filter);
       // myUploadsRef 仅在 filter=myUploads 时才有意义；后端会忽略其他场景，
       // 但为了让 URL 干净，前端只在 filter 匹配时传。
@@ -3367,7 +3484,7 @@ export const api = {
       if (typeof params.page === "number") qs.set("page", String(params.page));
       if (typeof params.pageSize === "number") qs.set("pageSize", String(params.pageSize));
       // Y4: workspace scope
-      const ws = getCurrentWorkspace();
+      const ws = params.workspaceId === undefined ? getCurrentWorkspace() : params.workspaceId;
       if (ws && ws !== "personal") qs.set("workspaceId", ws);
       const s = qs.toString();
       return request<FileListResponse>(`/files${s ? `?${s}` : ""}`).then((payload) => {
@@ -3382,7 +3499,22 @@ export const api = {
       return payload;
     }),
 
-    /** 删除单个附件（含磁盘文件）。会做 ACL 校验，被别的笔记引用也一并断链。 */
+    trash: {
+      list: (page = 1) => {
+        const qs = new URLSearchParams({ page: String(page) });
+        const ws = getCurrentWorkspace();
+        if (ws && ws !== "personal") qs.set("workspaceId", ws);
+        return request<{ supported: boolean; entries: Array<{ id: string; filename: string; mimeType: string; size: number; trashedAt: string; originalFolderId: string | null }>; total: number }>(`/files/trash?${qs}`);
+      },
+      restore: (ids: string[]) => request<{ count: number; restored: Array<{ id: string; folderId: string | null; fallback: boolean }> }>("/files/trash/restore", { method: "POST", body: JSON.stringify({ ids }) }),
+      purge: (ids: string[]) => request<{ count: number; cleanupPending: string[] }>("/files/trash/purge", { method: "POST", body: JSON.stringify({ ids, confirmation: "PERMANENTLY_DELETE" }) }),
+    },
+
+    prepareInsert: (id: string, noteId: string) => request<FileItem>(`/files/${id}/prepare-insert`, {
+      method: "POST", body: JSON.stringify({ noteId }),
+    }).then((payload) => { registerAttachmentAccessResponse(payload); return payload; }),
+
+    /** Move an unused attachment to the recoverable recycle bin after ACL and reference checks. */
     remove: (id: string) =>
       request<{ success: boolean }>(`/files/${id}`, { method: "DELETE" }),
 
@@ -3422,23 +3554,27 @@ export const api = {
      * Y4: 自动把 workspaceId 作为 query 传给后端；后端会把 holder note 与
      *     attachments.workspaceId 一起落到对应 scope。
      */
-    upload: async (file: File, opts: { noteId?: string; notebookId?: string; folderId?: string } = {}): Promise<FileItem> => {
+    upload: async (file: File, opts: { noteId?: string; notebookId?: string; folderId?: string; signal?: AbortSignal; onProgress?: (loaded: number, total: number) => void } = {}): Promise<FileItem> => {
       const token = getToken();
       const form = new FormData();
       form.append("file", file);
+      form.append("originalFilename", file.name);
       if (opts.noteId) form.append("noteId", opts.noteId);
       if (opts.notebookId) form.append("notebookId", opts.notebookId);
       if (opts.folderId) form.append("folderId", opts.folderId);
       const ws = getCurrentWorkspace();
       const qs = ws && ws !== "personal" ? `?workspaceId=${encodeURIComponent(ws)}` : "";
-      const res = await fetch(`${getBaseUrl()}/files/upload${qs}`, {
+      const transport = opts.onProgress && !isNativeCapacitorUploadRuntime()
+        ? fileUploadProgressFetch(opts.onProgress, file.size) : resolveUploadFetch(form);
+      const res = await fetchWithAuthRefresh(`${getBaseUrl()}/files/upload${qs}`, {
         method: "POST",
         headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
         body: form,
-      });
+        signal: opts.signal,
+      }, getBaseUrl(), transport);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || `文件上传失败: ${res.status}`);
+        throw createHttpRequestError(res, err, `文件上传失败: ${res.status}`);
       }
       const payload = await res.json();
       registerAttachmentAccessResponse(payload);
@@ -4304,6 +4440,8 @@ export const api = {
         autoBackupIntervalHours: number;
         autoBackupMode?: "interval" | "daily";
         autoBackupDailyAt?: string;
+        autoBackupTimeZone?: string | null;
+        autoBackupServerTimeZone?: string;
         autoBackupKeepCount?: number;
         autoBackupEmailOnSuccess?: boolean;
         autoBackupEmailTo?: string;
@@ -4444,6 +4582,7 @@ export const api = {
       extra?: {
         mode?: "interval" | "daily";
         dailyAt?: string;
+        timeZone?: string;
         keepCount?: number;
         emailOnSuccess?: boolean;
         emailTo?: string;
@@ -4456,6 +4595,7 @@ export const api = {
         intervalHours: number;
         mode?: "interval" | "daily";
         dailyAt?: string;
+        timeZone?: string;
         keepCount?: number;
         emailOnSuccess?: boolean;
         emailTo?: string;
@@ -5269,4 +5409,17 @@ export async function fetchRegisterConfig(baseUrlOverride?: string): Promise<{ a
   if (res.status >= 500) throw new Error(`HTTP ${res.status}`);
   if (!res.ok) return { allowRegistration: true };
   return await res.json();
+}
+
+function fileOrganizationPath(path: string, params: Record<string, string | number | undefined> = {}): string {
+  const query = new URLSearchParams();
+  const workspace = getCurrentWorkspace();
+  if (workspace && workspace !== "personal") query.set("workspaceId", workspace);
+  for (const [key, value] of Object.entries(params)) if (value !== undefined) query.set(key, String(value));
+  return `/files/organization${path}${query.size ? `?${query}` : ""}`;
+}
+
+function fileAIPath(path: string): string {
+  if (isNativeCapacitor()) throw Object.assign(new Error("File AI is unavailable in Native local mode"), {code:"ASSET_AI_NATIVE_UNSUPPORTED"});
+  return fileOrganizationPath("").replace("/organization", `/ai${path}`);
 }

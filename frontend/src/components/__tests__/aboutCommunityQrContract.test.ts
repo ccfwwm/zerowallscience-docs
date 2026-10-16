@@ -7,15 +7,13 @@ function source(relativeUrl: string) {
 }
 
 describe("about Nowen 开源实验室公众号入口", () => {
-  it("展示二维码及双语文案", () => {
+  it("本站提供官方下载入口并保留上游双语资源", () => {
     const settings = source("../../components/SettingsModal.tsx");
     const zh = source("../../i18n/locales/zh-CN.json");
     const en = source("../../i18n/locales/en.json");
 
-    expect(settings).toContain('import communityQr from "@/assets/community/nowen-lab-wechat.jpg"');
-    expect(settings).toContain("src={communityQr}");
-    expect(settings).toContain("about.communityQrTitle");
-    expect(settings).toContain("about.communityQrDesc");
+    expect(settings).toContain('href="/#download"');
+    expect(settings).toContain("ZeroWall Science 桌面产品遵循自身许可证");
     expect(zh).toContain('"communityQrTitle": "Nowen 开源实验室"');
     expect(en).toContain('"communityQrTitle": "Nowen Open Source Lab"');
   });

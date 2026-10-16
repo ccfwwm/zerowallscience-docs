@@ -82,7 +82,7 @@ test("task breakdown uses the requesting user's AI configuration", async () => {
   }
 
   assert.deepEqual(requests, [
-    { url: "https://chat-a.example/v1/chat/completions", authorization: "Bearer chat-key-a", model: "chat-model-a" },
-    { url: "https://chat-b.example/v1/chat/completions", authorization: "Bearer chat-key-b", model: "chat-model-b" },
+    { url: "https://chat-a.example/v1/responses", authorization: "Bearer chat-key-a", model: "chat-model-a" },
+    { url: "https://chat-b.example/v1/responses", authorization: "Bearer chat-key-b", model: "chat-model-b" },
   ]);
 });

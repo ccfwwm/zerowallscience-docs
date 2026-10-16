@@ -1,9 +1,17 @@
+import { emojis } from "@tiptap/extension-emoji";
+import { getRichTextExtensions } from "@/lib/richTextExtensions";
+import { applyTiptapCjkTypography } from "@/lib/tiptapCjkTypography";
+import { EmojiSuggestionList } from "./EmojiSuggestionList";
+import RichTextBlockControls from "./RichTextBlockControls";
+import { getSlashEditorId } from "./extensions/SlashCommandExtension";
+import "./dragHandle.css";
 import React, { forwardRef, lazy, Suspense, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { Capacitor } from "@capacitor/core";
 import { Keyboard } from "@capacitor/keyboard";
 import { sanitizeForPaste } from "@/lib/sanitizeHtml";
+import { preparePastedImages, rescuePastedImages, type RescueStats } from "@/lib/pastedImages";
 import { createPortal } from "react-dom";
-import { useEditor, Editor, EditorContent, Extension, ReactNodeViewRenderer } from "@tiptap/react";
+import { useEditor, Editor, EditorContent, Extension, ReactNodeViewRenderer, ReactRenderer } from "@tiptap/react";
 import { Plugin, PluginKey } from "prosemirror-state";
 
 // 懒加载 docx 内联预览：office 解析器（fflate + 自研 OOXML parser）有几十 KB，
@@ -20,7 +28,8 @@ import { posToDOMRect, type Content } from "@tiptap/core";
 import { AnimatePresence, motion } from "framer-motion";import StarterKit from "@tiptap/starter-kit";
 import Placeholder from "@tiptap/extension-placeholder";
 import Image from "@tiptap/extension-image";
-import ResizableImageView from "./ResizableImageView";
+import { createResizableImageNodeView } from "./ResizableImageView";
+import { AttachmentNoteContext } from "@/hooks/useAttachmentImageRenderSource";
 import CollapsibleEditorToolbar, { MobileEditorToolbarSlot } from "./CollapsibleEditorToolbar";
 import ImageEditDialog from "@/components/image-editor/ImageEditDialog";
 import FullscreenImageViewer, { type FullscreenImageItem } from "@/components/FullscreenImageViewer";
@@ -318,193 +327,6 @@ if (!(ProseMirrorNode.prototype as any)[RESOLVE_PATCHED]) {
 // 这里在粘贴进入 PM DOMParser 之前，把顶层的 <br> 拆成段落边界、把 <div>
 // 统一升级为 <p>，让 PM 看到的是真正的多段落结构。
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// rescuePastedImages：从论坛 / 懒加载页面复制 HTML 时，<img src> 经常是
-// 1×1 占位图（如 Discuz 的 static/image/common/none.gif），真正的图片地址
-// 藏在 file / zoomfile / data-src / data-original / data-lazy-src 等自定义
-// 属性里。这里把这些属性值"救"回到 src，并尝试把相对路径补成绝对 URL，
-// 避免粘贴后图片完全消失或显示成 1×1 透明块。
-//
-// 选择第一个非空的"看起来像真正图片地址"的属性值；若 src 已经是绝对的
-// http(s)/data:/blob: URL 则保留不动（不覆盖用户原本就正常的图）。
-//
-// 返回值：{ total, rescued, failed }
-//   total   - 处理到的 <img> 总数
-//   rescued - 从 data-src / file / srcset 等候选属性救回真实地址的 <img> 数
-//   failed  - 仍然没有可用 src 的 <img>（通常是原网页图片还没加载完就被复制）
-// ---------------------------------------------------------------------------
-type RescueStats = { total: number; rescued: number; failed: number };
-function rescuePastedImages(root: Element): RescueStats {
-  const stats: RescueStats = { total: 0, rescued: 0, failed: 0 };
-  // 1) 先扫一遍找出本片段内"任意一个绝对 URL 的 origin"，作为相对路径的 base。
-  //    优先用 <a href>/<link href>/已经是绝对地址的 <img src>，因为 Discuz
-  //    复制过来的 HTML 往往带有指向源站的链接（如附件下载链接）。
-  let pasteBaseOrigin: string | null = null;
-  const pickOrigin = (raw: string | null) => {
-    if (pasteBaseOrigin || !raw) return;
-    if (!/^https?:\/\//i.test(raw)) return;
-    try {
-      pasteBaseOrigin = new URL(raw).origin;
-    } catch {
-      /* ignore malformed */
-    }
-  };
-  root.querySelectorAll("a[href]").forEach((a) => pickOrigin(a.getAttribute("href")));
-  root.querySelectorAll("img").forEach((img) => {
-    pickOrigin(img.getAttribute("src"));
-    pickOrigin(img.getAttribute("file"));
-    pickOrigin(img.getAttribute("zoomfile"));
-    pickOrigin(img.getAttribute("data-src"));
-    pickOrigin(img.getAttribute("data-original"));
-  });
-
-  // 2) 占位图特征：Discuz/typecho/常见 lazyload 库都用极小的 gif/png 占位，
-  //    或干脆 src 为空、为 about:blank。命中即视为"需要救援"。
-  const isPlaceholderSrc = (src: string | null): boolean => {
-    if (!src) return true;
-    const s = src.trim();
-    if (!s || s === "about:blank") return true;
-    // data:image/gif;base64,R0lGODlh...（1×1 透明 gif/png 占位）
-    if (/^data:image\/(gif|png);base64,/i.test(s) && s.length < 200) return true;
-    // Discuz 标准占位
-    if (/\/none\.gif(\?|$)/i.test(s)) return true;
-    if (/\/(blank|placeholder|spacer|grey|loading)\.(gif|png|svg)(\?|$)/i.test(s)) return true;
-    return false;
-  };
-
-  // 3) 把相对/协议相对路径补成绝对 URL（找不到 base 则保持原样，让浏览器自行决定）
-  const toAbsolute = (url: string): string => {
-    const u = url.trim();
-    if (!u) return u;
-    if (/^(https?:|data:|blob:)/i.test(u)) return u;
-    if (u.startsWith("//")) return `https:${u}`;
-    if (!pasteBaseOrigin) return u;
-    if (u.startsWith("/")) return `${pasteBaseOrigin}${u}`;
-    return `${pasteBaseOrigin}/${u.replace(/^\.?\//, "")}`;
-  };
-
-  // 从 srcset 字符串中挑一个 URL（优先最高分辨率）。
-  //   "url1 1x, url2 2x"  → url2
-  //   "url1 320w, url2 1280w" → url2
-  //   "url1"              → url1
-  const pickFromSrcset = (raw: string | null): string | null => {
-    if (!raw) return null;
-    const entries = raw
-      .split(",")
-      .map((e) => e.trim())
-      .filter(Boolean)
-      .map((e) => {
-        // 允许 URL 内含空格（罕见）；取最后一段做 descriptor
-        const m = e.match(/^(\S+)(?:\s+(\S+))?$/);
-        if (!m) return null;
-        const url = m[1];
-        const desc = (m[2] || "").toLowerCase();
-        let weight = 0;
-        if (desc.endsWith("w")) weight = parseFloat(desc);
-        else if (desc.endsWith("x")) weight = parseFloat(desc) * 1000; // 粗略统一量纲
-        else weight = 0;
-        return { url, weight };
-      })
-      .filter((x): x is { url: string; weight: number } => !!x);
-    if (entries.length === 0) return null;
-    entries.sort((a, b) => b.weight - a.weight);
-    return entries[0].url;
-  };
-
-  // 4) 救援每一个 <img>：按优先级挑一个有效的真实地址覆盖到 src
-  root.querySelectorAll("img").forEach((img) => {
-    stats.total += 1;
-    const currentSrc = img.getAttribute("src");
-    // src 已经是合法且非占位的远端/data URL → 不动
-    //   注意：file:// 不算合法（浏览器出于安全限制不会加载），
-    //   Word 复制过来的 <img src="file:///C:/Users/.../clip_image001.png"> 必须走救援流程。
-    if (currentSrc && /^(https?:|data:|blob:)/i.test(currentSrc) && !isPlaceholderSrc(currentSrc)) {
-      return;
-    }
-    // 候选属性顺序：Discuz 的 zoomfile（点击放大原图）> file > 通用 lazyload 属性
-    // 覆盖主流懒加载库与站点：lazysizes、lozad、jQuery.lazyload、微信公众号、
-    // CSDN、简书、掘金、知乎、博客园、Medium 等
-    const candidates = [
-      "zoomfile",
-      "file",
-      "data-src",
-      "data-original",
-      "data-lazy-src",
-      "data-actualsrc",
-      "data-echo",
-      "data-raw-src",
-      "data-original-src",
-      "data-src-large",
-      "data-src-hd",
-      "data-hires",
-      "data-full",
-      "data-url",
-      "data-href",
-    ];
-    let picked: string | null = null;
-    for (const attr of candidates) {
-      const v = img.getAttribute(attr);
-      if (v && v.trim()) {
-        picked = v.trim();
-        break;
-      }
-    }
-    // 从 data-srcset / srcset 挑最大尺寸
-    if (!picked) {
-      picked = pickFromSrcset(img.getAttribute("data-srcset"))
-        || pickFromSrcset(img.getAttribute("srcset"));
-    }
-    // 从父层 <picture> 的 <source srcset> 挑最大尺寸
-    if (!picked) {
-      const picture = img.closest("picture");
-      if (picture) {
-        const sources = Array.from(picture.querySelectorAll("source"));
-        for (const s of sources) {
-          const url = pickFromSrcset(s.getAttribute("srcset"))
-            || pickFromSrcset(s.getAttribute("data-srcset"));
-          if (url) {
-            picked = url;
-            break;
-          }
-        }
-      }
-    }
-    // 候选都没有，但当前 src 是相对路径（非占位）→ 也尝试补全
-    if (!picked && currentSrc && !isPlaceholderSrc(currentSrc)) {
-      picked = currentSrc;
-    }
-    if (!picked) {
-      // 救不回来，记一笔（常见来源：
-      //   a) 懒加载网页图片未加载完；
-      //   b) Word/WPS 复制而来 —— HTML 里 <img src="file:///..."> 浏览器无法加载）
-      // 从片段中移除该 <img>，避免最终笔记里出现破图图标。
-      stats.failed += 1;
-      img.remove();
-      return;
-    }
-    const abs = toAbsolute(picked);
-    if (abs && /^(https?:|data:|blob:)/i.test(abs)) {
-      img.setAttribute("src", abs);
-      // 顺手清掉 file:// 的 data-* 与 srcset，避免干扰下游
-      img.removeAttribute("srcset");
-      stats.rescued += 1;
-    } else {
-      stats.failed += 1;
-      img.remove();
-    }
-  });
-
-  // 5) Discuz 把 <img> 包在 <ignore_js_op> 里（一个 Discuz 自造标签，
-  //    PM schema 认不出会被丢，连带 <img> 一起丢）。这里把它替换为 <span>。
-  root.querySelectorAll("ignore_js_op").forEach((el) => {
-    const span = el.ownerDocument.createElement("span");
-    while (el.firstChild) span.appendChild(el.firstChild);
-    el.replaceWith(span);
-  });
-
-  return stats;
-}
 
 // ---------------------------------------------------------------------------
 // isWordLikeHtml：判断剪贴板 HTML 是否来自 Microsoft Word / WPS / Outlook
@@ -1073,6 +895,7 @@ interface FontSizePopoverProps {
   compact?: boolean;
 }
 function FontSizePopover({ editor, iconSize = 15, compact = false }: FontSizePopoverProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState("");
   const ref = useRef<HTMLDivElement | null>(null);
@@ -1140,7 +963,7 @@ function FontSizePopover({ editor, iconSize = 15, compact = false }: FontSizePop
         ref={btnRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title={`${currentSize ? `字号: ${currentSize}` : "字号"}`}
+        title={currentSize ? t("editorToolbar.fontSizeValue", { value: currentSize }) : t("editorToolbar.fontSize")}
         className={cn(
           "p-1.5 rounded-md transition-colors flex items-center gap-0.5",
           currentSize
@@ -1159,7 +982,7 @@ function FontSizePopover({ editor, iconSize = 15, compact = false }: FontSizePop
           data-popover=""
           onMouseDown={(e) => e.preventDefault()}
         >
-          <div className="text-[11px] text-tx-tertiary px-1 pb-1">预设</div>
+          <div className="text-[11px] text-tx-tertiary px-1 pb-1">{t("editorToolbar.presets")}</div>
           <div className="grid grid-cols-2 gap-1">
             {FONT_SIZE_PRESETS.map((p) => (
               <button
@@ -1177,12 +1000,12 @@ function FontSizePopover({ editor, iconSize = 15, compact = false }: FontSizePop
               </button>
             ))}
           </div>
-          <div className="text-[11px] text-tx-tertiary px-1 pt-2 pb-1">自定义 (8–96 px)</div>
+          <div className="text-[11px] text-tx-tertiary px-1 pt-2 pb-1">{t("editorToolbar.custom")}</div>
           <div className="flex gap-1">
             <input
               type="text"
               inputMode="numeric"
-              placeholder="如 18 或 18px"
+              placeholder={t("editorToolbar.sizePlaceholder")}
               value={custom}
               onChange={(e) => setCustom(e.target.value)}
               onKeyDown={(e) => {
@@ -1212,7 +1035,7 @@ function FontSizePopover({ editor, iconSize = 15, compact = false }: FontSizePop
             className="w-full px-2 py-1 text-xs rounded text-tx-secondary hover:bg-app-hover flex items-center gap-1"
           >
             <Eraser size={12} />
-            清除字号
+            {t("editorToolbar.clearSize")}
           </button>
         </div>,
         document.body,
@@ -1237,6 +1060,7 @@ interface LineHeightPopoverProps {
   compact?: boolean;
 }
 function LineHeightPopover({ editor, iconSize = 15, compact = false }: LineHeightPopoverProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
   const btnRef = useRef<HTMLButtonElement | null>(null);
@@ -1294,7 +1118,7 @@ function LineHeightPopover({ editor, iconSize = 15, compact = false }: LineHeigh
         ref={btnRef}
         type="button"
         onClick={() => setOpen((value) => !value)}
-        title={currentLineHeight ? `行距: ${currentLabel || currentLineHeight}` : "行距"}
+        title={currentLineHeight ? t("editorToolbar.lineHeightValue", { value: currentLabel || currentLineHeight }) : t("editorToolbar.lineHeight")}
         className={cn(
           "p-1.5 rounded-md transition-colors flex items-center gap-0.5",
           currentLineHeight
@@ -1313,7 +1137,7 @@ function LineHeightPopover({ editor, iconSize = 15, compact = false }: LineHeigh
           data-popover=""
           onMouseDown={(e) => e.preventDefault()}
         >
-          <div className="text-[11px] text-tx-tertiary px-1 pb-1">行距</div>
+          <div className="text-[11px] text-tx-tertiary px-1 pb-1">{t("editorToolbar.lineHeight")}</div>
           <div className="space-y-1">
             {LINE_HEIGHT_PRESETS.map((preset) => (
               <button
@@ -1337,7 +1161,7 @@ function LineHeightPopover({ editor, iconSize = 15, compact = false }: LineHeigh
             className="w-full px-2 py-1 text-xs rounded text-tx-secondary hover:bg-app-hover flex items-center gap-1"
           >
             <Eraser size={12} />
-            清除行距
+            {t("editorToolbar.clearLineHeight")}
           </button>
         </div>,
         document.body,
@@ -1358,6 +1182,7 @@ interface ColorPopoverProps {
   compact?: boolean;
 }
 function ColorPopover({ editor, iconSize = 15, compact = false }: ColorPopoverProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"fg" | "bg">("fg");
   const ref = useRef<HTMLDivElement | null>(null);
@@ -1420,7 +1245,7 @@ function ColorPopover({ editor, iconSize = 15, compact = false }: ColorPopoverPr
         ref={btnRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
-        title={isActive ? `颜色: ${fgColor || ""} ${bgColor ? "背景: " + bgColor : ""}`.trim() : "颜色"}
+        title={isActive ? t("editorToolbar.colorValue", { value: `${fgColor || ""} ${bgColor ? t("editorToolbar.bgColorValue", { value: bgColor }) : ""}`.trim() }) : t("editorToolbar.color")}
         className={cn(
           "p-1.5 rounded-md transition-colors flex items-center gap-0.5",
           isActive
@@ -1456,7 +1281,7 @@ function ColorPopover({ editor, iconSize = 15, compact = false }: ColorPopoverPr
                 tab === "fg" ? "bg-app-elevated shadow-sm" : "text-tx-tertiary hover:text-tx-primary",
               )}
             >
-              文字
+              {t("editorToolbar.textColor")}
             </button>
             <button
               type="button"
@@ -1466,7 +1291,7 @@ function ColorPopover({ editor, iconSize = 15, compact = false }: ColorPopoverPr
                 tab === "bg" ? "bg-app-elevated shadow-sm" : "text-tx-tertiary hover:text-tx-primary",
               )}
             >
-              背景
+              {t("editorToolbar.background")}
             </button>
           </div>
           {/* Swatches */}
@@ -1508,7 +1333,7 @@ function ColorPopover({ editor, iconSize = 15, compact = false }: ColorPopoverPr
               className="ml-auto px-2 py-1 text-xs rounded text-tx-secondary hover:bg-app-hover flex items-center gap-1"
             >
               <Eraser size={12} />
-              清除
+              {t("editorToolbar.clear")}
             </button>
           </div>
         </div>,
@@ -1647,7 +1472,14 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
     const next = getActiveListType(currentEditor);
     if (activeListTypeRef.current === next) return;
     activeListTypeRef.current = next;
-    setActiveListType(next);
+    // Tiptap fires create/transaction callbacks synchronously, including while
+    // React is committing editor NodeViews. Defer React state updates until the
+    // current commit finishes; only publish the newest selection and never update
+    // a destroyed editor's toolbar.
+    queueMicrotask(() => {
+      if (currentEditor?.isDestroyed || activeListTypeRef.current !== next) return;
+      setActiveListType(next);
+    });
   }, []);
   const [showAI, setShowAI] = useState(false);
   const [aiSelectedText, setAiSelectedText] = useState("");
@@ -1948,6 +1780,11 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
   const initialEditorContent = initialEditorContentRef.current.content;
 
   const editor: Editor | null = useEditor({
+    // ReactNodeViewRenderer creates React roots for images, code blocks and other rich nodes.
+    // Creating the ProseMirror view during React render can trigger Tiptap's flushSync
+    // warning. Initialize it after mount; EditorContent and all editor effects tolerate
+    // the initial null editor, while note text/loading stays independent of this work.
+    immediatelyRender: false,
     shouldRerenderOnTransaction: false,
     extensions: [
       keyboardExtension.current,
@@ -2016,7 +1853,7 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
           };
         },
         addNodeView() {
-          return ReactNodeViewRenderer(ResizableImageView);
+          return createResizableImageNodeView();
         },
       }).configure({
         // inline: true —— 允许图片作为 inline 节点出现在 paragraph / listItem
@@ -2108,6 +1945,62 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
       VideoExtension,
       VoiceMemo.extend({ addNodeView() { return ReactNodeViewRenderer(VoiceMemoBlock); } }),
       BlockEmbedExtension,
+      ...getRichTextExtensions({
+        suggestion: {
+          items: ({ query }: { query: string }) => {
+            const q = (query || "").toLowerCase().trim();
+            if (!q) {
+              // 空查询：返回一组常用 emoji 子集（覆盖表情/手势/自然/物品/符号等
+              // 多类别）。emojis 数据集共 1949 个，这里先给常用子集，继续输入
+              // 即可在全部 1949 个里按 name/shortcodes/tags 搜索。
+              const popular = new Set<string>([
+                // 表情
+                "grinning", "smile", "slightly_smiling_face", "laughing", "blush",
+                "wink", "heart_eyes", "kissing_heart", "yum", "thinking_face",
+                "sleepy", "tired_face", "cry", "sob", "angry", "rage", "scream",
+                "innocent", "stuck_out_tongue", "sunglasses", "smirk", "relieved",
+                "disappointed", "worried", "sweat_smile", "rofl", "joy",
+                "rolling_on_the_floor_laughing", "mask", "cool", "star_struck",
+                "partying_face", "exploding_head", "zany_face", "woozy_face",
+                // 手势 / 人
+                "wave", "raised_hand", "ok_hand", "thumbsup", "thumbsdown",
+                "punch", "fist", "v", "crossed_fingers", "pray", "hands", "clap",
+                "muscle", "point_up", "point_right", "open_hands", "raised_hands",
+                "facepalm", "handshake",
+                // 心 / 符号
+                "heart", "broken_heart", "two_hearts", "heartpulse",
+                "sparkling_heart", "gift", "balloon", "tada", "fire", "star",
+                "sparkles", "zap", "warning", "white_check_mark", "x",
+                "heavy_check_mark", "heavy_plus_sign", "arrow_right", "arrow_left",
+                "recycle", "lock", "key", "bell", "bulb", "eyes", "speaker",
+                "microphone", "music", "notes", "link", "paperclip", "envelope",
+                // 自然 / 食物
+                "sun", "moon", "cloud", "rain", "snowflake", "earth_africa",
+                "earth_americas", "pizza", "burger", "fries", "apple", "banana",
+                "grapes", "watermelon", "coffee", "tea", "beer", "wine", "cookie",
+                "candy", "cake",
+                // 物品 / 科技
+                "book", "books", "pen", "pencil", "computer", "keyboard", "phone",
+                "camera", "car", "airplane", "rocket", "wrench", "hammer", "gear",
+                "calendar", "alarm_clock", "100", "email", "iphone", "tv",
+              ]);
+              return emojis.filter((e) => popular.has(e.name));
+            }
+            return emojis
+              .filter((item) => {
+                return (
+                  (item.name && item.name.toLowerCase().includes(q)) ||
+                  (item.shortcodes &&
+                    item.shortcodes.some((s: string) => s.toLowerCase().includes(q))) ||
+                  (item.tags &&
+                    item.tags.some((t: string) => t.toLowerCase().includes(q)))
+                );
+              })
+              .slice(0, 200);
+          },
+          render: () => createEmojiSuggestionRenderer(),
+        },
+      }),
     ],
     content: initialEditorContent,
     editable,
@@ -2346,7 +2239,10 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
           // 先把旧式 <font color> 转为 span style，再进入统一 XSS 清洗，
           // 保留原始视觉颜色并由 TextStyleKit 承载。
           const rawHtml = event.clipboardData?.getData("text/html") || "";
-          const html = sanitizeForPaste(normalizeLegacyFontColors(rawHtml));
+          const rawRtf = event.clipboardData?.getData("text/rtf") || "";
+          const pastedHtmlIsWordSource = isWordLikeHtml(rawHtml);
+          const pastedImages = preparePastedImages(normalizeLegacyFontColors(rawHtml));
+          const html = pastedImages.html;
           const prepareRemoteImages = async (content: string, format: "html" | "markdown", scope: { id: string; revision: number }): Promise<string | null> => {
             const images = format === "html" ? extractRemoteImageUrls(content) : extractRemoteImageUrlsFromMarkdown(content);
             const mode = remoteImagePasteModeRef.current;
@@ -2436,7 +2332,7 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
           //   b) 若 html 为空：用 text/plain 按行拼成简化 HTML，再把 RTF 图片全部
           //                    追加到正文末尾；至少保证"文字 + 图片都不丢"。
           {
-            const rtfForImg = event.clipboardData?.getData("text/rtf") || "";
+            const rtfForImg = rawRtf;
             // 先做廉价探测：只数 \pngblip / \jpegblip 的出现次数，不做解码。
             // 这样能在阻塞主线程做重活之前，立刻决定是否需要弹 loading。
             const blipMatches = rtfForImg.length > 0
@@ -2677,7 +2573,7 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
             console.log("[paste-diag] PATH=html (normalize + parseSlice)");
             let htmlForParse = html;
             try {
-              const rtf = event.clipboardData?.getData("text/rtf") || "";
+              const rtf = rawRtf;
               if (rtf.length > 0 && /\\(pngblip|jpegblip)/.test(rtf)) {
                 const rtfImages = extractImagesFromRtf(rtf);
                 if (rtfImages.length > 0) {
@@ -2714,11 +2610,12 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
                 console.log("[paste-diag] PM slice image nodes=", imgCountInSlice);
               } catch {}
               view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView());
-              if (normalized.imageStats.failed > 0) {
-                const msgKey = normalized.isWordSource
+              const failedImages = normalized.imageStats.failed;
+              if (failedImages > 0) {
+                const msgKey = pastedHtmlIsWordSource || normalized.isWordSource
                   ? "tiptap.wordImagesNotPastable"
                   : "tiptap.imagesNotLoaded";
-                showPasteToast("error", t(msgKey, { count: normalized.imageStats.failed }), 6000);
+                showPasteToast("error", t(msgKey, { count: failedImages }), 6000);
               }
             };
 
@@ -3357,6 +3254,10 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
         pendingSaveAckRef.current = ack;
       },
       isReady: () => !!editor && !editor.isDestroyed,
+      applyCjkTypography: (action) => {
+        if (!editor || editor.isDestroyed || !editor.isEditable) return false;
+        return applyTiptapCjkTypography(editor, action);
+      },
       insertMarkdownAtCursor: (md: string) => {
         if (!editor || editor.isDestroyed) return false;
         try {
@@ -3523,7 +3424,8 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
     if (titleRef.current && !isTitleComposingRef.current) {
       titleRef.current.value = note.title;
     }
-  }, [note.id, note.content]);
+  }, [editor, note.id, note.content]);
+  // editor 首次就绪时也要登记笔记身份，避免首个本地 ACK 被误判为切换笔记。
   //   ^^^^^^^^^^^^^^^^^^^^^^
   //   依赖含 content 的完整语义（更新版）：
   //
@@ -4680,7 +4582,10 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
     });
   }, [editor, isGuest, captureEditorInsertAnchor, restoreEditorInsertAnchor, releaseEditorInsertAnchor]);
 
+  useEffect(() => { closeAttachmentLibrary(); }, [note.id, closeAttachmentLibrary]);
+
   const insertExistingAttachment = useCallback((item: FileItem) => {
+    if (!editor?.isEditable || noteRef.current.isTrashed) return;
     const anchor = attachmentLibraryAnchorRef.current;
     if (!editor || !restoreEditorInsertAnchor(anchor)) {
       closeAttachmentLibrary();
@@ -5082,13 +4987,8 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
 
     // 获取选区在屏幕上的位置
     const coords = editor.view.coordsAtPos(from);
-    const editorRect = editor.view.dom.getBoundingClientRect();
-    const panelWidth = Math.min(900, Math.max(0, window.innerWidth - 16));
-    const panelHeight = Math.min(760, Math.max(0, window.innerHeight - 16));
-    setAiPosition({
-      top: Math.max(8, Math.min(coords.top + 28, window.innerHeight - panelHeight - 8)),
-      left: Math.max(8, Math.min(coords.left, window.innerWidth - panelWidth - 8)),
-    });
+    // The shared assistant clamps the anchor to the visual viewport.
+    setAiPosition({ top: coords.top + 28, left: coords.left });
     setShowAI(true);
   }, [editor]);
 
@@ -5478,6 +5378,7 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
             toolbarShadow && "shadow-[0_2px_8px_-2px_rgba(0,0,0,0.08)] dark:shadow-[0_2px_8px_-2px_rgba(0,0,0,0.4)]",
           )}
         >
+        <ToolbarButton onClick={() => window.dispatchEvent(new CustomEvent("nowen:open-block-menu", { detail: { editorId: getSlashEditorId(editor) } }))} title={t("slash.blockMenu")}><MoreHorizontal size={iconSize} /></ToolbarButton>
         <ToolbarButton className="max-md:hidden" onClick={() => editor.chain().focus().undo().run()} disabled={!editor.can().undo()} title={t('tiptap.undo')}>
           <Undo size={iconSize} />
         </ToolbarButton>
@@ -5890,8 +5791,8 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
       )}
 
       {/* Tag Bar：访客模式下隐藏（TagInput 依赖 AppProvider + 登录态 API） */}
-      {!isGuest && !windowedSection && !compactMobileEditing && (
-        <div className="px-4 md:px-8 pb-1">
+      {!isGuest && !windowedSection && (
+        <div className={cn("px-4 md:px-8 pb-1", compactMobileEditing && "hidden focus-within:block")}>
           <TagInput
             noteId={note.id}
             noteTags={note.tags || []}
@@ -6691,10 +6592,14 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
           所有格式化命令。 */}
       <div
         ref={setScrollContainerRef}
+        data-note-reading-scroll="richtext"
         className={cn(scrollLayout.content, "px-4 md:px-8 pb-12")}
         style={{ paddingBottom: "calc(3rem + var(--keyboard-height, 0px) + var(--outline-scroll-reserve, 0px))" }}
       >
-        <EditorContent editor={editor} />
+        <AttachmentNoteContext.Provider value={isGuest ? null : note.id}>
+          <EditorContent editor={editor} />
+        </AttachmentNoteContext.Provider>
+        <RichTextBlockControls editor={editor} editable={editable} isMobile={isMobile} />
       <NoteLinkHoverPreview root={editor.view.dom} />
       </div>
 
@@ -6825,6 +6730,9 @@ const TiptapEditor = forwardRef<NoteEditorHandle, TiptapEditorProps>(function Ti
       />
 
       <AttachmentLibraryPicker
+        key={note.id}
+        noteId={note.id}
+        workspaceId={note.workspaceId}
         open={attachmentLibraryOpen}
         onClose={closeAttachmentLibrary}
         onSelect={insertExistingAttachment}
@@ -7174,6 +7082,57 @@ function parseContent(content: string): any {
     type: "doc",
     content: [{ type: "paragraph", content: [{ type: "text", text: content }] }],
   };
+}
+
+function createEmojiSuggestionRenderer() {
+  let component: ReactRenderer | null = null
+  let popup: HTMLDivElement | null = null
+  const close = () => {
+    popup?.remove()
+    component?.destroy()
+    popup = null
+    component = null
+  }
+
+  const updatePosition = (
+    clientRect: (() => DOMRect | null) | null | undefined
+  ) => {
+    if (!popup || !clientRect) return
+    const rect = clientRect()
+    if (!rect) return
+    popup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - popup.offsetWidth - 8))}px`
+    popup.style.top = `${Math.max(8, Math.min(rect.bottom + 6, window.innerHeight - popup.offsetHeight - 8))}px`
+  }
+
+  return {
+    onStart: (props: any) => {
+      component = new ReactRenderer(EmojiSuggestionList, {
+        props,
+        editor: props.editor,
+      })
+      popup = document.createElement('div')
+      popup.className = 'emoji-suggestion-popup'
+      popup.style.position = 'fixed'
+      popup.style.zIndex = '60'
+      popup.appendChild(component.element)
+      document.body.appendChild(popup)
+      updatePosition(props.clientRect)
+    },
+    onUpdate: (props: any) => {
+      component?.updateProps(props)
+      updatePosition(props.clientRect)
+    },
+    onKeyDown: (props: any) => {
+      if (props.event.key === 'Escape') {
+        close()
+        return true
+      }
+      return (component?.ref as any)?.onKeyDown(props) ?? false
+    },
+    onExit: () => {
+      close()
+    },
+  }
 }
 
 function serializeEditorContentForPersistence(editor: Editor, noteId: string): string | null {

@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { ImageIcon, Search, SmilePlus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "@/lib/toast";
@@ -21,14 +22,14 @@ interface NoteIconPickerModalProps {
   onSaved?: () => void;
 }
 
-function getCopy() {
-  const language = (localStorage.getItem("i18nextLng") || navigator.language || "").toLowerCase();
+function getCopy(language: string) {
+  language = language.toLowerCase();
   return language.startsWith("zh") ? {
     title: "设置笔记图标",
     subtitle: "选择 emoji，或粘贴一个自定义短图标。",
     common: "常用",
     allIcons: "全部图标",
-    searchPlaceholder: "搜索分类，如：工作、开发、旅行…",
+    searchPlaceholder: "搜索图标或分类，如：猫、文件夹、开发…",
     noIcons: "没有匹配的图标",
     custom: "自定义图标",
     importedImage: "从思源笔记导入的图片图标",
@@ -47,7 +48,7 @@ function getCopy() {
     subtitle: "Choose an emoji or paste a short custom icon.",
     common: "Common",
     allIcons: "All icons",
-    searchPlaceholder: "Search categories, e.g. work, dev, travel…",
+    searchPlaceholder: "Search icons or categories, e.g. cat, folder, dev…",
     noIcons: "No matching icons",
     custom: "Custom icon",
     importedImage: "Image icon imported from SiYuan",
@@ -70,7 +71,9 @@ export default function NoteIconPickerModal({
   onClose,
   onSaved,
 }: NoteIconPickerModalProps) {
-  const copy = useMemo(() => getCopy(), []);
+  const { i18n } = useTranslation();
+  const language = i18n.resolvedLanguage || i18n.language;
+  const copy = useMemo(() => getCopy(language), [language]);
   const inputRef = useRef<HTMLInputElement>(null);
   const iconScrollRef = useRef<HTMLDivElement>(null);
   const [iconQuery, setIconQuery] = useState("");

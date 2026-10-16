@@ -7,17 +7,15 @@ function source(relativeUrl: string) {
 }
 
 describe("about sponsor contract", () => {
-  it("offers WeChat and Alipay as explicit sponsor methods", () => {
+  it("保留 ZeroWall 文档品牌及上游许可归属", () => {
     const settings = source("../../components/SettingsModal.tsx");
     const zh = source("../../i18n/locales/zh-CN.json");
     const en = source("../../i18n/locales/en.json");
 
-    expect(settings).toContain('useState<"wechat" | "alipay">("wechat")');
-    expect(settings).toContain("about.sponsorWechat");
-    expect(settings).toContain("about.sponsorAlipay");
-    expect(settings).toContain('import wechatSponsorQr from "@/assets/sponsor/weixin.jpg"');
-    expect(settings).toContain('import alipaySponsorQr from "@/assets/sponsor/zhifubao.png"');
-    expect(settings).toContain('sponsorMethod === "wechat" ? wechatSponsorQr : alipaySponsorQr');
+    expect(settings).toContain('alt="ZeroWall Science"');
+    expect(settings).toContain("ZeroWall Science 文档中心");
+    expect(settings).toContain("GPL-3.0");
+    expect(settings).toContain('href="https://github.com/cropflre/nowen-note"');
     expect(settings).not.toContain('src="/weixin.jpg"');
     expect(settings).not.toContain('src="/zhifubao.png"');
     expect(zh).toContain('"sponsorAlipay": "支付宝"');

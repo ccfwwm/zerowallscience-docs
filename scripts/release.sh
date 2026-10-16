@@ -6,7 +6,7 @@
 #   1. clean the output directory selected for this run, preventing stale output
 #      from winning the legacy candidate-order lookup;
 #   2. stage new GitHub Releases as drafts;
-#   3. replace local Windows candidates with SignPath-signed CI artifacts;
+#   3. replace local Windows candidates with same-tag validated Windows CI artifacts;
 #   4. collect CI-only macOS artifacts into that draft without letting Actions publish;
 #   5. download and verify remote updater metadata/assets before publishing;
 #   6. normalize release-only native/Android toolchains to supported baselines.
@@ -192,7 +192,7 @@ ensure_desktop_platform_notes() {
   if printf '%s\n' "$body" | grep -Fq "$marker"; then return 0; fi
 
   local platform_notes
-  platform_notes=$'### 桌面端支持\n- Windows x64（SignPath 签名）\n- macOS Intel x64\n- macOS Apple Silicon arm64\n- Linux x64'
+  platform_notes=$'### 桌面端支持\n- Windows x64（GitHub 直接下载，安装包当前未提供代码签名）\n- macOS Intel x64\n- macOS Apple Silicon arm64\n- Linux x64'
   local updated_body="$platform_notes"
   if [ -n "$body" ]; then updated_body="${body}"$'\n\n'"${platform_notes}"; fi
 
@@ -242,7 +242,7 @@ wait_for_workflow_artifact() {
   return 1
 }
 
-collect_ci_signed_windows_assets() {
+collect_ci_direct_windows_assets() {
   local timeout_seconds="${NOWEN_RELEASE_CI_ARTIFACT_TIMEOUT_SECONDS:-10800}"
   local deadline=$((SECONDS + timeout_seconds))
   local tag_sha run_id artifact_id temp_dir
@@ -250,21 +250,21 @@ collect_ci_signed_windows_assets() {
   [ -n "$tag_sha" ] || { echo "[release-guard] cannot resolve ${TAG} commit" >&2; return 1; }
 
   echo
-  echo "==== 汇总 SignPath 已签名 Windows 构建产物 ===="
+  echo "==== 汇总同 Tag 的 Windows CI 构建产物 ===="
   if ! run_id="$(wait_for_tag_workflow_run "$tag_sha" "$deadline")"; then
     echo "[release-guard] tag workflow did not appear within ${timeout_seconds}s" >&2
     return 1
   fi
   echo "[release-guard] workflow run: ${run_id}"
 
-  if ! artifact_id="$(wait_for_workflow_artifact "$run_id" "nowen-note-win-signed" "$deadline")"; then
-    echo "[release-guard] timed out or failed waiting for SignPath-signed Windows artifact" >&2
+  if ! artifact_id="$(wait_for_workflow_artifact "$run_id" "nowen-note-win-direct" "$deadline")"; then
+    echo "[release-guard] timed out or failed waiting for validated direct Windows CI artifact" >&2
     return 1
   fi
   [ -n "$artifact_id" ] || return 1
 
-  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nowen-release-win-signed.XXXXXX")"
-  if ! gh run download "$run_id" --repo "$GITHUB_REPO_SLUG" --name nowen-note-win-signed --dir "$temp_dir"; then
+  temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nowen-release-win-direct.XXXXXX")"
+  if ! gh run download "$run_id" --repo "$GITHUB_REPO_SLUG" --name nowen-note-win-direct --dir "$temp_dir"; then
     rm -rf -- "$temp_dir"
     return 1
   fi
@@ -291,7 +291,7 @@ collect_ci_signed_windows_assets() {
     \) -print | sort
   )
 
-  echo "[release-guard] replacing local Windows candidates with ${#windows_assets[@]} SignPath-verified assets"
+  echo "[release-guard] replacing local Windows candidates with ${#windows_assets[@]} same-tag verified Windows assets"
   gh release upload "$TAG" --repo "$GITHUB_REPO_SLUG" --clobber "${windows_assets[@]}"
   rm -rf -- "$temp_dir"
 }
@@ -350,17 +350,9 @@ collect_ci_mac_assets() {
   gh release upload "$TAG" --repo "$GITHUB_REPO_SLUG" --clobber "${mac_assets[@]}"
 }
 
-# Any Windows EXE initially uploaded by the legacy local publisher is only a Draft candidate.
-# Before publication it must be replaced by the artifact produced by the same tag workflow after
-# SignPath release-signing, Authenticode/CN verification, blockmap rebuild and metadata refresh.
-if release_contains_windows_candidates; then
-  if ! collect_ci_signed_windows_assets; then
-    echo "[release-guard] failed to collect SignPath-signed Windows assets; keeping ${TAG} as draft" >&2
-    gh release edit "$TAG" --repo "$GITHUB_REPO_SLUG" --draft=true >/dev/null 2>&1 || true
-    exit 1
-  fi
-fi
-
+# Collect macOS artifacts before the Windows CI artifact gate.
+# Windows packaging failure must not strand a successful macOS build
+# inside Actions artifacts; the Release stays draft until all later gates pass.
 if grep -q "PC 产物" "$LOG_FILE"; then
   if ! release_has_complete_mac_assets; then
     if ! collect_ci_mac_assets; then
@@ -383,14 +375,18 @@ if grep -q "PC 产物" "$LOG_FILE"; then
   fi
 fi
 
+# Any locally uploaded Windows EXE is a Draft candidate until replaced by
+# the exact same-tag Windows CI artifact and validated against its update metadata.
+if release_contains_windows_candidates; then
+  if ! collect_ci_direct_windows_assets; then
+    echo "[release-guard] failed to collect same-tag Windows CI assets; keeping ${TAG} as draft" >&2
+    gh release edit "$TAG" --repo "$GITHUB_REPO_SLUG" --draft=true >/dev/null 2>&1 || true
+    exit 1
+  fi
+fi
+
 echo
 echo "==== 验证 GitHub Release 更新元数据与远端资产 ===="
-WINDOWS_PUBLISHER="$(gh variable get NOWEN_WINDOWS_PUBLISHER_NAME --repo "$GITHUB_REPO_SLUG" 2>/dev/null || true)"
-if [ -z "${WINDOWS_PUBLISHER//[[:space:]]/}" ]; then
-  echo "[release-guard] NOWEN_WINDOWS_PUBLISHER_NAME is unconfirmed; complete release-signing publisher bootstrap before publication; keeping ${TAG} as draft" >&2
-  gh release edit "$TAG" --repo "$GITHUB_REPO_SLUG" --draft=true >/dev/null 2>&1 || true
-  exit 1
-fi
 if ! node "$VERIFY_SCRIPT" remote --repo "$GITHUB_REPO_SLUG" --tag "$TAG" --version "$VERSION"; then
   echo "[release-guard] remote update verification failed; keeping ${TAG} as draft" >&2
   gh release edit "$TAG" --repo "$GITHUB_REPO_SLUG" --draft=true >/dev/null 2>&1 || true

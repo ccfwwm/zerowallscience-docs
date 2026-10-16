@@ -1,8 +1,7 @@
+import i18n from "../index";
 import { describe, expect, it } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { extname, join } from "node:path";
-import zhBase from "../locales/zh-CN.json";
-import enBase from "../locales/en.json";
 import {
   enAdditionalTranslations,
   zhCNAdditionalTranslations,
@@ -43,34 +42,8 @@ import {
   enCoverageTranslations,
   zhCNCoverageTranslations,
 } from "../coverageTranslations";
-import { enWorkspaceIssuesTranslations, zhCNWorkspaceIssuesTranslations } from "../workspaceIssuesTranslations";
-import { enVoiceTranslations, zhCNVoiceTranslations } from "../voiceTranslations";
 
 type TranslationTree = Record<string, unknown>;
-
-function merge(base: TranslationTree, patch: TranslationTree): TranslationTree {
-  const result: TranslationTree = { ...base };
-  for (const [key, value] of Object.entries(patch)) {
-    const current = result[key];
-    if (
-      value &&
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      current &&
-      typeof current === "object" &&
-      !Array.isArray(current)
-    ) {
-      result[key] = merge(current as TranslationTree, value as TranslationTree);
-    } else {
-      result[key] = value;
-    }
-  }
-  return result;
-}
-
-function mergePatches(base: TranslationTree, ...patches: TranslationTree[]): TranslationTree {
-  return patches.reduce((current, patch) => merge(current, patch), base);
-}
 
 function getPath(tree: TranslationTree, path: string): unknown {
   return path.split(".").reduce<unknown>((value, key) => {
@@ -138,36 +111,8 @@ const enEditorSplitPatch = enEditorSplitTranslations as unknown as TranslationTr
 const zhCoveragePatch = zhCNCoverageTranslations as unknown as TranslationTree;
 const enCoveragePatch = enCoverageTranslations as unknown as TranslationTree;
 
-const zh = mergePatches(
-  zhBase as TranslationTree,
-  zhAdditionalPatch,
-  zhYoudaoPatch,
-  zhDownloadNetworkPatch,
-  zhMiCloudPatch,
-  zhLargeDocumentPatch,
-  zhWorkspaceLayoutPatch,
-  zhSecurityPatch,
-  zhDiaryMarkdownPatch,
-  zhEditorSplitPatch,
-  zhCoveragePatch,
-  zhCNWorkspaceIssuesTranslations,
-  zhCNVoiceTranslations,
-);
-const en = mergePatches(
-  enBase as TranslationTree,
-  enAdditionalPatch,
-  enYoudaoPatch,
-  enDownloadNetworkPatch,
-  enMiCloudPatch,
-  enLargeDocumentPatch,
-  enWorkspaceLayoutPatch,
-  enSecurityPatch,
-  enDiaryMarkdownPatch,
-  enEditorSplitPatch,
-  enCoveragePatch,
-  enWorkspaceIssuesTranslations,
-  enVoiceTranslations,
-);
+const zh = i18n.getResourceBundle("zh-CN", "translation") as TranslationTree;
+const en = i18n.getResourceBundle("en", "translation") as TranslationTree;
 
 const criticalNamespaces = [
   "editorError",
@@ -218,6 +163,57 @@ describe("release i18n coverage", () => {
         .filter(([path, value]) => path !== "language.zh" && /[\u3400-\u9fff]/u.test(value))
         .map(([path]) => path),
     ).toEqual([]);
+  });
+
+  it("prevents untranslated Chinese UI literals in protected critical flows", () => {
+    const criticalFiles = [
+      "components/settings/MobileAccountSettings.tsx",
+      "components/settings/MobileSyncSettings.tsx",
+      "components/settings/ServerConnectionSettings.tsx",
+      "components/SyncStatusBadge.tsx",
+      "components/EncryptedNoteCreateDialog.tsx",
+      "components/EncryptedBlockDialog.tsx",
+      "components/EncryptedNotePane.tsx",
+      "components/BackupWebDavBridge.tsx",
+      "components/ShareModal.tsx",
+      "components/CodeBlockView.tsx",
+      "components/AIChatPanel.tsx",
+    ] as const;
+    for (const path of criticalFiles) {
+      const source = readFileSync(join(process.cwd(), "src", path), "utf8");
+      const withoutComments = source
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      expect(withoutComments.match(/[\u3400-\u9fff]/u), path).toBeNull();
+    }
+  });
+
+  it("keeps desktop data migration copy out of hardcoded JSX and messages", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/DataManager.tsx"), "utf8");
+    const migrationSection = source.split("function DesktopDataSafetyCard")[1]?.split("export default function DataManager()")[0];
+    expect(migrationSection).toBeTruthy();
+    expect(migrationSection!.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "")).not.toMatch(/[\u3400-\u9fff]/u);
+  });
+
+  it("uses the active language in the note icon picker", () => {
+    const source = readFileSync(join(process.cwd(), "src/components/NoteIconPickerModal.tsx"), "utf8");
+    expect(source).toContain("useTranslation()");
+    expect(source).toContain("[language]");
+    expect(source).not.toContain('localStorage.getItem("i18nextLng")');
+  });
+
+  it("covers mobile account, sync status and verified server connection in both languages", () => {
+    for (const namespace of ["mobileAccount", "mobileSync", "serverConnection", "syncBadge", "encryptedUi", "encryptedCreate", "encryptedBlock", "encryptedNote", "webdav", "codeToolbar", "aiChatUi", "shareUi", "editorOps", "editorToolbar", "desktopSafety", "knowledgeTreeUi"]) {
+      const chinese = leafEntries(getPath(zh, namespace));
+      const english = leafEntries(getPath(en, namespace));
+      expect(chinese.map(([key]) => key)).toEqual(english.map(([key]) => key));
+      expect(chinese.length).toBeGreaterThan(0);
+      for (const [key, value] of chinese) {
+        const englishValue = english.find(([name]) => name === key)?.[1];
+        expect(englishValue, `${namespace}.${key}`).toBeTypeOf("string");
+        expect(interpolationNames(value)).toEqual(interpolationNames(englishValue!));
+      }
+    }
   });
 
   it("defines every literal translation key used by the frontend", () => {

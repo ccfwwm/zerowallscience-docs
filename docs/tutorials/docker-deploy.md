@@ -97,23 +97,50 @@ docker compose --profile updater up -d
 
 ## 反向代理
 
-Nginx 配置示例：
+Docker 新部署可使用 [配套 Caddy HTTPS 模板](../https-deployment.md)，自动申请和续期证书。已有 Lucky / NAS 反代的配置要求与验收步骤也见该文档。
+
+以下为已有 Nginx 的 HTTPS 示例，`map` 和 `server` 放在 Nginx 的 `http` 上下文中。先通过现有证书工具申请证书，替换域名、证书路径和实际后端端口，并配置证书续期：
 
 ```nginx
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
 server {
     listen 80;
     server_name note.example.com;
+    return 308 https://note.example.com$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name note.example.com;
+    ssl_certificate /etc/nginx/certs/note.example.com/fullchain.pem;
+    ssl_certificate_key /etc/nginx/certs/note.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    # 应用默认允许 100 MB，预留 multipart 开销；应用调整上限时同步调整。
+    client_max_body_size 110m;
+
     location / {
-        proxy_pass http://localhost:3001;
+        proxy_pass http://127.0.0.1:3001;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
+        proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_read_timeout 3600s;
     }
 }
 ```
+
+此例假定 Nginx 运行在宿主机；Nginx 在容器内时应改用其能访问的后端地址。为应用配置 `PUBLIC_WEB_ORIGIN=https://note.example.com`，并确认管理员手动公开地址没有保留旧值。仅设置公开地址不会开启 HTTPS。
 
 客户端会先探测标准 `/api`、`/ws` 路径；如果反向代理把请求改写成
 `/public/api`、`/publicapi`（WebSocket 对应 `/public/ws`、`/publicws`），
@@ -139,6 +166,18 @@ WebSocket Upgrade。自动兼容用于承接已有的 `/public` 重写配置；�
 ```bash
 docker compose logs --tail=200 nowen-note
 ```
+
+### Q：Embedding 已生成，但问答一直使用 BM25？
+
+先在容器内检查向量扩展（使用内存数据库，不修改笔记数据）：
+
+```bash
+docker compose exec nowen-note node backend/scripts/smoke-sqlite-vec.cjs
+```
+
+成功时输出 `extension load, vec0 and KNN passed`，表示扩展加载、向量建表和近邻查询都通过。新版 Docker 构建会编译适配 Alpine musl 的扩展，并执行同一检查；检查失败会阻止镜像构建完成。
+
+旧镜像若出现 `sqlite-vec load failed` 或 `vec0.so.so`，请更新到包含此修复的镜像（源码部署则重新构建）。修复后首次启动会从已有 `note_embeddings` 恢复向量索引，无需重新调用 embedding API。上述检查只验证扩展，实际恢复数量请查看启动日志中的 `[vec-store] restored` 或向量重建日志。
 
 ### Q：为什么没有“立即升级”按钮？
 

@@ -2,12 +2,12 @@
 import { useRef, useState } from "react";
 import "./encrypted-notes-desktop";
 import { createRoot } from "react-dom/client";
-import i18n from "i18next";
-import { initReactI18next } from "react-i18next";
+import i18n from "../src/i18n";
 import MarkdownEditor from "../src/components/MarkdownEditorImpl";
 import TiptapEditor from "../src/components/TiptapEditor";
 import { api } from "../src/lib/api";
 import { convertNoteContent } from "../src/lib/noteFormatConversion";
+import { resolveConfirmedTiptapContent } from "../src/lib/editorSyncGuards";
 import type { NoteEditorHandle, NoteEditorUpdatePayload } from "../src/components/editors/types";
 import type { Note } from "../src/types";
 import "../src/index.css";
@@ -15,8 +15,8 @@ import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 localStorage.setItem("nowen-server-url", "http://127.0.0.1:5177");
 localStorage.setItem("nowen-token", `test.${btoa(JSON.stringify({ userId: "fixture-owner" }))}.test`);
-void i18n.use(initReactI18next).init({ lng: "zh-CN", resources: { "zh-CN": { translation: {} } }, initImmediate: false });
-declare global { interface Window { productEditorDocument: () => string; productEditorNoteId: () => string } }
+void i18n.changeLanguage("zh-CN");
+declare global { interface Window { productEditorDocument: () => string; productEditorNoteId: () => string; productEditorNoteVersion: () => number } }
 function Fixture() {
   const [note, setNote] = useState<Note | null>(null);
   const noteRef = useRef<Note | null>(null);
@@ -42,7 +42,14 @@ function Fixture() {
       if (!current || current.id !== id) return;
       try {
         const updated = await api.updateNoteConfirmed(id, { content: data.content, contentText: data.contentText, title: data.title, contentFormat: current.contentFormat, version: current.version });
-        if (noteRef.current?.id === id) accept(updated);
+        if (noteRef.current?.id === id) {
+          // Match EditorPane: an older local ACK must not replay over newer input.
+          if (data.content !== undefined && data._saveGeneration) {
+            const confirmed = resolveConfirmedTiptapContent({serverContent:updated.content,serverContentText:updated.contentText,sentContent:data.content,sentContentText:data.contentText,editorSnapshot:editor.current?.getSnapshot?.() || null,fallbackContentText:current.contentText});
+            editor.current?.acknowledgeSave?.({noteId:id,version:updated.version,content:confirmed.content,saveGeneration:data._saveGeneration,preserveLocalEditor:confirmed.preserveLocalEditor});
+          }
+          accept(updated);
+        }
         setStatus("实际编辑器保存已确认");
       } catch { setStatus("保存未完成，原密文保留"); }
     });
@@ -57,6 +64,7 @@ function Fixture() {
   }
   window.productEditorDocument = () => editor.current?.getSnapshot?.()?.content || "";
   window.productEditorNoteId = () => noteRef.current?.id || "";
+  window.productEditorNoteVersion = () => noteRef.current?.version || 0;
   async function reload() {
     editor.current?.discardPending?.(); await saveChain.current;
     accept(await api.getNote(noteRef.current!.id)); setEpoch((value) => value + 1);
