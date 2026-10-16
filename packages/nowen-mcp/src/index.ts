@@ -6,8 +6,9 @@
  * 
  * 环境变量：
  *   NOWEN_URL      — Nowen Note 后端地址（默认 http://localhost:3001）
- *   NOWEN_USERNAME — 登录用户名（默认 admin）
- *   NOWEN_PASSWORD — 登录密码（默认 admin123）
+ *   NOWEN_API_TOKEN — 推荐：个人 API Token
+ *   NOWEN_USERNAME — 可选：显式指定的用户名（不使用默认管理员账号）
+ *   NOWEN_PASSWORD — 可选：显式指定的登录密码
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -25,8 +26,8 @@ import {
 // ===== 从环境变量读取配置 =====
 const config = {
   baseUrl: process.env.NOWEN_URL || "http://localhost:3001",
-  username: process.env.NOWEN_USERNAME || "admin",
-  password: process.env.NOWEN_PASSWORD || "admin123",
+  username: process.env.NOWEN_USERNAME || "",
+  password: process.env.NOWEN_PASSWORD || "",
 };
 
 const api = new NowenApiClient(config);
