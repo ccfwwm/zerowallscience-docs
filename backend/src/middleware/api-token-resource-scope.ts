@@ -1,5 +1,6 @@
 import type { Context, Next } from "hono";
 import { getDb } from "../db/schema";
+import { listKnowledgeTree } from "../services/knowledgeTree.js";
 import { hasPermission, resolveNotebookPermission } from "./acl";
 import { logAudit } from "../services/audit";
 
@@ -209,7 +210,7 @@ function requiredScope(pathname: string, method: string): string | null {
   if (pathname.startsWith("/api/task-digest")) return "__login_only__";
   if (pathname.startsWith("/api/ai/task-plan")) return "__login_only__";
   if (pathname === "/api/tasks" || pathname.startsWith("/api/tasks/") || pathname === "/api/task-projects" || pathname.startsWith("/api/task-projects/")) return write ? "tasks:write" : "tasks:read";
-  if (pathname === "/api/knowledge-tree" || pathname === "/api/knowledge-tree/") return write ? "__unsupported__" : "notebooks:read";
+  if (pathname === "/api/knowledge-tree" || pathname.startsWith("/api/knowledge-tree/")) return write ? "notebooks:write" : "notebooks:read";
   if (pathname.startsWith("/api/notebooks")) return write ? "notebooks:write" : "notebooks:read";
   if (pathname.startsWith("/api/note-templates")) return write ? "notes:write" : "notes:read";
   if (pathname.startsWith("/api/notes")) return write ? "notes:write" : "notes:read";
@@ -450,46 +451,196 @@ async function handleAi(c: Context, next: Next, ctx: TokenAccessContext): Promis
 }
 
 /** PAT 的项目管理仅限个人空间，绝不暴露团队项目。 */
-/** The only PAT knowledge-tree surface is a filtered read-only catalog. */
+/**
+ * MCP knowledge-tree writes are restricted to personal notebook/note nodes.
+ * Never let a notebook-scoped Token mutate an ungranted child subtree or cross into
+ * the workspace/root through a forged nodeId or parentId.
+ */
+function treeNodeRow(id: string): {
+  id: string; userId: string; workspaceId: string | null;
+  parentId: string | null; resourceType: string; resourceId: string; isDeleted: number;
+} | undefined {
+  return getDb().prepare(
+    "SELECT id, userId, workspaceId, parentId, resourceType, resourceId, isDeleted FROM knowledge_tree_nodes WHERE id = ?"
+  ).get(id) as any;
+}
+
+function treeDescendants(id: string): string[] {
+  const rows = getDb().prepare(`
+    WITH RECURSIVE descendants(id) AS (
+      SELECT id FROM knowledge_tree_nodes WHERE id = ?
+      UNION
+      SELECT child.id FROM knowledge_tree_nodes child
+      JOIN descendants parent ON child.parentId = parent.id
+    )
+    SELECT id FROM descendants LIMIT 10001
+  `).all(id) as Array<{ id: string }>;
+  if (rows.length > 10000) {
+    throw new ApiTokenAccessError("单次 MCP 目录操作节点过多，请在客户端拆分", "API_TOKEN_ENDPOINT_DENIED");
+  }
+  return rows.map((row) => row.id);
+}
+
+function assertTreeNodeForToken(ctx: TokenAccessContext, nodeId: string, write = false): void {
+  const node = treeNodeRow(nodeId);
+  if (!node || node.workspaceId !== null || node.userId !== ctx.userId) {
+    throw new ApiTokenAccessError("目录节点不属于当前用户个人空间", "API_TOKEN_RESOURCE_DENIED");
+  }
+  if (node.resourceType !== "note" && node.resourceType !== "notebook") {
+    throw new ApiTokenAccessError("MCP 目前只允许修改笔记和文件夹", "API_TOKEN_ENDPOINT_DENIED");
+  }
+  if (node.resourceType === "note" && write) requireScope(ctx, "notes:write");
+
+  let current = node;
+  const seen = new Set<string>();
+  let notebookId: string | undefined;
+  while (current && !seen.has(current.id)) {
+    seen.add(current.id);
+    if (current.resourceType === "notebook") {
+      notebookId = current.resourceId;
+      break;
+    }
+    if (!current.parentId) break;
+    const parent = treeNodeRow(current.parentId);
+    if (!parent || parent.workspaceId !== null || parent.userId !== ctx.userId) {
+      throw new ApiTokenAccessError("目录父节点不属于个人空间", "API_TOKEN_RESOURCE_DENIED");
+    }
+    current = parent;
+  }
+  if (!notebookId && ctx.resourceMode === "restricted") {
+    throw new ApiTokenAccessError("restricted Token 不允许操作无笔记本归属的根节点", "API_TOKEN_RESOURCE_DENIED");
+  }
+  if (notebookId) assertNotebook(ctx, notebookId, write);
+}
+
+function assertTreeSubtreeForToken(ctx: TokenAccessContext, nodeId: string): void {
+  for (const id of treeDescendants(nodeId)) assertTreeNodeForToken(ctx, id, true);
+}
+
+function assertTreeMutationPrecondition(ctx: TokenAccessContext, nodeId: string, body: Record<string, unknown>): void {
+  const required = ["expectedUpdatedAt", "expectedTitle", "expectedParentId", "expectedChildCount"];
+  if (required.some((key) => !(key in body))) {
+    throw new ApiTokenAccessError("请先预览目录状态并提交完整预期版本", "MCP_PREVIEW_REQUIRED", 409);
+  }
+  const node = listKnowledgeTree({ userId: ctx.userId, workspaceId: null, includeDeleted: true })
+    .find((item: any) => item.id === nodeId);
+  if (!node || node.updatedAt !== body.expectedUpdatedAt || node.title !== body.expectedTitle
+      || node.parentId !== body.expectedParentId || node.childCount !== body.expectedChildCount) {
+    throw new ApiTokenAccessError("目录状态已变化，请重新预览后操作", "MCP_TREE_VERSION_CONFLICT", 409);
+  }
+}
+
 async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
-  if (!["/api/knowledge-tree", "/api/knowledge-tree/"].includes(c.req.path)
-      || c.req.method.toUpperCase() !== "GET") {
-    throw new ApiTokenAccessError("API Token 仅允许读取知识树", "API_TOKEN_ENDPOINT_DENIED");
+  const path = c.req.path.replace(/\\/$/, "") || "/api/knowledge-tree";
+  const method = c.req.method.toUpperCase();
+  const workspaceId = c.req.query("workspaceId");
+  if (workspaceId && workspaceId !== "personal") {
+    if (method !== "GET") throw new ApiTokenAccessError("Token 不允许修改团队知识树", "API_TOKEN_RESOURCE_DENIED");
+  }
+
+  if (path === "/api/knowledge-tree" && method === "GET") {
+    await next();
+    if (ctx.resourceMode !== "restricted" || c.res.status < 200 || c.res.status >= 300) return;
+    await replaceFilteredResponse(c, (body) => {
+      if (!body || !Array.isArray(body.nodes)) return body;
+      const byId = new Map<string, any>(body.nodes.map((item: any) => [item.id, item]));
+      const allowed = (node: any): boolean => {
+        let current = node;
+        const seen = new Set<string>();
+        while (current && !seen.has(current.id)) {
+          seen.add(current.id);
+          if (current.resourceType === "notebook") return canRead(ctx, current.resourceId);
+          current = current.parentId ? byId.get(current.parentId) : undefined;
+        }
+        return false;
+      };
+      const selected = body.nodes.filter(allowed);
+      const selectedIds = new Set(selected.map((node: any) => node.id));
+      const notes = new Set(selected.filter((node: any) => node.resourceType === "note").map((node: any) => node.resourceId));
+      const counts = new Map<string, number>();
+      for (const node of selected) if (node.parentId && selectedIds.has(node.parentId)) {
+        counts.set(node.parentId, (counts.get(node.parentId) || 0) + 1);
+      }
+      return {
+        ...body,
+        nodes: selected.map((node: any) => ({
+          ...node,
+          parentId: node.parentId && selectedIds.has(node.parentId) ? node.parentId : null,
+          childCount: counts.get(node.id) || 0,
+        })),
+        passwordAuthorizedNotes: Array.isArray(body.passwordAuthorizedNotes)
+          ? body.passwordAuthorizedNotes.filter((entry: any) => notes.has(entry.noteId))
+          : [],
+      };
+    });
+    return;
+  }
+
+  if (workspaceId && workspaceId !== "personal") {
+    throw new ApiTokenAccessError("Token 不允许修改团队知识树", "API_TOKEN_RESOURCE_DENIED");
+  }
+
+  if (path === "/api/knowledge-tree/nodes" && method === "POST") {
+    const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+    if (body.nodeType !== "folder" && body.nodeType !== "markdown") {
+      throw new ApiTokenAccessError("MCP 只能创建普通文件夹或 Markdown 笔记", "API_TOKEN_ENDPOINT_DENIED");
+    }
+    if (!body.parentId) {
+      if (ctx.resourceMode === "restricted") {
+        throw new ApiTokenAccessError("restricted Token 只能在已授权文件夹内创建", "API_TOKEN_RESOURCE_DENIED");
+      }
+    } else {
+      if (typeof body.parentId !== "string") throw new ApiTokenAccessError("parentId 非法");
+      const parent = treeNodeRow(body.parentId);
+      if (!parent || parent.resourceType !== "notebook" || parent.isDeleted) {
+        throw new ApiTokenAccessError("目标文件夹不存在", "API_TOKEN_RESOURCE_DENIED");
+      }
+      assertTreeNodeForToken(ctx, body.parentId, true);
+    }
+    if (body.nodeType === "markdown") requireScope(ctx, "notes:write");
+    await next();
+    return;
+  }
+
+  const match = /^\\/api\\/knowledge-tree\\/nodes\\/([^/]+)(?:\\/(move|restore))?$/.exec(path);
+  const operation = match?.[2] || "";
+  if (!match || !(
+    (method === "PATCH" && !operation)
+    || (method === "PUT" && operation === "move")
+    || (method === "DELETE" && !operation)
+    || (method === "POST" && operation === "restore")
+  )) {
+    throw new ApiTokenAccessError("MCP 不允许此知识树批量、权限或高风险接口", "API_TOKEN_ENDPOINT_DENIED");
+  }
+  const nodeId = decodeURIComponent(match[1]);
+  const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+  if (method === "PATCH" && (typeof body.title !== "string" || !body.title.trim() || body.isExpanded !== undefined)) {
+    throw new ApiTokenAccessError("MCP 仅允许修改非空目录标题", "API_TOKEN_ENDPOINT_DENIED");
+  }
+  if (method === "DELETE" && c.req.query("mode") === "promote") {
+    throw new ApiTokenAccessError("MCP 禁止提升子节点的删除模式", "API_TOKEN_ENDPOINT_DENIED");
+  }
+  assertTreeNodeForToken(ctx, nodeId, true);
+  assertTreeMutationPrecondition(ctx, nodeId, body);
+  if (method === "PUT") {
+    if (!("parentId" in body) || (body.parentId !== null && typeof body.parentId !== "string")) {
+      throw new ApiTokenAccessError("必须明确目标 parentId", "API_TOKEN_ENDPOINT_DENIED");
+    }
+    if (body.parentId === null && ctx.resourceMode === "restricted") {
+      throw new ApiTokenAccessError("restricted Token 禁止移动节点到根目录", "API_TOKEN_RESOURCE_DENIED");
+    }
+    if (typeof body.parentId === "string") {
+      const parent = treeNodeRow(body.parentId);
+      if (!parent || parent.isDeleted || parent.resourceType !== "notebook") {
+        throw new ApiTokenAccessError("目标文件夹不可用", "API_TOKEN_RESOURCE_DENIED");
+      }
+      assertTreeNodeForToken(ctx, body.parentId, true);
+    }
+  }
+  if (method === "PUT" || method === "DELETE" || method === "POST") {
+    assertTreeSubtreeForToken(ctx, nodeId);
   }
   await next();
-  if (ctx.resourceMode !== "restricted" || c.res.status < 200 || c.res.status >= 300) return;
-  await replaceFilteredResponse(c, (body) => {
-    if (!body || !Array.isArray(body.nodes)) return body;
-    const byId = new Map<string, any>(body.nodes.map((item: any) => [item.id, item]));
-    const allowed = (node: any): boolean => {
-      let current = node;
-      const seen = new Set<string>();
-      while (current && !seen.has(current.id)) {
-        seen.add(current.id);
-        if (current.resourceType === "notebook") return canRead(ctx, current.resourceId);
-        current = current.parentId ? byId.get(current.parentId) : undefined;
-      }
-      return false;
-    };
-    const selected = body.nodes.filter(allowed);
-    const selectedIds = new Set(selected.map((node: any) => node.id));
-    const notes = new Set(selected.filter((node: any) => node.resourceType === "note").map((node: any) => node.resourceId));
-    const counts = new Map<string, number>();
-    for (const node of selected) if (node.parentId && selectedIds.has(node.parentId)) {
-      counts.set(node.parentId, (counts.get(node.parentId) || 0) + 1);
-    }
-    return {
-      ...body,
-      nodes: selected.map((node: any) => ({
-        ...node,
-        parentId: node.parentId && selectedIds.has(node.parentId) ? node.parentId : null,
-        childCount: counts.get(node.id) || 0,
-      })),
-      passwordAuthorizedNotes: Array.isArray(body.passwordAuthorizedNotes)
-        ? body.passwordAuthorizedNotes.filter((entry: any) => notes.has(entry.noteId))
-        : [],
-    };
-  });
 }
 
 async function handleTokenTaskProjects(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
