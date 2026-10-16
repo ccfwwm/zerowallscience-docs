@@ -50,8 +50,14 @@ async function prepareFileChange(api: NowenApiClient, params: FileChange) {
   const foldersResponse = await api.listFileFolders();
   const folders: any[] = foldersResponse?.folders ?? [];
   const byId = new Map(folders.map((folder: any) => [folder.id, folder]));
-  if ((operation === "create_folder" || operation === "update_folder" || operation === "rename_file") && !name?.trim()) {
+  if ((operation === "create_folder" || operation === "rename_file") && !name?.trim()) {
     throw new Error("需要填写新名称");
+  }
+  if (operation === "update_folder" && name === undefined && parentId === undefined) {
+    throw new Error("重命名或移动文件夹需要设置 name 或 parentId");
+  }
+  if (operation === "update_folder" && name !== undefined && !name.trim()) {
+    throw new Error("文件夹名称不能为空");
   }
   if ((operation === "create_folder" || operation === "update_folder" || operation === "move_files") && parentId) {
     if (!byId.has(parentId)) throw new Error("目标文件夹不存在或未授权");
