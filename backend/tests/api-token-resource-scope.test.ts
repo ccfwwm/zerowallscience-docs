@@ -349,3 +349,90 @@ test("PAT may create only personal subtasks; foreign and team parents are denied
   assert.equal((await create("mcp-foreign-parent")).status, 403);
   assert.equal((await create("mcp-team-parent")).status, 403);
 });
+
+test("P1 personal file-manager PAT forbids restricted global folder access and foreign file writes", async () => {
+  db.prepare(`INSERT OR IGNORE INTO attachments
+    (id, noteId, userId, workspaceId, filename, mimeType, size, path, uploadSource)
+    VALUES (?, ?, ?, NULL, ?, 'application/pdf', 100, ?, ?)`)
+    .run("p1-managed", "note-a", "user-1", "owned.pdf", "stored-p1-managed", "file_manager");
+  db.prepare(`INSERT OR IGNORE INTO attachments
+    (id, noteId, userId, workspaceId, filename, mimeType, size, path, uploadSource)
+    VALUES (?, ?, ?, NULL, ?, 'application/pdf', 100, ?, ?)`)
+    .run("p1-note-asset", "note-a", "user-1", "editor.pdf", "stored-p1-editor", "note");
+  db.prepare(`INSERT OR IGNORE INTO attachments
+    (id, noteId, userId, workspaceId, filename, mimeType, size, path, uploadSource)
+    VALUES (?, ?, ?, NULL, ?, 'application/pdf', 100, ?, ?)`)
+    .run("p1-foreign", "note-b", "user-2", "foreign.pdf", "stored-p1-foreign", "file_manager");
+
+  function makeApp(mode: "restricted" | "unrestricted") {
+    const app = new Hono();
+    app.use("*", async (c, next) => {
+      c.req.raw.headers.set("X-Auth-Mode", "api-token");
+      c.req.raw.headers.set("X-Api-Token-Id", "token-1");
+      c.req.raw.headers.set("X-Api-Resource-Mode", mode);
+      c.req.raw.headers.set("X-Api-Scopes", "notes:read,attachments:write");
+      c.req.raw.headers.set("X-User-Id", "user-1");
+      return enforceApiTokenAccess(c, next);
+    });
+    app.get("/api/attachment-folders", (c) => c.json({ folders: [] }));
+    app.post("/api/attachment-folders", (c) => c.json({ created: true }, 201));
+    app.patch("/api/files/:id", (c) => c.json({ updated: c.req.param("id") }));
+    app.post("/api/files/batch-move", (c) => c.json({ moved: true }));
+    app.post("/api/attachment-trash/purge", (c) => c.json({ deleted: true }));
+    return app;
+  }
+  assert.equal((await makeApp("restricted").request("/api/attachment-folders")).status, 403);
+  assert.equal((await makeApp("unrestricted").request("/api/attachment-folders?workspaceId=personal")).status, 200);
+  assert.equal((await makeApp("unrestricted").request("/api/attachment-folders?workspaceId=ws-1")).status, 403);
+  const request = (url: string, body: unknown) => makeApp("unrestricted").request(url, {
+    method: url.includes("batch-move") ? "POST" : "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  assert.equal((await request("/api/files/p1-managed", {
+    filename: "renamed.pdf", expectedFilename: "owned.pdf",
+  })).status, 200);
+  assert.equal((await request("/api/files/p1-managed", { filename: "bad.pdf" })).status, 409);
+  assert.equal((await request("/api/files/p1-note-asset", {
+    filename: "bad.pdf", expectedFilename: "editor.pdf",
+  })).status, 403);
+  assert.equal((await request("/api/files/p1-foreign", {
+    filename: "stolen.pdf", expectedFilename: "foreign.pdf",
+  })).status, 403);
+  assert.equal((await request("/api/files/batch-move", {
+    ids: ["p1-managed"], folderId: null, expectedFolderIds: { "p1-managed": null },
+  })).status, 200);
+  assert.equal((await request("/api/files/batch-move", {
+    ids: ["p1-managed", "p1-foreign"], folderId: null,
+    expectedFolderIds: { "p1-managed": null, "p1-foreign": null },
+  })).status, 403);
+  assert.equal((await makeApp("unrestricted").request("/api/attachment-trash/purge", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids: ["p1-managed"], confirmation: "PERMANENTLY_DELETE" }),
+  })).status, 403);
+});
+
+test("P1 task snapshot PAT requires owned personal task, writable notebook and exact task revision", async () => {
+  db.prepare("UPDATE api_token_resources SET permission='write' WHERE id='resource-1'").run();
+  db.prepare("INSERT OR IGNORE INTO tasks(id,userId,title,workspaceId,updatedAt) VALUES(?,?,?,NULL,?)")
+    .run("p1-task", "user-1", "Personal", "2026-10-16T09:00:00Z");
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.req.raw.headers.set("X-Auth-Mode", "api-token");
+    c.req.raw.headers.set("X-Api-Token-Id", "token-1");
+    c.req.raw.headers.set("X-Api-Resource-Mode", "restricted");
+    c.req.raw.headers.set("X-Api-Scopes", "tasks:write,notes:write");
+    c.req.raw.headers.set("X-User-Id", "user-1");
+    return enforceApiTokenAccess(c, next);
+  });
+  app.post("/api/tasks/:id/note", (c) => c.json({ taskId: c.req.param("id"), saved: true }, 201));
+  const call = (taskId: string, notebookId: string, expectedTaskUpdatedAt: string) => app.request(
+    `/api/tasks/${taskId}/note?workspaceId=personal`,
+    { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ notebookId, expectedTaskUpdatedAt }) },
+  );
+  assert.equal((await call("p1-task", "nb-a", "stale")).status, 409);
+  assert.equal((await call("p1-task", "nb-b", "2026-10-16T09:00:00Z")).status, 403);
+  assert.equal((await call("p1-task", "nb-a", "2026-10-16T09:00:00Z")).status, 201);
+  assert.equal((await call("token-other-task", "nb-a", "2026-10-16T09:00:00Z")).status, 403);
+});
