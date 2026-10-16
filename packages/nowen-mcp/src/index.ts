@@ -219,26 +219,38 @@ server.tool(
 
 server.tool(
   "nowen_delete_note",
-  "将 Nowen Note 中指定笔记移入回收站（软删除），或从回收站永久删除",
+  "安全地将笔记移到回收站；默认只预览。MCP 禁止永久删除，执行需提供预览版本和确认文本",
   {
-    noteId: z.string().describe("笔记 ID"),
-    permanent: z.boolean().optional().describe("是否永久删除（默认 false，仅移入回收站；true 要求笔记已在回收站）"),
+    noteId: z.string().min(1).describe("笔记 ID"),
+    permanent: z.boolean().optional().describe("永久删除已禁用；传 true 将拒绝请求"),
+    dryRun: z.boolean().optional().describe("默认 true：先预览笔记，不进行删除"),
+    expectedVersion: z.number().int().positive().optional().describe("执行时必须与预览的 version 完全一致"),
+    confirmation: z.string().optional().describe("执行时填写 MOVE_TO_TRASH；应先征得用户确认"),
   },
-  async ({ noteId, permanent }) => {
+  async ({ noteId, permanent, dryRun, expectedVersion, confirmation }) => {
     try {
-      if (permanent) {
-        await api.deleteNote(noteId);
-        return { content: [{ type: "text" as const, text: `笔记已永久删除: ${noteId}` }] };
-      } else {
-        await api.updateNote(noteId, { isTrashed: 1 });
-        return { content: [{ type: "text" as const, text: `笔记已移入回收站: ${noteId}` }] };
+      if (permanent) throw new Error("MCP 永久删除已禁用；请在 Nowen Note 回收站界面手动执行");
+      const note = await api.getNote(noteId);
+      if (!note || note.id !== noteId) throw new Error("无法读取当前笔记");
+      const preview = {
+        noteId, title: note.title, notebookId: note.notebookId,
+        version: note.version, alreadyTrashed: Boolean(note.isTrashed),
+      };
+      if (dryRun !== false) {
+        return { content: [{ type: "text" as const, text: `移入回收站预览（未执行）：\n${JSON.stringify(preview, null, 2)}\n请确认后传 dryRun=false、expectedVersion、confirmation=MOVE_TO_TRASH。` }] };
       }
+      if (confirmation !== "MOVE_TO_TRASH") throw new Error("缺少明确确认：confirmation 必须是 MOVE_TO_TRASH");
+      if (!Number.isSafeInteger(expectedVersion) || expectedVersion !== note.version) {
+        throw new Error(`笔记版本已变化或未确认，当前版本 ${note.version}，请重新预览`);
+      }
+      if (note.isTrashed) throw new Error("笔记已在回收站，无须重复删除");
+      const result = await api.updateNote(noteId, { isTrashed: 1, version: expectedVersion, writeSource: "mcp" });
+      return { content: [{ type: "text" as const, text: `已移入回收站（可恢复）：${JSON.stringify({ id: noteId, version: result?.version })}` }] };
     } catch (err: any) {
       return { content: [{ type: "text" as const, text: `错误: ${err.message}` }], isError: true };
     }
   }
 );
-
 
 // ==================== 双链与块工具 ====================
 
