@@ -741,6 +741,157 @@ server.tool("nowen_get_task_summary", "Read personal task counts", {}, async () 
   try { return { content: [{ type: "text" as const, text: JSON.stringify(await api.taskSummary()) }] }; }
   catch (error: any) { return { content: [{ type: "text" as const, text: String(error.message) }], isError: true }; }
 });
+// ==================== 任务项目与安全元数据工具 ====================
+
+server.tool(
+  "nowen_update_task",
+  "更新本人个人任务的标题、描述、到期日期、优先级或状态；不会修改空间、项目或父子关系",
+  {
+    taskId: z.string().min(1),
+    title: z.string().min(1).optional(),
+    description: z.string().optional(),
+    dueDate: z.string().nullable().optional(),
+    priority: z.number().int().min(1).max(3).optional(),
+    status: z.enum(["todo", "doing", "blocked", "done"]).optional(),
+  },
+  async ({ taskId, title, description, dueDate, priority, status }) => {
+    try {
+      const body: Record<string, unknown> = {};
+      if (title !== undefined) body.title = title;
+      if (description !== undefined) body.description = description;
+      if (dueDate !== undefined) body.dueDate = dueDate;
+      if (priority !== undefined) body.priority = priority;
+      if (status !== undefined) body.status = status;
+      if (!Object.keys(body).length) throw new Error("至少指定一个待更新字段");
+      const task = await api.updateTask(taskId, body);
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "nowen_archive_task",
+  "归档或恢复已完成的个人顶层任务及其子任务；归档前需获得用户批准",
+  {
+    taskId: z.string().min(1),
+    archived: z.boolean().describe("true=归档，false=恢复"),
+  },
+  async ({ taskId, archived }) => {
+    try {
+      const result = await api.archiveTask(taskId, archived);
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool("nowen_list_task_projects", "列出本人个人空间的任务项目", {}, async () => {
+  try {
+    const items = await api.listTaskProjects();
+    return { content: [{ type: "text" as const, text: JSON.stringify(items, null, 2) }] };
+  } catch (error: any) {
+    return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+  }
+});
+
+server.tool(
+  "nowen_create_task_project",
+  "在本人个人空间中创建任务项目，不会创建团队项目",
+  {
+    name: z.string().min(1).max(120),
+    icon: z.string().max(32).optional(),
+    color: z.string().max(32).optional(),
+  },
+  async ({ name, icon, color }) => {
+    try {
+      const result = await api.createTaskProject({ name, icon, color });
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "nowen_update_task_project",
+  "修改本人个人项目的名称、图标或颜色；不允许跨空间移动项目",
+  {
+    projectId: z.string().min(1),
+    name: z.string().min(1).max(120).optional(),
+    icon: z.string().max(32).optional(),
+    color: z.string().max(32).optional(),
+  },
+  async ({ projectId, name, icon, color }) => {
+    try {
+      if (name === undefined && icon === undefined && color === undefined) throw new Error("至少提供一个修改字段");
+      const result = await api.updateTaskProject(projectId, { name, icon, color });
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+// Note metadata uses the same version precondition as the existing MCP note updater.
+server.tool(
+  "nowen_set_note_flags",
+  "更新笔记收藏或置顶状态，保留笔记正文和内容格式",
+  {
+    noteId: z.string().min(1),
+    favorite: z.boolean().optional(),
+    pinned: z.boolean().optional(),
+  },
+  async ({ noteId, favorite, pinned }) => {
+    try {
+      if (favorite === undefined && pinned === undefined) throw new Error("必须设置 favorite 或 pinned");
+      const current = await api.getNote(noteId);
+      const update = await api.updateNote(noteId, {
+        version: current.version || 1,
+        writeSource: "mcp",
+        ...(favorite !== undefined ? { isFavorite: favorite ? 1 : 0 } : {}),
+        ...(pinned !== undefined ? { isPinned: pinned ? 1 : 0 } : {}),
+      });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ id: update.id, version: update.version, isPinned: update.isPinned, isFavorite: update.isFavorite }, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "nowen_move_note",
+  "预览或执行笔记移动，默认只预览；执行时必须提供预览得到的预期版本，并确认目标笔记本有权限",
+  {
+    noteId: z.string().min(1),
+    targetNotebookId: z.string().min(1),
+    dryRun: z.boolean().optional().describe("默认 true：仅预览，不更改数据"),
+    expectedVersion: z.number().int().positive().optional().describe("执行移动时必填：预览返回的 version"),
+  },
+  async ({ noteId, targetNotebookId, dryRun, expectedVersion }) => {
+    try {
+      const note = await api.getNote(noteId);
+      const version = note.version || 1;
+      const preview = { noteId, title: note.title, sourceNotebookId: note.notebookId, targetNotebookId, version };
+      if (dryRun !== false) {
+        return { content: [{ type: "text" as const, text: `移动预览（未写入）:\n${JSON.stringify(preview, null, 2)}` }] };
+      }
+      if (expectedVersion === undefined || expectedVersion !== version) {
+        throw new Error(`笔记已变化或缺少版本确认，当前版本为 ${version}；请重新预览`);
+      }
+      if (note.notebookId === targetNotebookId) {
+        return { content: [{ type: "text" as const, text: "目标笔记本与当前位置相同，无需移动" }] };
+      }
+      const moved = await api.updateNote(noteId, { notebookId: targetNotebookId, version, writeSource: "mcp" });
+      return { content: [{ type: "text" as const, text: JSON.stringify({ id: moved.id, notebookId: moved.notebookId, version: moved.version }, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
 // ==================== 自动化工具 ====================
 
 server.tool(

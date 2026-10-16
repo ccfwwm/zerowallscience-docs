@@ -328,7 +328,12 @@ async function handleAttachmentRequest(request: Request, url: URL): Promise<Resp
     return originalFetch(request);
   }
 
-  if (method === "GET" || method === "HEAD") return originalFetch(request);
+  if (method === "GET" || method === "HEAD") {
+    const fileId = decodeURIComponent(segments[2] || "");
+    if (!fileId) throw new ScopeDeniedError("附件 ID 必填");
+    await assertFileAllowed(fileId, request);
+    return originalFetch(request);
+  }
   throw new ScopeDeniedError("scoped MCP 不允许此附件操作");
 }
 
@@ -364,6 +369,21 @@ async function handlePersonalTaskRequest(request: Request, url: URL): Promise<Re
     return originalFetch(request);
   }
   if (resource === '/stats/summary' && method === 'GET') return originalFetch(request);
+  const archive = /^\/([A-Za-z0-9-]+)\/archive$/.exec(resource);
+  if (archive && method === "PATCH") {
+    policy.assertWritable("归档任务");
+    const body = await readJson(request);
+    if (typeof body.archived !== "boolean") throw new ScopeDeniedError("归档必须传入 archived 布尔值");
+    const taskResponse = await originalFetch(new Request(new URL("/api/tasks/" + encodeURIComponent(archive[1]), baseUrl), {
+      headers: requestAuthHeaders(request),
+    }));
+    if (!taskResponse.ok) throw new ScopeDeniedError("任务不存在或无权限");
+    const task = await readJsonResponse(taskResponse);
+    if (!task || task.workspaceId != null || task.parentId) {
+      throw new ScopeDeniedError("MCP 只能归档个人空间顶层任务");
+    }
+    return originalFetch(request);
+  }
   const match = /^\/([A-Za-z0-9-]+)$/.exec(resource);
   if (!match || !['GET', 'PUT'].includes(method)) throw new ScopeDeniedError('MCP 不允许任务批量或删除操作');
   if (method === 'PUT') policy.assertWritable('修改任务');
@@ -382,6 +402,39 @@ async function handlePersonalTaskRequest(request: Request, url: URL): Promise<Re
   }
   return replaceJsonResponse(record, task);
 }
+// Personal project APIs are separate from notebook scope; never allow workspace projects.
+async function handlePersonalProjectRequest(request: Request, url: URL): Promise<Response> {
+  const method = request.method.toUpperCase();
+  const workspaceId = url.searchParams.get("workspaceId");
+  if (workspaceId && workspaceId !== "personal") {
+    throw new ScopeDeniedError("MCP 项目工具仅允许个人空间");
+  }
+  if (url.pathname === "/api/task-projects") {
+    if (method === "GET") return originalFetch(request);
+    if (method !== "POST") throw new ScopeDeniedError("项目集合不允许该操作");
+    policy.assertWritable("创建个人项目");
+    const body = await readJson(request);
+    if (body.userId || body.workspaceId || typeof body.name !== "string" || !body.name.trim()) {
+      throw new ScopeDeniedError("个人项目必须有名称且不得指定用户或工作区");
+    }
+    return originalFetch(request);
+  }
+  const match = /^\/api\/task-projects\/([^/]+)$/.exec(url.pathname);
+  if (!match || method !== "PUT") throw new ScopeDeniedError("MCP 不允许删除或批量修改项目");
+  policy.assertWritable("修改个人项目");
+  const body = await readJson(request);
+  if (body.userId || body.workspaceId) throw new ScopeDeniedError("不允许修改项目归属");
+  const response = await originalFetch(new Request(new URL("/api/task-projects?workspaceId=personal", baseUrl), {
+    headers: requestAuthHeaders(request),
+  }));
+  if (!response.ok) throw new ScopeDeniedError("无法验证项目归属");
+  const projects = await readJsonResponse(response);
+  if (!Array.isArray(projects) || !projects.some((project: any) => project.id === decodeURIComponent(match[1]) && project.workspaceId == null)) {
+    throw new ScopeDeniedError("项目不属于个人空间");
+  }
+  return originalFetch(request);
+}
+
 async function scopedFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
   let request = new Request(input, init);
   const url = new URL(request.url);
@@ -394,11 +447,20 @@ async function scopedFetch(input: string | URL | Request, init?: RequestInit): P
     return jsonResponse({ token: scopeConfig.apiToken });
   }
 
-  if (!policy.enabled || !url.pathname.startsWith("/api/")) {
-    return originalFetch(request);
-  }
+  if (!url.pathname.startsWith("/api/")) return originalFetch(request);
 
   try {
+    // Local read-only applies even when ALLOWED_NOTEBOOK_IDS is unset.
+    // /api/ai/ask and /api/ai/chat are inference-only endpoints.
+    const inferenceOnly = request.method.toUpperCase() === "POST"
+      && ["/api/ai/ask", "/api/ai/chat"].includes(url.pathname);
+    const authentication = request.method.toUpperCase() === "POST"
+      && url.pathname === "/api/auth/login";
+    if (isWriteMethod(request.method) && !inferenceOnly && !authentication) {
+      policy.assertWritable(`请求 ${request.method} ${url.pathname}`);
+    }
+    if (!policy.enabled) return originalFetch(request);
+
     if (url.pathname === "/api/health" || url.pathname === "/api/me") {
       return originalFetch(request);
     }
@@ -425,6 +487,9 @@ async function scopedFetch(input: string | URL | Request, init?: RequestInit): P
     }
     if (url.pathname === "/api/tasks" || url.pathname.startsWith("/api/tasks/")) {
       return await handlePersonalTaskRequest(request, url);
+    }
+    if (url.pathname === "/api/task-projects" || url.pathname.startsWith("/api/task-projects/")) {
+      return await handlePersonalProjectRequest(request, url);
     }
     if (url.pathname === "/api/ai/chat") {
       return originalFetch(request);

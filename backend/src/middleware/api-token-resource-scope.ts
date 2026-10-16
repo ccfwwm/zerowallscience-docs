@@ -208,7 +208,7 @@ function requiredScope(pathname: string, method: string): string | null {
   if (pathname.startsWith("/api/tokens")) return "__login_only__";
   if (pathname.startsWith("/api/task-digest")) return "__login_only__";
   if (pathname.startsWith("/api/ai/task-plan")) return "__login_only__";
-  if (pathname === "/api/tasks" || pathname.startsWith("/api/tasks/")) return write ? "tasks:write" : "tasks:read";
+  if (pathname === "/api/tasks" || pathname.startsWith("/api/tasks/") || pathname === "/api/task-projects" || pathname.startsWith("/api/task-projects/")) return write ? "tasks:write" : "tasks:read";
   if (pathname.startsWith("/api/notebooks")) return write ? "notebooks:write" : "notebooks:read";
   if (pathname.startsWith("/api/note-templates")) return write ? "notes:write" : "notes:read";
   if (pathname.startsWith("/api/notes")) return write ? "notes:write" : "notes:read";
@@ -448,6 +448,43 @@ async function handleAi(c: Context, next: Next, ctx: TokenAccessContext): Promis
   await next();
 }
 
+/** PAT 的项目管理仅限个人空间，绝不暴露团队项目。 */
+async function handleTokenTaskProjects(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
+  const path = c.req.path;
+  const method = c.req.method.toUpperCase();
+  const workspaceId = c.req.query("workspaceId");
+  if (workspaceId && workspaceId !== "personal") {
+    throw new ApiTokenAccessError("项目 Token 暂只支持个人空间", "API_TOKEN_RESOURCE_DENIED");
+  }
+  if (path === "/api/task-projects") {
+    if (method !== "GET" && method !== "POST") {
+      throw new ApiTokenAccessError("项目接口不允许该操作", "API_TOKEN_ENDPOINT_DENIED");
+    }
+    if (method === "POST") {
+      const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+      if (body.workspaceId || body.userId) {
+        throw new ApiTokenAccessError("不得通过 Token 创建跨空间项目", "API_TOKEN_RESOURCE_DENIED");
+      }
+    }
+    await next();
+    return;
+  }
+  const match = /^\/api\/task-projects\/([^/]+)$/.exec(path);
+  if (!match || method !== "PUT") {
+    throw new ApiTokenAccessError("项目 Token 不允许删除或批量操作", "API_TOKEN_ENDPOINT_DENIED");
+  }
+  const project = getDb().prepare("SELECT userId, workspaceId FROM task_projects WHERE id = ?")
+    .get(decodeURIComponent(match[1])) as { userId: string; workspaceId: string | null } | undefined;
+  if (!project || project.userId !== ctx.userId || project.workspaceId !== null) {
+    throw new ApiTokenAccessError("项目不属于当前用户的个人空间", "API_TOKEN_RESOURCE_DENIED");
+  }
+  const body = await c.req.raw.clone().json().catch(() => ({})) as Record<string, unknown>;
+  if (body.workspaceId || body.userId) {
+    throw new ApiTokenAccessError("不得通过 Token 修改项目归属", "API_TOKEN_RESOURCE_DENIED");
+  }
+  await next();
+}
+
 /** PAT 的任务访问与笔记本白名单分离：默认仅本人个人任务。
  * 即使令牌是 unrestricted，也不得通过切换 workspaceId 访问共享工作区。
  */
@@ -472,6 +509,17 @@ async function handleTokenTasks(c: Context, next: Next, ctx: TokenAccessContext)
     return;
   }
   if (path === "/api/tasks/stats/summary" && method === "GET") {
+    await next();
+    return;
+  }
+  const archiveMatch = /^\/api\/tasks\/([^/]+)\/archive$/.exec(path);
+  if (archiveMatch && method === "PATCH") {
+    const task = getDb().prepare("SELECT userId, workspaceId, parentId FROM tasks WHERE id = ?")
+      .get(decodeURIComponent(archiveMatch[1])) as
+      { userId: string; workspaceId: string | null; parentId: string | null } | undefined;
+    if (!task || task.userId !== ctx.userId || task.workspaceId !== null || task.parentId) {
+      throw new ApiTokenAccessError("只能归档本人个人空间的顶层任务", "API_TOKEN_RESOURCE_DENIED");
+    }
     await next();
     return;
   }
@@ -524,6 +572,10 @@ export async function enforceApiTokenAccess(c: Context, next: Next): Promise<Res
     // 对 unrestricted 和 restricted PAT 同样应用个人任务资源边界。
     if (c.req.path === "/api/tasks" || c.req.path.startsWith("/api/tasks/")) {
       await handleTokenTasks(c, next, ctx);
+      return;
+    }
+    if (c.req.path === "/api/task-projects" || c.req.path.startsWith("/api/task-projects/")) {
+      await handleTokenTaskProjects(c, next, ctx);
       return;
     }
 
