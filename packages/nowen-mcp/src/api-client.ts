@@ -497,7 +497,7 @@ export class NowenApiClient {
   async listPersonalManagedFiles(query: { q?: string; folderId?: string; page?: number; pageSize?: number } = {}): Promise<any> {
     return this.request("/api/files", {
       query: {
-        workspaceId: "personal", filter: "myUploads",
+        filter: "myUploads",
         q: query.q, folderId: query.folderId, page: query.page || 1,
         pageSize: Math.min(100, query.pageSize || 50),
       },
