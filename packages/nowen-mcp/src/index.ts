@@ -15,6 +15,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { NowenApiClient } from "./api-client.js";
+import { registerP1Tools } from "./p1-tools.js";
 import { treeMutationRevision, treeMutationPreconditions, type TreeMutationNode } from "./tree-mutation.js";
 import {
   CONTENT_FORMAT_VALUES,
@@ -1273,6 +1274,9 @@ server.resource(
     };
   }
 );
+
+// 注册 P1 安全网盘和任务成果转存工具。
+registerP1Tools(server, api);
 
 // ==================== 启动 ====================
 
