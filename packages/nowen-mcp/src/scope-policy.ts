@@ -112,7 +112,7 @@ export class NotebookScopePolicy {
   }
 
   assertWritable(operation = "写入"): void {
-    if (!this.enabled || this.accessMode === "read-write") return;
+    if (this.accessMode === "read-write") return;
     throw new ScopeDeniedError(`当前 MCP_ACCESS_MODE=read-only，禁止${operation}`);
   }
 
