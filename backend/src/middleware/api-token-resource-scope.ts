@@ -531,7 +531,7 @@ function assertTreeMutationPrecondition(ctx: TokenAccessContext, nodeId: string,
 }
 
 async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
-  const path = c.req.path.replace(/\\/$/, "") || "/api/knowledge-tree";
+  const path = c.req.path.replace(/\/$/, "") || "/api/knowledge-tree";
   const method = c.req.method.toUpperCase();
   const workspaceId = c.req.query("workspaceId");
   if (workspaceId && workspaceId !== "personal") {
@@ -602,7 +602,7 @@ async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccess
     return;
   }
 
-  const match = /^\\/api\\/knowledge-tree\\/nodes\\/([^/]+)(?:\\/(move|restore))?$/.exec(path);
+  const match = /^\/api\/knowledge-tree\/nodes\/([^/]+)(?:\/(move|restore))?$/.exec(path);
   const operation = match?.[2] || "";
   if (!match || !(
     (method === "PATCH" && !operation)
