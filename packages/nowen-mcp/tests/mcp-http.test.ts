@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { once } from "node:events";
+import { request } from "node:http";
 import test from "node:test";
 import { createMcpHttpGateway } from "../src/http-entry.js";
 
@@ -50,9 +51,18 @@ test("remote HTTP enforces bearer, origin, hostname and request size before MCP 
     assert.equal((await fetch(url, { method: "POST", headers: { ...auth,
       Origin: "https://untrusted.example",
     }, body: initialize })).status, 403);
-    assert.equal((await fetch(url, { method: "POST", headers: {
-      ...auth, Host: "attacker.example",
-    }, body: initialize })).status, 403);
+    // Node fetch may normalize Host; send a raw HTTP request for DNS rebinding coverage.
+    const reboundStatus = await new Promise<number>((resolve, reject) => {
+      const raw = request(url, { method: "POST", headers: {
+        ...auth, Host: "attacker.example",
+      } }, (reply) => {
+        reply.resume();
+        reply.on("end", () => resolve(reply.statusCode || 0));
+      });
+      raw.once("error", reject);
+      raw.end(initialize);
+    });
+    assert.equal(reboundStatus, 403);
     assert.equal((await fetch(url, { method: "POST", headers: auth,
       body: "x".repeat(1_048_577) })).status, 413);
     const valid = await fetch(url, { method: "POST", headers: auth, body: initialize });
