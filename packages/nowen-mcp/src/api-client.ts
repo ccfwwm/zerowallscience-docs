@@ -474,6 +474,72 @@ export class NowenApiClient {
     });
   }
 
+  // ==================== P1: 个人网盘与任务转笔记 ====================
+
+  async listFileFolders(): Promise<any> {
+    return this.request("/api/attachment-folders/", { query: { workspaceId: "personal" } });
+  }
+
+  async createFileFolder(name: string, parentId: string | null): Promise<any> {
+    return this.request("/api/attachment-folders/", {
+      method: "POST", query: { workspaceId: "personal" }, body: { name, parentId },
+    });
+  }
+
+  async updateFileFolder(folderId: string, body: {
+    name?: string; parentId?: string | null; expectedName: string; expectedParentId: string | null;
+  }): Promise<any> {
+    return this.request(`/api/attachment-folders/${encodeURIComponent(folderId)}`, {
+      method: "PATCH", query: { workspaceId: "personal" }, body,
+    });
+  }
+
+  async listPersonalManagedFiles(query: { q?: string; folderId?: string; page?: number; pageSize?: number } = {}): Promise<any> {
+    return this.request("/api/files", {
+      query: {
+        workspaceId: "personal", filter: "myUploads",
+        q: query.q, folderId: query.folderId, page: query.page || 1,
+        pageSize: Math.min(100, query.pageSize || 50),
+      },
+    });
+  }
+
+  async personalFileDetail(fileId: string): Promise<any> {
+    return this.request(`/api/files/${encodeURIComponent(fileId)}`);
+  }
+
+  async renameManagedFile(fileId: string, filename: string, expectedFilename: string): Promise<any> {
+    return this.request(`/api/files/${encodeURIComponent(fileId)}`, {
+      method: "PATCH", body: { filename, expectedFilename },
+    });
+  }
+
+  async moveManagedFiles(ids: string[], folderId: string | null, expectedFolderIds: Record<string, string | null>): Promise<any> {
+    return this.request("/api/files/batch-move", {
+      method: "POST", body: { ids, folderId, expectedFolderIds },
+    });
+  }
+
+  async listPersonalFileTrash(page = 1): Promise<any> {
+    return this.request("/api/attachment-trash/", {
+      query: { workspaceId: "personal", page, pageSize: 100 },
+    });
+  }
+
+  async restorePersonalFiles(ids: string[], expectedTrashedAt: Record<string, string>): Promise<any> {
+    return this.request("/api/attachment-trash/restore", {
+      method: "POST", query: { workspaceId: "personal" }, body: { ids, expectedTrashedAt },
+    });
+  }
+
+  async saveTaskAsNote(taskId: string, body: {
+    requestId: string; notebookId: string; title: string; description: string; expectedTaskUpdatedAt: string;
+  }): Promise<any> {
+    return this.request(`/api/tasks/${encodeURIComponent(taskId)}/note`, {
+      method: "POST", query: { workspaceId: "personal" }, body,
+    });
+  }
+
   // ==================== 搜索 ====================
 
   /** 全文搜索笔记 */
