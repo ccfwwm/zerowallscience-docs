@@ -7,17 +7,14 @@ function source(relativeUrl: string) {
 }
 
 describe("about QQ 群反馈入口", () => {
-  it("展示群号、二维码预览入口及双语文案", () => {
+  it("本站提供官网和文档入口并保留上游双语资源", () => {
     const settings = source("../../components/SettingsModal.tsx");
     const zh = source("../../i18n/locales/zh-CN.json");
     const en = source("../../i18n/locales/en.json");
 
-    expect(settings).toContain('import qqGroupQr from "@/assets/feedback/qq-group.jpg"');
-    expect(settings).toContain('const feedbackQqGroupNumber = "1093473044"');
-    expect(settings).toContain("setFeedbackQqPreviewOpen(true)");
-    expect(settings).toContain("src={qqGroupQr}");
-    expect(settings).toContain("about.feedbackQqGroup");
-    expect(settings).toContain("about.feedbackQqGroupNumber");
+    expect(settings).toContain('href="/"');
+    expect(settings).toContain('href="/docs/"');
+    expect(settings).toContain("ZeroWall Science 文档中心");
     expect(zh).toContain('"feedbackQqGroup": "加入 QQ 群反馈"');
     expect(en).toContain('"feedbackQqGroup": "Join the QQ feedback group"');
   });

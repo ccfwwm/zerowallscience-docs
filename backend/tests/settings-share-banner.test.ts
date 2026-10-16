@@ -97,5 +97,5 @@ test("无图片不能开启，非布尔开关不保存", async () => {
   for (const value of [null, 1, "1", "yes", {}]) {
     assert.equal((await update({ site_share_banner_enabled: value, site_title: "不应保存" })).status, 400);
   }
-  assert.equal((await read()).site_title, "nowen-note");
+  assert.equal((await read()).site_title, "ZeroWall Science");
 });
