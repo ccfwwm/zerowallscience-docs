@@ -121,3 +121,40 @@ test("download cancellation stops a streaming body and signed URLs are redacted"
     "https://archive.blob.core.windows.net/x?sig=[REDACTED]&se=tomorrow",
   );
 });
+
+test("the task deadline stops a stalled storage stream before the archive timeout", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "nowen-download-deadline-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let calls = 0;
+  let cancelled = false;
+  const github = new GitHub("", (async () => {
+    if (++calls === 1)
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://archive.blob.core.windows.net/x" },
+      });
+    return new Response(
+      new ReadableStream({
+        pull() {
+          return new Promise(() => {});
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    );
+  }) as typeof fetch);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 25);
+  t.after(() => clearTimeout(timer));
+  await assert.rejects(
+    github.downloadArtifact(
+      1,
+      join(directory, "deadline.zip"),
+      controller.signal,
+      100,
+    ),
+    { name: "AbortError" },
+  );
+  assert.equal(cancelled, true);
+});

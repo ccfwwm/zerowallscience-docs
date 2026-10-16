@@ -94,7 +94,7 @@ export class Engine {
         state: "queued",
         createdAt: at,
         updatedAt: at,
-        deadline: this.now() + Math.min(this.timeoutMs, 45 * 60_000),
+        deadline: this.now() + Math.min(this.timeoutMs, 90 * 60_000),
         runId: source.runId,
         jobs: [],
         artifacts: source.artifacts,

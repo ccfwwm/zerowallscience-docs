@@ -178,7 +178,7 @@ export class GitHub {
     signal: AbortSignal,
     maxBytes: number,
   ) {
-    const bounded = AbortSignal.any([signal, AbortSignal.timeout(10 * 60_000)]);
+    const bounded = AbortSignal.any([signal, AbortSignal.timeout(30 * 60_000)]);
     const response = await this.transport(
       `https://api.github.com/repos/${REPO}/actions/artifacts/${id}/zip`,
       {
