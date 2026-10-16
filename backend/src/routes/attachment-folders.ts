@@ -66,6 +66,8 @@ app.patch("/:id", async (c) => {
     const folder = db.prepare("SELECT name, parentId FROM attachment_folders WHERE id = ? AND userId = ?")
       .get(id, userId) as { name: string; parentId: string | null } | undefined;
     if (!folder) return "missing";
+    if (body.expectedName !== undefined && body.expectedName !== folder.name) return "stale";
+    if (Object.prototype.hasOwnProperty.call(body, "expectedParentId") && body.expectedParentId !== folder.parentId) return "stale";
     const parentId = body.parentId === undefined ? folder.parentId : body.parentId;
     const name = body.name === undefined ? folder.name : body.name.trim();
     const visited = new Set([id]);
@@ -83,6 +85,7 @@ app.patch("/:id", async (c) => {
     return { id, name, parentId };
   })();
   if (result === "missing") return c.json({ error: "文件夹不存在", code: "FOLDER_NOT_FOUND" }, 404);
+  if (result === "stale") return c.json({ error: "文件夹名称或位置已变化，请重新预览", code: "FOLDER_VERSION_CONFLICT" }, 409);
   if (result === "cycle") return c.json({ error: "不能移动到自身或子文件夹", code: "FOLDER_CYCLE" }, 409);
   if (result === "duplicate") return c.json({ error: "同级已存在同名文件夹", code: "FOLDER_NAME_CONFLICT" }, 409);
   return c.json(result);
