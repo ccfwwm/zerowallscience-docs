@@ -50,6 +50,13 @@ app.post("/:action", async (c) => {
       return { status: 403 as const, error: "文件不存在或无权管理", code: "FORBIDDEN" };
     }
     if (rows.some((row) => !row!.trashedAt)) return { status: 409 as const, error: "只能操作回收站内的文件", code: "FILE_NOT_TRASHED" };
+    if (action === "restore" && body.expectedTrashedAt !== undefined) {
+      if (!body.expectedTrashedAt || typeof body.expectedTrashedAt !== "object" || Array.isArray(body.expectedTrashedAt)
+          || rows.some((row) => !Object.prototype.hasOwnProperty.call(body.expectedTrashedAt, row!.id)
+            || body.expectedTrashedAt[row!.id] !== row!.trashedAt)) {
+        return { status: 409 as const, error: "回收站文件已变化，请重新预览", code: "FILE_TRASH_VERSION_CONFLICT" };
+      }
+    }
     if (action === "purge") {
       for (const id of ids) {
         const risk = attachmentDeletionRisk(id, { allowTrashed: true });
