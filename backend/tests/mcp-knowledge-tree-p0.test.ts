@@ -67,7 +67,7 @@ test("MCP PAT tree CRUD enforces personal grants, previews and subtree revisions
 
     const tree = async () => {
       const r = await app.request("/api/knowledge-tree/?workspaceId=personal&includeDeleted=1");
-      assert.equal(r.status, 200, await r.text());
+      assert.equal(r.status, 200, await r.clone().text());
       return (await r.json() as any).nodes as any[];
     };
     const preview = async (id: string, subtree = false) => {
@@ -92,7 +92,7 @@ test("MCP PAT tree CRUD enforces personal grants, previews and subtree revisions
     let response = await send("/api/knowledge-tree/nodes?workspaceId=personal", "POST", {
       parentId: root.id, title: "AI folder", nodeType: "folder", ...await preview(root.id),
     });
-    assert.equal(response.status, 201, await response.text());
+    assert.equal(response.status, 201, await response.clone().text());
     const created = await response.json() as any;
     assert.equal(created.title, "AI folder");
 
@@ -100,7 +100,7 @@ test("MCP PAT tree CRUD enforces personal grants, previews and subtree revisions
       title: "Safer title", expectedTitle: "stale",
       ...await preview(note.id),
     });
-    assert.equal(response.status, 200, await response.text());
+    assert.equal(response.status, 200, await response.clone().text());
 
     const stale = await preview(child.id, true);
     db.prepare("UPDATE notes SET title='Changed after preview' WHERE id=?").run(note.resourceId);
@@ -108,12 +108,12 @@ test("MCP PAT tree CRUD enforces personal grants, previews and subtree revisions
     assert.equal(response.status, 409, "a nested change must invalidate delete preview");
 
     response = await send(`/api/knowledge-tree/nodes/${encodeURIComponent(child.id)}?workspaceId=personal&mode=subtree`, "DELETE", await preview(child.id, true));
-    assert.equal(response.status, 200, await response.text());
+    assert.equal(response.status, 200, await response.clone().text());
 
     response = await send(`/api/knowledge-tree/nodes/${encodeURIComponent(child.id)}/restore?workspaceId=personal`, "POST", {
       includeSubtree: true, ...await preview(child.id, true),
     });
-    assert.equal(response.status, 200, await response.text());
+    assert.equal(response.status, 200, await response.clone().text());
 
     response = await send(`/api/knowledge-tree/nodes/${encodeURIComponent(note.id)}/move?workspaceId=personal`, "PUT", {
       parentId: denied.id, ...await preview(note.id, true),
