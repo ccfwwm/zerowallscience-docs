@@ -1031,6 +1031,13 @@ async function prepareTreeOperation(params: {
     return false;
   }).map((node) => node.id) : [previewId];
   if (affectedNodeIds.length > 10000) throw new Error("受影响节点过多，请拆分操作");
+  if (isSubtree && affectedNodeIds.some((id) => {
+    const descendant = byId.get(id);
+    return !descendant || descendant.workspaceId != null
+      || !["note", "notebook"].includes(descendant.resourceType);
+  })) {
+    throw new Error("目录包含文件、思维导图或其他尚未验收的资源类型；MCP P0 禁止修改这种混合子树");
+  }
   return {
     nodes, source, target, revision, subtreeRevision,
     preconditions: treeMutationPreconditions(source, subtreeRevision),
