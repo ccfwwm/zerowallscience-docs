@@ -25,6 +25,13 @@ export async function saveTaskNoteSnapshot(userId: string, taskId: string, body:
   const validateAccess = () => {
     const task = db.prepare("SELECT * FROM tasks WHERE id=?").get(taskId) as any;
     if (!task) throw new TaskSnapshotError("TASK_NOT_FOUND", 404, "任务不存在");
+    // Optional MCP precondition; checked both before copying attachments and
+    // inside the final transaction so a concurrent task edit cannot silently
+    // create a stale note snapshot.
+    if (body.expectedTaskUpdatedAt !== undefined
+        && body.expectedTaskUpdatedAt !== task.updatedAt) {
+      throw new TaskSnapshotError("TASK_SNAPSHOT_STALE", 409, "任务详情已变化，请重新预览");
+    }
     if (task.workspaceId ? !getUserWorkspaceRole(task.workspaceId, userId) : task.userId !== userId) {
       throw new TaskSnapshotError("FORBIDDEN", 403, "无权读取任务");
     }
