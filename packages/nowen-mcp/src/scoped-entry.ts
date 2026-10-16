@@ -352,6 +352,30 @@ async function handleTagRequest(request: Request, url: URL): Promise<Response> {
   throw new ScopeDeniedError("scoped MCP 暂不允许全局标签管理；仅允许对作用域内笔记添加或移除标签");
 }
 
+async function assertPersonalTaskLinks(body: Record<string, unknown>, request: Request): Promise<void> {
+  if (body.workspaceId || body.noteId) throw new ScopeDeniedError("MCP 任务不得跨空间或直接关联笔记");
+  if (body.parentId) {
+    if (typeof body.parentId !== "string") throw new ScopeDeniedError("父任务 ID 非法");
+    const result = await originalFetch(new Request(new URL("/api/tasks/" + encodeURIComponent(body.parentId), baseUrl), {
+      headers: requestAuthHeaders(request),
+    }));
+    if (!result.ok) throw new ScopeDeniedError("父任务不存在或无权限");
+    const task = await readJsonResponse(result);
+    if (!task || task.workspaceId != null) throw new ScopeDeniedError("父任务必须属于个人空间");
+  }
+  if (body.projectId) {
+    if (typeof body.projectId !== "string") throw new ScopeDeniedError("项目 ID 非法");
+    const result = await originalFetch(new Request(new URL("/api/task-projects?workspaceId=personal", baseUrl), {
+      headers: requestAuthHeaders(request),
+    }));
+    if (!result.ok) throw new ScopeDeniedError("无法验证个人项目归属");
+    const projects = await readJsonResponse(result);
+    if (!Array.isArray(projects) || !projects.some((item: any) => item.id === body.projectId && item.workspaceId == null)) {
+      throw new ScopeDeniedError("目标项目不属于个人空间");
+    }
+  }
+}
+
 async function handlePersonalTaskRequest(request: Request, url: URL): Promise<Response> {
   const method = request.method.toUpperCase();
   const resource = url.pathname.slice('/api/tasks'.length);
@@ -362,9 +386,7 @@ async function handlePersonalTaskRequest(request: Request, url: URL): Promise<Re
     if (method === 'POST') {
       policy.assertWritable('创建任务');
       const body = await readJson(request);
-      if (body.workspaceId || body.parentId || body.noteId || body.projectId) {
-        throw new ScopeDeniedError('MCP 任务创建不得关联其他资源');
-      }
+      await assertPersonalTaskLinks(body, request);
     }
     return originalFetch(request);
   }
@@ -395,9 +417,7 @@ async function handlePersonalTaskRequest(request: Request, url: URL): Promise<Re
   if (!task || task.workspaceId != null) throw new ScopeDeniedError('MCP 仅允许个人任务');
   if (method === 'PUT') {
     const body = await readJson(request);
-    if (body.workspaceId || body.parentId || body.noteId || body.projectId) {
-      throw new ScopeDeniedError('MCP 任务更新不得修改资源关联');
-    }
+    await assertPersonalTaskLinks(body, request);
     return originalFetch(request);
   }
   return replaceJsonResponse(record, task);
@@ -433,6 +453,39 @@ async function handlePersonalProjectRequest(request: Request, url: URL): Promise
     throw new ScopeDeniedError("项目不属于个人空间");
   }
   return originalFetch(request);
+}
+
+async function handleKnowledgeTreeRequest(request: Request, url: URL): Promise<Response> {
+  if (!["/api/knowledge-tree", "/api/knowledge-tree/"].includes(url.pathname)
+      || request.method.toUpperCase() !== "GET") {
+    throw new ScopeDeniedError("scoped MCP 仅允许读取知识树");
+  }
+  await ensureDescendantsHydrated(request);
+  const response = await originalFetch(request);
+  if (!response.ok) return response;
+  const body = await readJsonResponse(response);
+  if (!body || !Array.isArray(body.nodes)) return response;
+  const nodes = policy.filterKnowledgeTree(body.nodes);
+  const selectedIds = new Set(nodes.map((node: any) => node.id));
+  const selectedNotes = new Set(nodes.filter((node: any) => node.resourceType === "note")
+    .map((node: any) => node.resourceId));
+  const counts = new Map<string, number>();
+  for (const node of nodes) {
+    if (node.parentId && selectedIds.has(node.parentId)) {
+      counts.set(node.parentId, (counts.get(node.parentId) || 0) + 1);
+    }
+  }
+  return replaceJsonResponse(response, {
+    ...body,
+    nodes: nodes.map((node: any) => ({
+      ...node,
+      parentId: node.parentId && selectedIds.has(node.parentId) ? node.parentId : null,
+      childCount: counts.get(node.id) || 0,
+    })),
+    passwordAuthorizedNotes: Array.isArray(body.passwordAuthorizedNotes)
+      ? body.passwordAuthorizedNotes.filter((entry: any) => selectedNotes.has(entry.noteId))
+      : [],
+  });
 }
 
 async function scopedFetch(input: string | URL | Request, init?: RequestInit): Promise<Response> {
@@ -490,6 +543,9 @@ async function scopedFetch(input: string | URL | Request, init?: RequestInit): P
     }
     if (url.pathname === "/api/task-projects" || url.pathname.startsWith("/api/task-projects/")) {
       return await handlePersonalProjectRequest(request, url);
+    }
+    if (url.pathname === "/api/knowledge-tree" || url.pathname.startsWith("/api/knowledge-tree/")) {
+      return await handleKnowledgeTreeRequest(request, url);
     }
     if (url.pathname === "/api/ai/chat") {
       return originalFetch(request);

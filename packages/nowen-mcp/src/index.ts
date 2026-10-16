@@ -772,6 +772,42 @@ server.tool(
 );
 
 server.tool(
+  "nowen_create_subtask",
+  "为本人个人任务创建子任务；父任务必须属于同一用户个人空间",
+  {
+    parentTaskId: z.string().min(1),
+    title: z.string().min(1),
+    priority: z.number().int().min(1).max(3).optional(),
+    dueDate: z.string().optional(),
+  },
+  async ({ parentTaskId, title, priority, dueDate }) => {
+    try {
+      const task = await api.createTask({ parentId: parentTaskId, title, priority, dueDate });
+      return { content: [{ type: "text" as const, text: JSON.stringify(task, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "nowen_assign_task_project",
+  "将个人任务分配至个人项目或从项目中移除；不允许跨用户或工作区关联",
+  {
+    taskId: z.string().min(1),
+    projectId: z.string().nullable().describe("个人项目 ID，null 表示取消关联"),
+  },
+  async ({ taskId, projectId }) => {
+    try {
+      const result = await api.updateTask(taskId, { projectId });
+      return { content: [{ type: "text" as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
   "nowen_archive_task",
   "归档或恢复已完成的个人顶层任务及其子任务；归档前需获得用户批准",
   {
@@ -855,6 +891,32 @@ server.tool(
         ...(pinned !== undefined ? { isPinned: pinned ? 1 : 0 } : {}),
       });
       return { content: [{ type: "text" as const, text: JSON.stringify({ id: update.id, version: update.version, isPinned: update.isPinned, isFavorite: update.isFavorite }, null, 2) }] };
+    } catch (error: any) {
+      return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
+    }
+  },
+);
+
+server.tool(
+  "nowen_get_knowledge_tree",
+  "读取某个空间的统一知识树，包含文件夹、笔记和文件节点；服务端及 Token 会按权限过滤",
+  {
+    workspaceId: z.string().optional().describe("personal 或团队工作区 ID，默认 personal"),
+  },
+  async ({ workspaceId }) => {
+    try {
+      const result = await api.getKnowledgeTree(workspaceId);
+      const nodes = Array.isArray(result?.nodes) ? result.nodes : [];
+      const summary = nodes.map((node: any) => ({
+        id: node.id,
+        parentId: node.parentId,
+        resourceType: node.resourceType,
+        resourceId: node.resourceId,
+        title: node.title,
+        childCount: node.childCount,
+        isDeleted: node.isDeleted,
+      }));
+      return { content: [{ type: "text" as const, text: JSON.stringify({ nodes: summary }, null, 2) }] };
     } catch (error: any) {
       return { content: [{ type: "text" as const, text: `错误: ${error.message}` }], isError: true };
     }

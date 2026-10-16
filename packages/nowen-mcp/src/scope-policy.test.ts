@@ -50,6 +50,23 @@ test("read-only mode is enforced even without notebook whitelist", () => {
   assert.throws(() => policy.assertWritable("创建笔记"), ScopeDeniedError);
 });
 
+test("knowledge tree filtering drops out-of-scope nested notebooks and their notes", () => {
+  const policy = new NotebookScopePolicy(loadScopeConfiguration({
+    ALLOWED_NOTEBOOK_IDS: "allowed",
+  }));
+  const nodes = [
+    { id: "notebook:allowed", resourceType: "notebook", resourceId: "allowed", parentId: null },
+    { id: "note:a", resourceType: "note", resourceId: "a", parentId: "notebook:allowed" },
+    { id: "notebook:denied", resourceType: "notebook", resourceId: "denied", parentId: "notebook:allowed" },
+    { id: "note:b", resourceType: "note", resourceId: "b", parentId: "notebook:denied" },
+    { id: "note:orphan", resourceType: "note", resourceId: "orphan", parentId: null },
+  ];
+  assert.deepEqual(policy.filterKnowledgeTree(nodes).map((item) => item.id), [
+    "notebook:allowed",
+    "note:a",
+  ]);
+});
+
 test("note and file filtering cannot expand the whitelist", () => {
   const policy = new NotebookScopePolicy(loadScopeConfiguration({
     ALLOWED_NOTEBOOK_IDS: "allowed",
