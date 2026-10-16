@@ -429,7 +429,8 @@ test("P1 task snapshot PAT requires owned personal task, writable notebook and e
   const call = (taskId: string, notebookId: string, expectedTaskUpdatedAt: string) => app.request(
     `/api/tasks/${taskId}/note?workspaceId=personal`,
     { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ notebookId, expectedTaskUpdatedAt }) },
+      body: JSON.stringify({ notebookId, expectedTaskUpdatedAt,
+        expectedTaskTitle: "Personal", expectedTaskDescription: "" }) },
   );
   assert.equal((await call("p1-task", "nb-a", "stale")).status, 409);
   assert.equal((await call("p1-task", "nb-b", "2026-10-16T09:00:00Z")).status, 403);
