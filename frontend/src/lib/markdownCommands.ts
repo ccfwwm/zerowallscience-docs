@@ -152,7 +152,8 @@ export function toggleLinePrefix(
   }
 
   if (changes.length === 0) return false;
-  view.dispatch({ changes });
+  const changeSet = view.state.changes(changes);
+  view.dispatch({ changes: changeSet, selection: view.state.selection.map(changeSet, 1) });
   focus(view);
   return true;
 }
@@ -209,13 +210,13 @@ export function toggleCodeBlock(view: EditorView): boolean {
 
   const selectedText = doc.sliceString(range.from, range.to);
   const needsBlank = first.from > 0 && doc.lineAt(first.from - 1).text !== "";
-  const prefix = needsBlank ? "\n" : "";
+  const prefix = range.from > first.from || needsBlank ? "\n" : "";
   const insert = `${prefix}\`\`\`\n${selectedText}\n\`\`\`\n`;
 
   view.dispatch({
-    changes: { from: first.from, to: last.to, insert },
+    changes: { from: range.from, to: range.to, insert },
     selection: EditorSelection.cursor(
-      first.from + prefix.length + 4, // "```\n" = 4 字符，光标放代码内起点
+      range.from + prefix.length + 4, // "```\n" = 4 字符，光标放代码内起点
     ),
   });
   focus(view);

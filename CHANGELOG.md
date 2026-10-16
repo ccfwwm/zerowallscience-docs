@@ -14,6 +14,8 @@
 
 ## 未发布 / Unreleased
 
+- **Markdown / #853**：修复斜杠菜单在编辑器更新阶段读取布局而失效的问题，支持 `/H1`、`/code`、`/tab` 等筛选、键盘和触控选择；补齐视口避让、代码与只读保护、取消及撤销，修复标题后继续输入位置错误和代码块插入吞掉邻近文字的问题。Repair Markdown slash commands with safe cursor measurement, searchable keyboard/touch actions, viewport placement, code/read-only guards and undo; preserve the typing position and surrounding text. [使用说明 / Usage](./docs/user/markdown-slash-commands.md) · [验证记录 / Validation](./docs/qa/v1.5.2/markdown-slash-menu.md)。尚未发布。Unreleased.
+
 - **daily records / date picker**：修复点击“选择日期”文字仅聚焦而不弹出日历的问题；显式触发原生选择器，并扩大原生日历图标点击区域。Open the native date picker when clicking anywhere on the daily-records date shortcut, with full native-indicator hit coverage.
 
 - **editor / files AI**：修复富文本编辑器延迟初始化后首个保存确认可能覆盖较新输入的问题；加密浏览器夹具对齐正式保存确认逻辑，并验证延迟回包、服务端持久化和重载解锁。文件 AI 弹窗复用公共 ID 生成函数，减少对启动补丁的依赖。Initialize rich-text synchronization when the deferred editor becomes ready, preserve newer input across the first save ACK, strengthen encrypted persistence tests, and use the shared ID fallback in file AI dialogs.
