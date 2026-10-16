@@ -144,6 +144,24 @@ test("P1 personal file and task tools enforce preview, token and optimistic posi
     });
     assert.ok(!folderResult.isError, asText(folderResult));
     assert.equal(folderWrites, 1);
+    const trashed = await client.callTool({ name: "nowen_list_file_trash", arguments: { page: 1 } });
+    assert.ok(!trashed.isError, asText(trashed));
+    assert.equal(JSON.parse(asText(trashed)).entries[0].id, "trashed-a");
+    const restorePreview = JSON.parse(asText(await client.callTool({
+      name: "nowen_preview_file_change",
+      arguments: { operation: "restore_files", fileIds: ["trashed-a"], page: 1 },
+    })));
+    assert.equal(restorePreview.snapshot.restoreSnapshot["trashed-a"], "2026-10-16T00:00:00Z");
+    const restored = await client.callTool({
+      name: "nowen_apply_file_change",
+      arguments: {
+        operation: "restore_files", fileIds: ["trashed-a"], page: 1,
+        expectedRevision: restorePreview.revision, confirmation: "RESTORE_FILES",
+      },
+    });
+    assert.ok(!restored.isError, asText(restored));
+    assert.equal(trashRestores, 1);
+
     const taskPreview = JSON.parse(asText(await client.callTool({
       name: "nowen_preview_task_to_note", arguments: { taskId: "task-1", notebookId: "notebook-1" },
     })));
@@ -165,7 +183,7 @@ test("P1 personal file and task tools enforce preview, token and optimistic posi
     assert.equal(JSON.parse(asText(saved)).originalTaskRetained, true);
     assert.equal(snapshots, 1);
     assert.equal(loginCalls, 0, "PAT must never fall back to username/password");
-    assert.equal(trashRestores, 0);
+    assert.equal(trashRestores, 1);
   } finally {
     await client.close();
     await new Promise<void>((resolve) => backend.close(() => resolve()));
