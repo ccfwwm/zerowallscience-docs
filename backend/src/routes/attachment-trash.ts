@@ -3,7 +3,8 @@ import { getDb } from "../db/schema";
 import { resolveFileAttachmentAccess, type FileAttachmentAccessRow } from "../services/fileAttachmentAccess";
 import { attachmentDeletionRisk } from "../services/attachment-deletion-safety";
 import { hasKnowledgeCapability, resolveResourceKnowledgeAccessForTombstone } from "../services/knowledgeCapabilities";
-import { deleteAttachmentObject } from "../services/attachment-storage";
+import { deleteThumbnailsFor } from "../services/thumbnails";
+import { deleteAttachmentObject, getAttachmentsDir } from "../services/attachment-storage";
 import { requireWorkspaceFeature } from "../middleware/acl";
 
 type TrashRow = FileAttachmentAccessRow & { id: string; filename: string; mimeType: string; size: number; path: string; trashedAt: string | null; originalFolderId: string | null };
@@ -55,6 +56,7 @@ app.post("/:action", async (c) => {
         if (risk) return { status: 409 as const, ...risk };
       }
     }
+    const cacheOwners = new Set<string>();
     const restored: { id: string; folderId: string | null; fallback: boolean }[] = [];
     for (const row of rows as TrashRow[]) {
       if (action === "restore") {
@@ -63,16 +65,20 @@ app.post("/:action", async (c) => {
         db.prepare("UPDATE attachments SET folderId=?,trashedAt=NULL,trashedBy=NULL,originalFolderId=NULL WHERE id=?").run(folderId, row.id);
         restored.push({ id: row.id, folderId, fallback: !!row.originalFolderId && !folderId });
       } else {
+        cacheOwners.add(row.id);
+        for (const relation of db.prepare("SELECT sourceAttachmentId FROM attachment_media_variants WHERE variantAttachmentId=?").all(row.id) as {sourceAttachmentId:string}[]) cacheOwners.add(relation.sourceAttachmentId);
+        db.prepare("DELETE FROM attachment_media_variants WHERE variantAttachmentId=?").run(row.id);
         // Clear the retention marker only within the explicit purge transaction.
         db.prepare("UPDATE attachments SET trashedAt=NULL WHERE id=?").run(row.id);
         db.prepare("DELETE FROM attachments WHERE id=?").run(row.id);
       }
     }
-    return { status: 200 as const, rows: rows as TrashRow[], restored };
+    return { status: 200 as const, rows: rows as TrashRow[], restored, cacheOwners: [...cacheOwners] };
   })();
   if (result.status !== 200) return c.json({ error: result.error, code: result.code }, result.status);
   const cleanupPending: string[] = [];
   if (action === "purge") {
+    for (const id of result.cacheOwners) deleteThumbnailsFor(getAttachmentsDir(), id);
     for (const row of result.rows) {
       if (db.prepare("SELECT 1 FROM attachments WHERE path=? LIMIT 1").get(row.path)) continue;
       try { await deleteAttachmentObject(row.path); }

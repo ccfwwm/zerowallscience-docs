@@ -521,6 +521,8 @@ export async function handleDownloadAttachment(
         if (!media.companion) return c.json({ error: "没有配对的动态原件" }, 404);
         const original = await readObject(media.companion.path);
         if (!original) return c.json({ error: "attachment file missing" }, 404);
+        const current = await inspectPhotoMedia(row.id, readHeifSource);
+        if (current.companion?.id !== media.companion.id) return c.json({ error: "没有配对的动态原件" }, 404);
         return c.body(toResponseBody(original), 200, {
           "Content-Type": media.companion.mimeType,
           "Content-Disposition": encodeContentDispositionFilename(media.companion.filename),
