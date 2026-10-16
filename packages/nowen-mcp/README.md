@@ -141,6 +141,7 @@ claude mcp list
 | `NOWEN_PASSWORD` | 可选显式密码认证 | 不设置 |
 | `ALLOWED_NOTEBOOK_IDS` | MCP 本地笔记本白名单，逗号分隔 | 未启用 |
 | `MCP_ACCESS_MODE` | `read-only` 或 `read-write` | `read-write` |
+| `MCP_ENABLE_DANGEROUS_TOOLS` | 是否开放插件执行、工作流运行、Webhook 创建、备份创建 | `false` |
 | `MCP_INCLUDE_DESCENDANTS` | 本地白名单是否包含子笔记本 | `false` |
 | `NOWEN_MCP_HEARTBEAT_MS` | 可选 stderr 心跳间隔（毫秒），0/off 关闭 | `0` |
 
@@ -234,6 +235,7 @@ P0 仅支持**本人个人空间**内普通文件夹和 Markdown 笔记的创建
 - `nowen_delete_note` 默认预览。执行软删除需提供 `dryRun=false`、匹配的 `expectedVersion` 和 `confirmation=MOVE_TO_TRASH`。设置 `permanent=true` 总是被拒绝；永久删除只能通过主应用回收站完成。
 - `MCP_ACCESS_MODE=read-only` 即使没有配置 `ALLOWED_NOTEBOOK_IDS` 也会拒绝写入；同时拒绝可能触发插件和任务副作用的 AI Chat。
 - **不再默认使用 `admin/admin123` 登录**。推荐 `NOWEN_API_TOKEN`，或者同时显式设置 `NOWEN_USERNAME` 与 `NOWEN_PASSWORD`。PAT 无效时不会回退到账号密码。
+- 插件执行、工作流手动运行、Webhook 创建及备份创建等外部/管理副作用工具默认关闭；仅管理员充分审查 Token 权限与 MCP 客户端授权流程后，才可以显式设置 `MCP_ENABLE_DANGEROUS_TOOLS=true`。此开关不是服务端授权的替代，Token scopes 和 ACL 仍会执行。
 - 预览修订值、确认字符串是操作安全防线，不是用户身份验证；实际人机确认仍由 MCP 宿主客户端提供，服务端会独立验证 ACL 与 Token grants。
 
 ### 已自动化验证的 P0 场景
