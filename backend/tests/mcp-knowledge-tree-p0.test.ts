@@ -110,6 +110,14 @@ test("MCP PAT tree CRUD enforces personal grants, previews and subtree revisions
     response = await send(`/api/knowledge-tree/nodes/${encodeURIComponent(child.id)}?workspaceId=personal&mode=subtree`, "DELETE", await preview(child.id, true));
     assert.equal(response.status, 200, await response.clone().text());
 
+    console.log("[mcp-restore-debug] db rows", JSON.stringify(db.prepare(
+      "SELECT id, parentId, scopeKey, isDeleted FROM knowledge_tree_nodes WHERE id IN (?, ?)"
+    ).all(child.id, note.id)));
+    const { listKnowledgeTree } = await import("../src/services/knowledgeTree.js");
+    console.log("[mcp-restore-debug] tombstones", JSON.stringify(listKnowledgeTree({
+      userId: "mcp-owner", workspaceId: null, includeDeleted: true, db,
+    }).map((node: any) => ({ id: node.id, parentId: node.parentId, isDeleted: node.isDeleted }))));
+
     response = await send(`/api/knowledge-tree/nodes/${encodeURIComponent(child.id)}/restore?workspaceId=personal`, "POST", {
       includeSubtree: true, ...await preview(child.id, true),
     });
