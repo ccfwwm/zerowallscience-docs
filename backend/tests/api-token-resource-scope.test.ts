@@ -259,3 +259,67 @@ test("PAT task scopes isolate personal tasks even with unrestricted token mode",
     assert.equal((await app.request("/api/tasks/reorder/batch", { method: "PUT" })).status, 403);
   }
 });
+
+test("PAT personal task projects remain available but workspace projects are denied", async () => {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.req.raw.headers.set("X-Auth-Mode", "api-token");
+    c.req.raw.headers.set("X-Api-Token-Id", "token-1");
+    c.req.raw.headers.set("X-Api-Resource-Mode", "restricted");
+    c.req.raw.headers.set("X-Api-Scopes", "tasks:read,tasks:write");
+    c.req.raw.headers.set("X-User-Id", "user-1");
+    return enforceApiTokenAccess(c, next);
+  });
+  app.get("/api/task-projects", (c) => c.json([]));
+  app.post("/api/task-projects", (c) => c.json({ created: true }, 201));
+  app.put("/api/task-projects/:id", (c) => c.json({ updated: true }));
+
+  assert.equal((await app.request("/api/task-projects?workspaceId=personal")).status, 200);
+  assert.equal((await app.request("/api/task-projects?workspaceId=ws-1")).status, 403);
+  assert.equal((await app.request("/api/task-projects?workspaceId=personal", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Personal" }),
+  })).status, 201);
+  assert.equal((await app.request("/api/task-projects?workspaceId=personal", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Bad", workspaceId: "ws-1" }),
+  })).status, 403);
+  assert.equal((await app.request("/api/task-projects/unknown-project", {
+    method: "PUT", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: "Other" }),
+  })).status, 403);
+});
+
+test("PAT filtered knowledge tree does not leak unauthorized notebook descendants", async () => {
+  const app = new Hono();
+  app.use("*", async (c, next) => {
+    c.req.raw.headers.set("X-Auth-Mode", "api-token");
+    c.req.raw.headers.set("X-Api-Token-Id", "token-1");
+    c.req.raw.headers.set("X-Api-Resource-Mode", "restricted");
+    c.req.raw.headers.set("X-Api-Scopes", "notebooks:read");
+    c.req.raw.headers.set("X-User-Id", "user-1");
+    return enforceApiTokenAccess(c, next);
+  });
+  app.get("/api/knowledge-tree/", (c) => c.json({
+    nodes: [
+      { id: "notebook:nb-a", parentId: null, resourceType: "notebook", resourceId: "nb-a" },
+      { id: "note:note-a", parentId: "notebook:nb-a", resourceType: "note", resourceId: "note-a" },
+      { id: "notebook:nb-b", parentId: null, resourceType: "notebook", resourceId: "nb-b" },
+      { id: "note:note-b", parentId: "notebook:nb-b", resourceType: "note", resourceId: "note-b" },
+    ],
+    passwordAuthorizedNotes: [
+      { noteId: "note-a", folderIds: [] },
+      { noteId: "note-b", folderIds: [] },
+    ],
+  }));
+  app.put("/api/knowledge-tree/nodes/note:note-a/move", (c) => c.json({ moved: true }));
+
+  const response = await app.request("/api/knowledge-tree/");
+  assert.equal(response.status, 200);
+  const body = await response.json() as any;
+  assert.deepEqual(body.nodes.map((node: any) => node.id), ["notebook:nb-a", "note:note-a"]);
+  assert.deepEqual(body.passwordAuthorizedNotes.map((entry: any) => entry.noteId), ["note-a"]);
+  assert.equal((await app.request("/api/knowledge-tree/nodes/note:note-a/move", {
+    method: "PUT",
+  })).status, 403);
+});
