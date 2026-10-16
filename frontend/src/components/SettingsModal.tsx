@@ -12,6 +12,7 @@ import SkinSwitcher from "@/components/SkinSwitcher";
 import ShareBannerEditor from "@/components/settings/ShareBannerEditor";
 import SecuritySettings from "@/components/SecuritySettings";
 import TokenManagement from "@/components/TokenManagement";
+import McpConnectionPanel from "@/components/settings/McpConnectionPanel";
 import DataManager from "@/components/DataManager";
 import FolderSyncSettings from "@/components/settings/FolderSyncSettings";
 import SyncSettingsTab from "@/components/settings/SyncSettingsTab";
@@ -2182,7 +2183,7 @@ const SettingsModal = React.forwardRef<HTMLDivElement, SettingsModalProps>(
               {isAndroidNativeRuntime() && <MobileAccountSettings accountLabel={currentUser?.displayName || currentUser?.username} />}
               {!isMobileLocalMode() && <SecuritySettings />}
             </div>}
-            {activeTab === "tokens" && <TokenManagement />}
+            {activeTab === "tokens" && <div className="space-y-6"><McpConnectionPanel /><TokenManagement /></div>}
                   {activeTab === "users" && isAdmin && <UserManagement currentUserId={currentUser?.id ?? null} />}
                   {activeTab === "workspaces" && isAdmin && <WorkspaceManagement />}
                   {/* DataManager 内部保留管理员与个人导入/导出的权限限制。 */}
