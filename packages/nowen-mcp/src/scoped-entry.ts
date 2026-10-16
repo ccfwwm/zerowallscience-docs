@@ -328,7 +328,12 @@ async function handleAttachmentRequest(request: Request, url: URL): Promise<Resp
     return originalFetch(request);
   }
 
-  if (method === "GET" || method === "HEAD") return originalFetch(request);
+  if (method === "GET" || method === "HEAD") {
+    const fileId = decodeURIComponent(segments[2] || "");
+    if (!fileId) throw new ScopeDeniedError("附件 ID 必填");
+    await assertFileAllowed(fileId, request);
+    return originalFetch(request);
+  }
   throw new ScopeDeniedError("scoped MCP 不允许此附件操作");
 }
 
@@ -394,11 +399,20 @@ async function scopedFetch(input: string | URL | Request, init?: RequestInit): P
     return jsonResponse({ token: scopeConfig.apiToken });
   }
 
-  if (!policy.enabled || !url.pathname.startsWith("/api/")) {
-    return originalFetch(request);
-  }
+  if (!url.pathname.startsWith("/api/")) return originalFetch(request);
 
   try {
+    // Local read-only applies even when ALLOWED_NOTEBOOK_IDS is unset.
+    // /api/ai/ask and /api/ai/chat are inference-only endpoints.
+    const inferenceOnly = request.method.toUpperCase() === "POST"
+      && ["/api/ai/ask", "/api/ai/chat"].includes(url.pathname);
+    const authentication = request.method.toUpperCase() === "POST"
+      && url.pathname === "/api/auth/login";
+    if (isWriteMethod(request.method) && !inferenceOnly && !authentication) {
+      policy.assertWritable(`请求 ${request.method} ${url.pathname}`);
+    }
+    if (!policy.enabled) return originalFetch(request);
+
     if (url.pathname === "/api/health" || url.pathname === "/api/me") {
       return originalFetch(request);
     }
