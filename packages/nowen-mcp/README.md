@@ -205,7 +205,7 @@ npm run build
 - 笔记移动依赖 `notes:write`，当前源笔记与目标笔记本必须都有权限。执行前先调用 `nowen_move_note`（省略 `dryRun`），随后在确认移动方案后提交 `dryRun=false` 和 `expectedVersion`。发生版本冲突时重新预览。
 - `MCP_ACCESS_MODE=read-only` **独立于** `ALLOWED_NOTEBOOK_IDS` 生效；本地白名单未设置时也会拦截写入请求。仅受限知识库问答和登录认证用途的 POST 例外；AI Chat 可能触发副作用，因此也会被阻止。
 - 系统级自动化、Webhook、备份、管理员操作仍遵循已有 Token 权限约束；restricted Token 不会因为此次扩展获得这些权限。
-- 面向所有客户端的远程 Streamable HTTP MCP、知识树批量写入、文件夹批量整理、工作流编辑仍需单独安全评审和兼容性测试，本次没有宣称已开放。
+- P2 已增加**独立、默认关闭的 Streamable HTTP 网关**及个人工作流预览/执行，**没有**开放公网直连、系统级事件重放、任意插件自动执行或团队自动化操作；跨客户端真实部署仍需验收。
 
 ### 开发验证
 
@@ -275,6 +275,47 @@ P0 仅支持**本人个人空间**内普通文件夹和 Markdown 笔记的创建
 ### 验证与边界
 
 专项 CI 包括真实 MCP SDK stdio 客户端 + 隔离 HTTP 后端的 P1 端到端调用，以及后端 API Token 安全测试。涉及文件位置、名称和回收站恢复的预览冲突均必须阻止危险操作。**P1 未开放跨空间文件搬运、自动永久删除、全量批量操作以及会破坏原笔记附件引用关系的重写**。正式发布仍需 Windows/macOS/Android 及浏览器实际回归。
+
+## P2：自动化管理、HTTP 网关与可视化连接中心
+
+新增 5 个 MCP 工具：
+
+- `nowen_get_workflow`：读取个人工作流详情、版本和触发规则
+- `nowen_list_workflow_runs`：读取该工作流的运行历史
+- `nowen_preview_workflow_change`：预览创建、编辑、启停和删除，返回修订指纹
+- `nowen_apply_workflow_change`：用户确认后执行，后端再次验证 Token ACL 和修订版本
+- `nowen_mcp_diagnostics`：查看传输模式、只读状态与危险操作授权情况（不输出密钥）
+
+管理个人自动化的 PAT 需要新增的 `automations:read`、`automations:write` scopes。所有 PAT 无论 restricted/unrestricted 都只能读取、修改**自己创建的个人工作流**。系统状态、工作区自动化、事件重放、直接手动运行等端点不由此开放。新增工作流默认禁用；更新前必须先停用。含插件 Action 或 Webhook 的定义要求 `MCP_ENABLE_DANGEROUS_TOOLS=true` 明确开启，且仍由后端校验插件是否存在。删除需要 `DELETE_WORKFLOW` 确认。**应当在 MCP 宿主客户端显示预览并征得用户明确同意，模型自行填写确认词不等于人工批准。**
+
+### 远程 Streamable HTTP（默认关闭）
+
+`npm run start:http` 只有在提供单独网关密钥及 Nowen PAT 时才会启动。
+
+```bash
+cd packages/nowen-mcp
+npm ci
+npm run build
+export NOWEN_URL="http://127.0.0.1:3001"
+export NOWEN_API_TOKEN="nkn_your_personal_api_token"
+export NOWEN_MCP_HTTP_TOKEN="$(openssl rand -hex 32)"
+export MCP_ACCESS_MODE="read-only"
+export NOWEN_MCP_HTTP_HOST="127.0.0.1"
+export NOWEN_MCP_HTTP_PORT="3133"
+npm run start:http
+```
+
+随后可在本机用 `http://127.0.0.1:3133/mcp` 连接 MCP 客户端，在请求头发送 `Authorization: Bearer <NOWEN_MCP_HTTP_TOKEN>`。这个**独立网关密钥不是 Nowen PAT**，不可互相替代。服务器固定绑定回环地址；从公网使用时，请在可信的 HTTPS 反向代理（含 Host 转发和认证控制）之后暴露 `/mcp`，**不可直接绑定 0.0.0.0**。如果使用浏览器 Origin 请求，须明确配置 `NOWEN_MCP_HTTP_ALLOWED_ORIGINS` 精确域名列表；默认拒绝所有带 Origin 的请求。
+
+默认只读；如确需写入，必须同时设置 `MCP_ACCESS_MODE=read-write` 和 `NOWEN_MCP_HTTP_ALLOW_WRITE=true`。建议始终先创建短期、最小权限 PAT，浏览器和其他代理不能共享该 Token。服务端限制 Host、Origin、请求体积，并提供非认证健康探测 `/health`（只报告服务活性，不泄露凭据）。HTTP 使用 **stateless JSON response** 模式，不支持会话恢复及服务端主动推送事件；后续若需长连接或公网多用户 OAuth，必须另做权限隔离方案。
+
+### 可视化管理入口
+
+设置 → 访问令牌 → **MCP 连接中心**。可选择 stdio/Streamable HTTP 示例，复制客户端 JSON 配置，检测 Nowen 后端连通性；下方直接复用原有 PAT 创建、笔记本授权、吊销与使用统计。示例中的秘钥均为占位符，本页面不会保存 Token 或私密密钥。HTTP 网关的启停与 TLS/反向代理由服务器运维管理，并不由网页设置直接更改系统环境变量。
+
+### 自动化验收范围
+
+CI 运行 HTTP 网关认证/Origin/Host/超大负载测试、后端 PAT 所有权/启停/并发版本测试，以及原有 P0/P1 MCP stdio 协议测试。真实多客户端并发、HTTPS 代理和全部桌面/移动端联调尚未执行，不应将专项 CI 通过误认为已经可以合并整个 v1.5.2。
 
 ## 发行说明
 
