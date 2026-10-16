@@ -178,6 +178,36 @@ export function registerP1Tools(server: McpServer, api: NowenApiClient): void {
       } catch (error) { return failure(error); }
     });
 
+  server.tool("nowen_reorder_task",
+    "预览或确认修改个人任务排序；保留项目和父子关系，使用原更新时间与顺序阻止过期写入",
+    {
+      taskId: z.string().min(1),
+      sortOrder: z.number().int().min(0).max(1_000_000),
+      dryRun: z.boolean().optional().describe("默认 true，只预览"),
+      expectedUpdatedAt: z.string().optional().describe("执行时填写预览返回的更新时间"),
+      expectedSortOrder: z.number().int().optional().describe("执行时填写预览返回的原 sortOrder"),
+      confirmation: z.string().optional().describe("执行时必须为 REORDER_TASK"),
+    },
+    async ({ taskId, sortOrder, dryRun, expectedUpdatedAt, expectedSortOrder, confirmation }) => {
+      try {
+        const task = await api.getTask(taskId);
+        if (!task || task.workspaceId != null) throw new Error("仅可调整本人个人任务");
+        const preview = {
+          taskId, title: task.title, currentSortOrder: task.sortOrder,
+          updatedAt: task.updatedAt, targetSortOrder: sortOrder,
+        };
+        if (dryRun !== false) return response({ dryRun: true, ...preview });
+        if (confirmation !== "REORDER_TASK") throw new Error("调整排序前须取得明确确认");
+        if (expectedUpdatedAt !== task.updatedAt || expectedSortOrder !== task.sortOrder) {
+          throw new Error("任务顺序或详情已变化，请重新预览");
+        }
+        const changed = await api.updateTask(taskId, {
+          sortOrder, expectedUpdatedAt, expectedSortOrder,
+        });
+        return response({ applied: true, taskId, sortOrder: changed.sortOrder });
+      } catch (error) { return failure(error); }
+    });
+
   const taskPreviewShape = {
     taskId: z.string().min(1),
     notebookId: z.string().min(1).describe("目标笔记本 ID"),
