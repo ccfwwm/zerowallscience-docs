@@ -209,6 +209,7 @@ function requiredScope(pathname: string, method: string): string | null {
   if (pathname.startsWith("/api/task-digest")) return "__login_only__";
   if (pathname.startsWith("/api/ai/task-plan")) return "__login_only__";
   if (pathname === "/api/tasks" || pathname.startsWith("/api/tasks/") || pathname === "/api/task-projects" || pathname.startsWith("/api/task-projects/")) return write ? "tasks:write" : "tasks:read";
+  if (pathname === "/api/knowledge-tree" || pathname === "/api/knowledge-tree/") return write ? "__unsupported__" : "notebooks:read";
   if (pathname.startsWith("/api/notebooks")) return write ? "notebooks:write" : "notebooks:read";
   if (pathname.startsWith("/api/note-templates")) return write ? "notes:write" : "notes:read";
   if (pathname.startsWith("/api/notes")) return write ? "notes:write" : "notes:read";
@@ -449,6 +450,48 @@ async function handleAi(c: Context, next: Next, ctx: TokenAccessContext): Promis
 }
 
 /** PAT 的项目管理仅限个人空间，绝不暴露团队项目。 */
+/** The only PAT knowledge-tree surface is a filtered read-only catalog. */
+async function handleTokenKnowledgeTree(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
+  if (!["/api/knowledge-tree", "/api/knowledge-tree/"].includes(c.req.path)
+      || c.req.method.toUpperCase() !== "GET") {
+    throw new ApiTokenAccessError("API Token 仅允许读取知识树", "API_TOKEN_ENDPOINT_DENIED");
+  }
+  await next();
+  if (ctx.resourceMode !== "restricted" || c.res.status < 200 || c.res.status >= 300) return;
+  await replaceFilteredResponse(c, (body) => {
+    if (!body || !Array.isArray(body.nodes)) return body;
+    const byId = new Map<string, any>(body.nodes.map((item: any) => [item.id, item]));
+    const allowed = (node: any): boolean => {
+      let current = node;
+      const seen = new Set<string>();
+      while (current && !seen.has(current.id)) {
+        seen.add(current.id);
+        if (current.resourceType === "notebook") return canRead(ctx, current.resourceId);
+        current = current.parentId ? byId.get(current.parentId) : undefined;
+      }
+      return false;
+    };
+    const selected = body.nodes.filter(allowed);
+    const selectedIds = new Set(selected.map((node: any) => node.id));
+    const notes = new Set(selected.filter((node: any) => node.resourceType === "note").map((node: any) => node.resourceId));
+    const counts = new Map<string, number>();
+    for (const node of selected) if (node.parentId && selectedIds.has(node.parentId)) {
+      counts.set(node.parentId, (counts.get(node.parentId) || 0) + 1);
+    }
+    return {
+      ...body,
+      nodes: selected.map((node: any) => ({
+        ...node,
+        parentId: node.parentId && selectedIds.has(node.parentId) ? node.parentId : null,
+        childCount: counts.get(node.id) || 0,
+      })),
+      passwordAuthorizedNotes: Array.isArray(body.passwordAuthorizedNotes)
+        ? body.passwordAuthorizedNotes.filter((entry: any) => notes.has(entry.noteId))
+        : [],
+    };
+  });
+}
+
 async function handleTokenTaskProjects(c: Context, next: Next, ctx: TokenAccessContext): Promise<void> {
   const path = c.req.path;
   const method = c.req.method.toUpperCase();
@@ -594,6 +637,10 @@ export async function enforceApiTokenAccess(c: Context, next: Next): Promise<Res
     }
     if (c.req.path === "/api/task-projects" || c.req.path.startsWith("/api/task-projects/")) {
       await handleTokenTaskProjects(c, next, ctx);
+      return;
+    }
+    if (c.req.path === "/api/knowledge-tree" || c.req.path.startsWith("/api/knowledge-tree/")) {
+      await handleTokenKnowledgeTree(c, next, ctx);
       return;
     }
 
