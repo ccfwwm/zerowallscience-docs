@@ -12,15 +12,15 @@ process.env.ATTACHMENT_SIGNING_SECRET = "publication-image-regression-secret";
 process.env.ATTACHMENT_LEGACY_PUBLIC_URL = "false";
 
 test("匿名公开文章支持跨文章图片并持续复核发布边界", async () => {
-  const { getDb, closeDb } = await import("../src/db/schema");
+  const { getDb, closeDb } = require("../src/db/schema");
   const db = getDb();
   try {
-    await import("../src/runtime/notebook-publication");
-    const { sharedRouter } = await import("../src/routes/shares");
-    const { officialDocs: docs } = await import("../src/routes/official-docs");
-    const { handleDownloadAttachment } = await import("../src/routes/attachments");
-    const { createAttachmentSignedUrl, createPublicationAttachmentScope } = await import("../src/lib/attachment-signed-url");
-    const { getAttachmentsDir } = await import("../src/services/attachment-storage");
+    require("../src/runtime/notebook-publication");
+    const { sharedRouter } = require("../src/routes/shares");
+    const { officialDocs: docs } = require("../src/routes/official-docs");
+    const { handleDownloadAttachment } = require("../src/routes/attachments");
+    const { createAttachmentSignedUrl, createPublicationAttachmentScope } = require("../src/lib/attachment-signed-url");
+    const { getAttachmentsDir } = require("../src/services/attachment-storage");
     const ATTACHMENTS_DIR = getAttachmentsDir();
     const app = new Hono();
     app.route("/api/shared", sharedRouter);
@@ -51,7 +51,7 @@ test("匿名公开文章支持跨文章图片并持续复核发布边界", async
       db.prepare("UPDATE notes SET content=?,contentFormat=? WHERE id=?").run(content, format, target);
       for (const route of [`/api/docs/notes/${target}`, `/api/shared/notebook-public/image-token/notes/${target}`, `/api/shared/notebook-public/image-token/resources/note:${target}`]) {
         const response = await app.request(route);
-        assert.equal(response.status, 200, route);
+        assert.equal(response.status, 200, `${route}: ${response.status === 200 ? "ok" : await response.clone().text()}`);
         const body = await response.json() as { content: string; attachmentUrls: Record<string, string> };
         assert.deepEqual(Object.keys(body.attachmentUrls), [ids[0]], route);
         assert.match(body.content, /w=320/);
