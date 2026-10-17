@@ -441,6 +441,18 @@ npm run build
 
 restricted Token 即使被绕过 MCP 直接调用 REST API，也不能访问未授权笔记本。历史 Token 默认保持 `unrestricted`，兼容升级前行为。
 
+### 远程 HTTP 网关开启全部写权限
+
+远程网关默认只读。需要让 MCP 创建、更新笔记及执行其他已实现的写工具时，必须同时满足：
+
+```dotenv
+MCP_ACCESS_MODE=read-write
+NOWEN_MCP_HTTP_ALLOW_WRITE=true
+MCP_ENABLE_DANGEROUS_TOOLS=true
+```
+
+并为后端 PAT 授予所需的全部 scopes、使用 `unrestricted` 资源模式，同时移除 `ALLOWED_NOTEBOOK_IDS` 本地白名单。即使开启这些选项，用户 ACL 仍会拒绝账号本身无权访问的对象；`nowen_delete_note`、知识树删除和网盘整理仍遵循预览、版本校验、确认文本及可恢复回收站规则，MCP 不提供永久删除。
+
 最简配置：
 
 ```json
