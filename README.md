@@ -14,7 +14,7 @@
 
 | 路径 | 内容 |
 | --- | --- |
-| website/ | Astro 官网，中英文页面、主题与动态下载信息 |
+| website/ | 历史 Astro 官网，保留开发与测试；生产官网由 zerowallscience-web 仓库独立发布 |
 | frontend/ | React 文档阅读与后台编辑界面 |
 | backend/ | Hono API、权限、SQLite、附件与备份 |
 | content/docs/ | 首批指南与目录清单，仅补充缺失文档，不覆盖后台正文 |
@@ -25,7 +25,7 @@
 Node.js 20；分别在 website、frontend、backend 执行 npm ci。
 官网运行 npm run dev，文档前端运行 npm run dev，后端运行 npm run dev。
 生产使用 GitHub Actions，在 Runner 完成测试、构建和镜像制作，再部署到 uscavaslinux。
-推送 main 或手动运行 Deploy production；每六小时自动重新解析 Stable 下载元数据。
+推送 main、手动运行 Deploy production 或每六小时的定时任务只发布文档服务与代理配置；不上传官网产物，不切换或清理官网版本。生产官网由 [zerowallscience-web](https://github.com/ccfwwm/zerowallscience-web) 独立发布。
 详细维护、备份和回滚方法见 [本站部署说明](docs/zerowallscience-deployment.md)。
 
 文档引擎基于上游 v1.5.2（`c6f4778c`），保留本站品牌、管理员模型渠道及 AI 写作定制。

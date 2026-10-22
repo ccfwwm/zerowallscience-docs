@@ -12,18 +12,17 @@ exec 9>"$root/deploy.lock"
 flock -n 9 || { echo "deployment already running" >&2; exit 2; }
 incoming="$root/incoming/$sha"
 test -s "$incoming/image.tar.gz"
-test -s "$incoming/site.tar.gz"
 test -s "$incoming/docker-compose.production.yml"
 test -s "$incoming/nginx/zerowallscience-web.https.conf"
 test -s "$incoming/nginx/zerowallscience-web.http.conf"
 test ! -e "$root/maintenance"
 release="$sha-$(date -u +%Y%m%dT%H%M%S)"
 backup="$root/backups/$release"
-mkdir -p "$backup" "$web/releases/$release"
-chmod 755 "$web/releases/$release"
+mkdir -p "$backup"
 cp "$nginx_dir"/zerowallscience-web.*.conf "$backup/"
 cp "$compose/docker-compose.yml" "$backup/docker-compose.yml"
 old_release="$(readlink "$web/current")"
+old_index_sha256="$(sha256sum "$web/current/index.html")"
 old_sha="$(cat "$compose/.deployed-sha")"
 [[ "$old_sha" =~ ^[0-9a-f]{40}$ ]]
 maintenance=0
@@ -56,8 +55,6 @@ rollback() {
     fi
     cp "$backup/docker-compose.yml" "$compose/docker-compose.yml" || exit 1
     cp "$backup"/zerowallscience-web.*.conf "$nginx_dir/" || exit 1
-    ln -sfn "$old_release" "$web/current.rollback"
-    mv -Tf "$web/current.rollback" "$web/current" || exit 1
     compose_up "$old_sha" && wait_healthy && nginx -t && systemctl reload nginx || exit 1
     printf '%s\n' "$old_sha" > "$compose/.deployed-sha"
     rm -f "$root/maintenance"
@@ -66,13 +63,8 @@ rollback() {
 }
 trap rollback ERR
 
-# 镜像加载、静态产物解包放在维护窗口之前。
+# 官网由 zerowallscience-web 独立发布；文档部署只更新镜像和代理配置。
 gzip -dc "$incoming/image.tar.gz" | docker load
-tar -xzf "$incoming/site.tar.gz" -C "$web/releases/$release"
-chmod -R a+rX "$web/releases/$release"
-test -s "$web/releases/$release/index.html"
-test -s "$web/releases/$release/en/index.html"
-tar -czf "$backup/site.tar.gz" -C "$web" "$(readlink "$web/current")"
 
 touch "$root/maintenance"
 maintenance=1
@@ -89,21 +81,18 @@ curl -fsS --max-time 10 http://127.0.0.1:13001/docs/overview >/dev/null
 install -m 0644 "$incoming/nginx/zerowallscience-web.https.conf" "$nginx_dir/"
 install -m 0644 "$incoming/nginx/zerowallscience-web.http.conf" "$nginx_dir/"
 nginx -t
-ln -sfn "releases/$release" "$web/current.new"
-mv -Tf "$web/current.new" "$web/current"
 systemctl reload nginx
+[[ "$old_release" == "$(readlink "$web/current")" ]]
+[[ "$old_index_sha256" == "$(sha256sum "$web/current/index.html")" ]]
 printf '%s\n' "$sha" > "$compose/.deployed-sha"
 rm -f "$root/maintenance"
 trap - ERR
 
-# 仅清理本站的版本目录和镜像，不执行全局 Docker 清理。
-find "$web/releases" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | tail -n +4 | cut -d' ' -f2- | xargs -r rm -rf
+# 仅清理文档传输目录和旧镜像；不触碰独立官网的版本目录。
 find "$root/incoming" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -rn | tail -n +4 | cut -d' ' -f2- | xargs -r rm -rf
 while read -r tag; do
   [[ "$tag" =~ ^[0-9a-f]{40}$ ]] || continue
   [[ "$tag" == "$sha" || "$tag" == "$old_sha" ]] && continue
-  if ! find "$web/releases" -mindepth 1 -maxdepth 1 -name "$tag*" | read -r _; then
-    docker image rm "zerowallscience-docs:$tag" || true
-  fi
+  docker image rm "zerowallscience-docs:$tag" || true
 done < <(docker images zerowallscience-docs --format '{{.Tag}}')
 echo "deployed $sha"

@@ -12,21 +12,26 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[2] / "deploy" / "deploy.sh"
 OLD = "a" * 40
 NEW = "b" * 40
+WEB_RELEASE = "web-" + "c" * 40 + "-20261021T082601Z"
 
 
 class DeployTest(unittest.TestCase):
-    def run_deployment(self, failure):
+    def run_deployment(self, failure, legacy_site=False):
         with tempfile.TemporaryDirectory(prefix="zerowall-deploy-") as tmp:
             base = Path(tmp)
             root, web, data, nginx, bins = [base / name for name in ("root", "web", "data", "nginx", "bin")]
-            for directory in (root / "compose", root / "incoming" / NEW / "nginx", web / "releases" / OLD, data, nginx, bins):
+            for directory in (root / "compose", root / "incoming" / NEW / "nginx", web / "releases" / WEB_RELEASE, data, nginx, bins):
                 directory.mkdir(parents=True)
             incoming = root / "incoming" / NEW
             (root / "compose" / ".deployed-sha").write_text(OLD)
             (root / "compose" / "docker-compose.yml").write_text("old compose")
             (incoming / "docker-compose.production.yml").write_text("new compose")
-            (web / "current").symlink_to("releases/" + OLD)
-            (web / "releases" / OLD / "index.html").write_text("old website")
+            (web / "current").symlink_to("releases/" + WEB_RELEASE)
+            (web / "current" / "index.html").write_text("current research website with group 3")
+            # 文档发布不能清理独立官网的版本，即使活动版本不是最近创建的目录。
+            for i in range(4):
+                (web / "releases" / f"newer-web-release-{i}").mkdir()
+            website_releases = set((web / "releases").iterdir())
             for suffix in ("http", "https"):
                 name = f"zerowallscience-web.{suffix}.conf"
                 (nginx / name).write_text("old nginx")
@@ -36,12 +41,13 @@ class DeployTest(unittest.TestCase):
                 db.execute("INSERT INTO notes VALUES ('edited production document')")
             (data / "attachment.txt").write_text("original attachment")
             (incoming / "image.tar.gz").write_bytes(gzip.compress(b"image"))
-            with tarfile.open(incoming / "site.tar.gz", "w:gz") as tar:
-                for name in ("index.html", "en/index.html"):
-                    payload = b"new website"
-                    info = tarfile.TarInfo(name)
-                    info.size = len(payload)
-                    tar.addfile(info, io.BytesIO(payload))
+            if legacy_site:
+                with tarfile.open(incoming / "site.tar.gz", "w:gz") as tar:
+                    for name in ("index.html", "en/index.html"):
+                        payload = b"obsolete bundled website"
+                        info = tarfile.TarInfo(name)
+                        info.size = len(payload)
+                        tar.addfile(info, io.BytesIO(payload))
 
             # 所有服务控制命令均替换，测试不接触宿主 Docker/Nginx。
             stub = '''#!/usr/bin/env python3
@@ -79,21 +85,24 @@ elif name=="nginx":
             self.assertEqual(result.returncode == 0, not failure, result.stdout + result.stderr)
             self.assertFalse((root / "maintenance").exists())
             self.assertEqual((root / "compose" / ".deployed-sha").read_text().strip(), OLD if failure else NEW)
+            self.assertEqual(os.readlink(web / "current"), "releases/" + WEB_RELEASE)
+            self.assertEqual((web / "current" / "index.html").read_text(), "current research website with group 3")
+            self.assertEqual(set((web / "releases").iterdir()), website_releases)
             if failure:
-                self.assertEqual(os.readlink(web / "current"), "releases/" + OLD)
                 self.assertEqual((root / "compose" / "docker-compose.yml").read_text(), "old compose")
                 self.assertEqual((nginx / "zerowallscience-web.https.conf").read_text(), "old nginx")
                 self.assertEqual((data / "attachment.txt").read_text(), "original attachment")
                 self.assertFalse((data / "new-file").exists())
                 with sqlite3.connect(data / "docs.db") as db:
                     self.assertEqual(db.execute("SELECT content FROM notes").fetchone()[0], "edited production document")
-            else:
-                self.assertIn(NEW, os.readlink(web / "current"))
             self.assertEqual(len(list((root / "backups").glob("*/data.tar.gz"))), 1)
             self.assertNotIn("prune", (base / "calls").read_text())
 
     def test_success(self):
         self.run_deployment("")
+
+    def test_legacy_website_bundle_cannot_overwrite_independent_homepage(self):
+        self.run_deployment("", legacy_site=True)
 
     def test_health_failure_restores_database_attachments_and_website(self):
         self.run_deployment("health")

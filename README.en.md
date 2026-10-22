@@ -1,5 +1,7 @@
 > This repository now builds the ZeroWall Science website and official documentation system. The website is served at `/`, public docs at `/docs/`, and the documentation admin at `/admin/`. Editing and knowledge-management capabilities derive from Nowen Note under its existing GPL-3.0 license and history.
 
+Production deployments from this repository update only the documentation service and proxy configuration. The legacy `website/` remains for development and testing; the live homepage is published independently from [zerowallscience-web](https://github.com/ccfwwm/zerowallscience-web). Pushes, manual runs and scheduled deployments must preserve its active release, contents and release history.
+
 The documentation engine integrates upstream v1.5.2 (`c6f4778c`) while preserving ZeroWall branding, administrator model channels, and AI writing customizations. Public articles can reuse images from other public articles in the same active publication. Anonymous image access renews once through the original article endpoint; locking, trashing, moving the source outside the publication, or revoking publication still denies attachment access.
 
 <div align="center">
