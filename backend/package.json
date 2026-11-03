@@ -34,7 +34,7 @@
     "mammoth": "^1.11.0",
     "pg": "^8.22.0",
     "quickjs-emscripten": "^0.32.0",
-    "sanitize-html": "^2.17.5",
+    "sanitize-html": "^2.18.0",
     "sharp": "^0.33.5",
     "sqlite-vec": "^0.1.9",
     "undici": "6.28.1",
