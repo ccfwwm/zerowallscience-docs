@@ -16,7 +16,7 @@
     "inspect:note-formats": "node --import tsx scripts/inspect-note-formats.ts"
   },
   "dependencies": {
-    "@hono/node-server": "^1.13.7",
+    "@hono/node-server": "^2.1.6",
     "@mozilla/readability": "^0.6.0",
     "@types/ws": "^8.18.1",
     "archiver": "^7.0.1",
